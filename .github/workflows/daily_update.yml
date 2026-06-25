@@ -2,8 +2,10 @@ name: 每日台股資料同步
 
 on:
   schedule:
-    # 台灣時間晚上11:00（UTC 是台灣時間-8小時，所以是 15:00 UTC）
+    # 平日（週一到五）台灣時間晚上11:00（UTC 是台灣時間-8小時，所以是 15:00 UTC）
     - cron: '0 15 * * 1-5'
+    # 週六台灣時間早上9:00（UTC 是台灣時間-8小時，所以是 01:00 UTC）
+    - cron: '0 1 * * 6'
   workflow_dispatch:  # 允許手動觸發測試
 
 jobs:
@@ -25,4 +27,5 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          RUN_HOLDER: ${{ github.event.schedule == '0 1 * * 6' && 'true' || 'false' }}
         run: python auto_fetch.py
