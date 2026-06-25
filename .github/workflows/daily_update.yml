@@ -25,5 +25,4 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: |
-          echo "2" | echo "" | echo "7" | python fetch_stock_info.py
+        run: python auto_fetch.py
