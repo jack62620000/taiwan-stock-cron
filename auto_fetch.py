@@ -51,6 +51,7 @@ def save_data_batches(table_name, records):
         try: supabase.table(table_name).upsert(batch).execute()
         except Exception as e: print(f"儲存 {table_name} 錯誤 (Index {i}): {e}")
     print(f"成功儲存/更新共 {len(records)} 筆資料至 {table_name}！")
+
 # ===== 期貨三大法人未平倉 =====
 def fetch_futures_institutional():
     url = "https://openapi.taifex.com.tw/v1/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
@@ -240,7 +241,47 @@ def fetch_tpex_margin(today_str, valid_stocks):
         return records
     except Exception as e:
         print(f"抓取上櫃融資融券失敗: {e}"); return []
+# ===== 大戶持股比例 =====
+def fetch_holder_distribution(valid_stocks):
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    url = "https://smart.tdcc.com.tw/opendata/getOD.ashx?id=1-5"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    print("正在從集保結算所下載大戶持股資料...")
+    try:
+        import pandas as pd
+        from io import StringIO
+        r = requests.get(url, headers=headers, timeout=30, verify=False)
+        r.encoding = "utf-8"
+        df = pd.read_csv(StringIO(r.text))
 
+        df = df[df["持股分級"].isin([12, 13, 14, 15])]
+        df = df[df["證券代號"].astype(str).str.strip().isin(valid_stocks)]
+
+        def parse_week_date(d):
+            d = str(d).strip()
+            if len(d) == 8 and d.isdigit():
+                return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+            return None
+
+        result = (
+            df.groupby(["資料日期", "證券代號"])["占集保庫存數比例%"]
+            .sum()
+            .reset_index()
+        )
+
+        records = []
+        for _, row in result.iterrows():
+            records.append({
+                "stock_id": str(row["證券代號"]).strip(),
+                "week_date": parse_week_date(str(row["資料日期"]).strip()),
+                "big_holder_ratio": round(float(row["占集保庫存數比例%"]), 2),
+            })
+        return records
+    except Exception as e:
+        print(f"抓取大戶持股失敗: {e}")
+        return []
+        
 # ===== 主程式（無互動，自動執行）=====
 if __name__ == "__main__":
     today = datetime.now().strftime("%Y-%m-%d")
@@ -278,5 +319,12 @@ if __name__ == "__main__":
     print("\n--- 同步期貨三大法人未平倉 ---")
     futures_data = fetch_futures_institutional()
     save_data_batches("futures_institutional", futures_data)
+    time.sleep(SLEEP_BETWEEN_API)
+
+    # 大戶持股只在週六排程時執行（由環境變數 RUN_HOLDER 控制）
+    if os.getenv("RUN_HOLDER") == "true":
+        print("\n--- 同步大戶持股比例 ---")
+        holder_data = fetch_holder_distribution(valid_stocks)
+        save_data_batches("holder_distribution", holder_data)
 
     print("\n✅ 自動排程執行完畢！")
