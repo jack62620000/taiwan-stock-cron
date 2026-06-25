@@ -83,6 +83,7 @@ def fetch_futures_institutional():
             "net_oi_value": parse_volume(row.get("ContractValueofOpenInterest(Net)(Thousands)", "")),
         })
     return records
+    
 # ===== 每日股價 =====
 def fetch_twse_daily_all(today_str, valid_stocks):
     url_date = today_str.replace("-", "")
