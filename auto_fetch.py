@@ -321,10 +321,4 @@ if __name__ == "__main__":
     save_data_batches("futures_institutional", futures_data)
     time.sleep(SLEEP_BETWEEN_API)
 
-    # 大戶持股只在週六排程時執行（由環境變數 RUN_HOLDER 控制）
-    if os.getenv("RUN_HOLDER") == "true":
-        print("\n--- 同步大戶持股比例 ---")
-        holder_data = fetch_holder_distribution(valid_stocks)
-        save_data_batches("holder_distribution", holder_data)
-
     print("\n✅ 自動排程執行完畢！")
