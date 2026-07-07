@@ -15,7 +15,7 @@ on:
 
 jobs:
   update-daily-data:
-    if: github.event.schedule == '0 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only != 'true')
+    if: github.event.schedule == '11 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only != 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -36,7 +36,7 @@ jobs:
         run: python auto_fetch.py
 
   update-holder-only:
-    if: github.event.schedule == '0 1 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only == 'true')
+    if: github.event.schedule == '06 1 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
