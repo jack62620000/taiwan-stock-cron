@@ -27,7 +27,7 @@ def parse_volume(val_str):
 
 def is_weekend(today_str):
     dt = datetime.strptime(today_str, "%Y-%m-%d")
-    return dt.weekday() >= 5  # 5=週六, 6=週日
+    return dt.weekday() >= 5
 
 def get_valid_stock_ids():
     valid_stocks = set()
@@ -64,7 +64,7 @@ def fetch_futures_institutional(today_str):
     print("正在下載期貨三大法人未平倉...")
     try:
         r = requests.get(url, timeout=10)
-        r.encoding = "utf-8-sig"  # ✅ 修正：改用 utf-8-sig 避免 BOM 錯誤
+        r.encoding = "utf-8-sig"  # ✅ 避免 BOM 錯誤
         data = r.json()
     except Exception as e:
         print(f"抓取失敗: {e}")
@@ -79,7 +79,6 @@ def fetch_futures_institutional(today_str):
             continue
         record_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
 
-        # ✅ 比對日期，避免寫入舊資料
         if record_date != today_str:
             print(f"⚠️ API 回傳日期 {record_date} 與今日 {today_str} 不符，期交所資料尚未更新，跳過寫入")
             return []
@@ -226,10 +225,7 @@ def fetch_twse_margin(today_str, valid_stocks):
         print(f"{today_str} 為週末，跳過上市融資融券抓取")
         return []
 
-    # ✅ 修正：MI_MARGN 需要民國年格式，如 1140707
-    dt = datetime.strptime(today_str, "%Y-%m-%d")
-    roc_year = dt.year - 1911
-    url_date = f"{roc_year}{dt.strftime('%m%d')}"
+    url_date = today_str.replace("-", "")  # ✅ 西元年格式
     url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={url_date}&selectType=ALL"
     print(f"正在從證交所下載 {today_str} 上市融資融券...")
     try:
