@@ -64,7 +64,7 @@ def fetch_futures_institutional(today_str):
     print("正在下載期貨三大法人未平倉...")
     try:
         r = requests.get(url, timeout=10)
-        r.encoding = "utf-8"
+        r.encoding = "utf-8-sig"  # ✅ 修正：改用 utf-8-sig 避免 BOM 錯誤
         data = r.json()
     except Exception as e:
         print(f"抓取失敗: {e}")
@@ -77,17 +77,23 @@ def fetch_futures_institutional(today_str):
         date_str = row.get("Date", "").strip()
         if len(date_str) != 8:
             continue
-        date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+        record_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+
+        # ✅ 比對日期，避免寫入舊資料
+        if record_date != today_str:
+            print(f"⚠️ API 回傳日期 {record_date} 與今日 {today_str} 不符，期交所資料尚未更新，跳過寫入")
+            return []
+
         records.append({
-            "date": date,
-            "contract_code": row.get("ContractCode", "").strip(),
-            "item": row.get("Item", "").strip(),
-            "long_oi": parse_volume(row.get("OpenInterest(Long)", "")),
-            "long_oi_value": parse_volume(row.get("ContractValueofOpenInterest(Long)(Thousands)", "")),
-            "short_oi": parse_volume(row.get("OpenInterest(Short)", "")),
+            "date":           record_date,
+            "contract_code":  row.get("ContractCode", "").strip(),
+            "item":           row.get("Item", "").strip(),
+            "long_oi":        parse_volume(row.get("OpenInterest(Long)", "")),
+            "long_oi_value":  parse_volume(row.get("ContractValueofOpenInterest(Long)(Thousands)", "")),
+            "short_oi":       parse_volume(row.get("OpenInterest(Short)", "")),
             "short_oi_value": parse_volume(row.get("ContractValueofOpenInterest(Short)(Thousands)", "")),
-            "net_oi": parse_volume(row.get("OpenInterest(Net)", "")),
-            "net_oi_value": parse_volume(row.get("ContractValueofOpenInterest(Net)(Thousands)", "")),
+            "net_oi":         parse_volume(row.get("OpenInterest(Net)", "")),
+            "net_oi_value":   parse_volume(row.get("ContractValueofOpenInterest(Net)(Thousands)", "")),
         })
     return records
 
@@ -175,9 +181,9 @@ def fetch_twse_stock_ins(today_str, valid_stocks):
             records.append({
                 "stock_id": stock_id, "date": today_str,
                 "foreign_net_shares": parse_volume(row[4]),
-                "sitca_net_shares": parse_volume(row[10]),
+                "sitca_net_shares":   parse_volume(row[10]),
                 "dealers_net_shares": parse_volume(row[11]),
-                "total_net_shares": parse_volume(row[18]),
+                "total_net_shares":   parse_volume(row[18]),
             })
         return records
     except Exception as e:
@@ -197,7 +203,6 @@ def fetch_tpex_stock_ins(today_str, valid_stocks):
         tables = data.get("tables", [])
         if not tables or not tables[0].get("data"):
             print("上櫃法人今日尚未更新或查無資料"); return []
-
         records = []
         for row in tables[0]["data"]:
             stock_id = row[0].strip()
@@ -205,14 +210,12 @@ def fetch_tpex_stock_ins(today_str, valid_stocks):
             records.append({
                 "stock_id": stock_id, "date": today_str,
                 "foreign_net_shares": parse_volume(row[4]),
-                "sitca_net_shares": parse_volume(row[10]),
+                "sitca_net_shares":   parse_volume(row[10]),
                 "dealers_net_shares": parse_volume(row[22]),
-                "total_net_shares": parse_volume(row[23]),
+                "total_net_shares":   parse_volume(row[23]),
             })
-
         if len(records) < 500:
             print(f"⚠️ 警告：上櫃法人資料筆數異常偏低（{len(records)}筆），可能是非交易日或資料異常")
-
         return records
     except Exception as e:
         print(f"抓取上櫃法人失敗: {e}"); return []
@@ -223,7 +226,10 @@ def fetch_twse_margin(today_str, valid_stocks):
         print(f"{today_str} 為週末，跳過上市融資融券抓取")
         return []
 
-    url_date = today_str.replace("-", "")
+    # ✅ 修正：MI_MARGN 需要民國年格式，如 1140707
+    dt = datetime.strptime(today_str, "%Y-%m-%d")
+    roc_year = dt.year - 1911
+    url_date = f"{roc_year}{dt.strftime('%m%d')}"
     url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={url_date}&selectType=ALL"
     print(f"正在從證交所下載 {today_str} 上市融資融券...")
     try:
@@ -241,9 +247,10 @@ def fetch_twse_margin(today_str, valid_stocks):
             stock_id = row[0].strip()
             if stock_id not in valid_stocks: continue
             records.append({
-                "stock_id": stock_id, "date": today_str,
+                "stock_id":       stock_id,
+                "date":           today_str,
                 "margin_balance": parse_volume(row[6]),
-                "short_balance": parse_volume(row[12]),
+                "short_balance":  parse_volume(row[12]),
             })
         return records
     except Exception as e:
@@ -269,9 +276,10 @@ def fetch_tpex_margin(today_str, valid_stocks):
             stock_id = row[0].strip()
             if stock_id not in valid_stocks: continue
             records.append({
-                "stock_id": stock_id, "date": today_str,
+                "stock_id":       stock_id,
+                "date":           today_str,
                 "margin_balance": None,
-                "short_balance": parse_volume(row[6]),
+                "short_balance":  parse_volume(row[6]),
             })
         return records
     except Exception as e:
