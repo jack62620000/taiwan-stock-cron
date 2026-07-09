@@ -1,6 +1,6 @@
 """
 自動化版本 - 給 GitHub Actions 排程使用
-每次執行會自動同步「今天」的股價、三大法人、融資融券、期貨未平倉
+每次執行會自動同步「今天」的股價、三大法人、融資融券
 """
 import requests
 from supabase import create_client
@@ -53,48 +53,6 @@ def save_data_batches(table_name, records):
         try: supabase.table(table_name).upsert(batch).execute()
         except Exception as e: print(f"儲存 {table_name} 錯誤 (Index {i}): {e}")
     print(f"成功儲存/更新共 {len(records)} 筆資料至 {table_name}！")
-
-# ===== 期貨三大法人未平倉 =====
-def fetch_futures_institutional(today_str):
-    if is_weekend(today_str):
-        print(f"{today_str} 為週末，跳過期貨三大法人抓取")
-        return []
-
-    url = "https://openapi.taifex.com.tw/v1/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
-    print("正在下載期貨三大法人未平倉...")
-    try:
-        r = requests.get(url, timeout=10)
-        r.encoding = "utf-8-sig"  # ✅ 避免 BOM 錯誤
-        data = r.json()
-    except Exception as e:
-        print(f"抓取失敗: {e}")
-        return []
-
-    records = []
-    for row in data:
-        if row.get("ContractCode", "").strip() != "臺股期貨":
-            continue
-        date_str = row.get("Date", "").strip()
-        if len(date_str) != 8:
-            continue
-        record_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-
-        if record_date != today_str:
-            print(f"⚠️ API 回傳日期 {record_date} 與今日 {today_str} 不符，期交所資料尚未更新，跳過寫入")
-            return []
-
-        records.append({
-            "date":           record_date,
-            "contract_code":  row.get("ContractCode", "").strip(),
-            "item":           row.get("Item", "").strip(),
-            "long_oi":        parse_volume(row.get("OpenInterest(Long)", "")),
-            "long_oi_value":  parse_volume(row.get("ContractValueofOpenInterest(Long)(Thousands)", "")),
-            "short_oi":       parse_volume(row.get("OpenInterest(Short)", "")),
-            "short_oi_value": parse_volume(row.get("ContractValueofOpenInterest(Short)(Thousands)", "")),
-            "net_oi":         parse_volume(row.get("OpenInterest(Net)", "")),
-            "net_oi_value":   parse_volume(row.get("ContractValueofOpenInterest(Net)(Thousands)", "")),
-        })
-    return records
 
 # ===== 每日股價 =====
 def fetch_twse_daily_all(today_str, valid_stocks):
@@ -317,9 +275,5 @@ if __name__ == "__main__":
         all_margin.extend(fetch_tpex_margin(today, valid_stocks))
         save_data_batches("margin_trading", all_margin)
         time.sleep(SLEEP_BETWEEN_API)
-
-        print("\n--- 同步期貨三大法人未平倉 ---")
-        futures_data = fetch_futures_institutional(today)
-        save_data_batches("futures_institutional", futures_data)
 
     print("\n✅ 自動排程執行完畢！")
