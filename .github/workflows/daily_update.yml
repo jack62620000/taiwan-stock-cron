@@ -2,7 +2,7 @@ name: 每日台股資料同步
 on:
   schedule:
     # 平日（週一到五）台灣時間晚上7:00（UTC 11:00）- 期貨專用
-    - cron: '0 11 * * 1-5'
+    - cron: '08 13 * * 1-5'
     # 平日（週一到五）台灣時間晚上11:11（UTC 15:11）- 股價/法人/融資券
     - cron: '11 15 * * 1-5'
     # 週六台灣時間早上9:06（UTC 01:06）- 大戶持股
@@ -16,7 +16,7 @@ on:
 
 jobs:
   update-futures:
-    if: github.event.schedule == '0 11 * * 1-5'
+    if: github.event.schedule == '08 13 * * 1-5'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
