@@ -56,10 +56,6 @@ def fetch_futures_institutional(today_str):
             continue
         record_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
 
-        if record_date != today_str:
-            print(f"⚠️ API 回傳日期 {record_date} 與今日 {today_str} 不符，期交所資料尚未更新，跳過寫入")
-            return []
-
         records.append({
             "date":           record_date,
             "contract_code":  row.get("ContractCode", "").strip(),
