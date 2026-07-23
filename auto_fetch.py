@@ -1,6 +1,6 @@
 """
 自動化版本 - 給 GitHub Actions 排程使用
-每次執行會自動同步「今天」的股價、三大法人、融資融券
+每次執行會自動同步「今天」的股價、三大法人、融資融券、融資融券使用率
 """
 import requests
 from supabase import create_client
@@ -59,7 +59,6 @@ def fetch_twse_daily_all(today_str, valid_stocks):
     if is_weekend(today_str):
         print(f"{today_str} 為週末，跳過上市股價抓取")
         return []
-
     url_date = today_str.replace("-", "")
     url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={url_date}&type=ALLBUT0999&response=json"
     print(f"正在從證交所下載 {today_str} 上市行情...")
@@ -91,7 +90,6 @@ def fetch_tpex_otc_daily(today_str, valid_stocks):
     if is_weekend(today_str):
         print(f"{today_str} 為週末，跳過上櫃股價抓取")
         return []
-
     dt = datetime.strptime(today_str, "%Y-%m-%d")
     url_date = f"{dt.year}%2F{dt.strftime('%m')}%2F{dt.strftime('%d')}"
     url = f"https://www.tpex.org.tw/www/zh-tw/afterTrading/otc?date={url_date}&type=AL&id=&response=json&order=0&sort=asc"
@@ -121,7 +119,6 @@ def fetch_twse_stock_ins(today_str, valid_stocks):
     if is_weekend(today_str):
         print(f"{today_str} 為週末，跳過上市法人抓取")
         return []
-
     url_date = today_str.replace("-", "")
     url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={url_date}&selectType=ALLBUT0999&response=json"
     print(f"正在從證交所下載 {today_str} 上市法人...")
@@ -150,7 +147,6 @@ def fetch_tpex_stock_ins(today_str, valid_stocks):
     if is_weekend(today_str):
         print(f"{today_str} 為週末，跳過上櫃法人抓取")
         return []
-
     url_date = today_str.replace("-", "")
     url = f"https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade?type=Daily&sect=EW&date={url_date}&id=&response=json"
     print(f"正在從櫃買中心下載 {today_str} 上櫃法人...")
@@ -182,7 +178,6 @@ def fetch_twse_margin(today_str, valid_stocks):
     if is_weekend(today_str):
         print(f"{today_str} 為週末，跳過上市融資融券抓取")
         return []
-
     url_date = today_str.replace("-", "")  # ✅ 西元年格式
     url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={url_date}&selectType=ALL"
     print(f"正在從證交所下載 {today_str} 上市融資融券...")
@@ -214,7 +209,6 @@ def fetch_tpex_margin(today_str, valid_stocks):
     if is_weekend(today_str):
         print(f"{today_str} 為週末，跳過上櫃融資融券抓取")
         return []
-
     dt = datetime.strptime(today_str, "%Y-%m-%d")
     url_date = f"{dt.year}%2F{dt.strftime('%m')}%2F{dt.strftime('%d')}"
     url = f"https://www.tpex.org.tw/www/zh-tw/margin/sbl?date={url_date}&id=&response=json"
@@ -238,6 +232,87 @@ def fetch_tpex_margin(today_str, valid_stocks):
         return records
     except Exception as e:
         print(f"抓取上櫃融資融券失敗: {e}"); return []
+
+# ===== 融資融券使用率 =====
+def fetch_twse_margin_utilization(today_str, valid_stocks):
+    if is_weekend(today_str):
+        print(f"{today_str} 為週末，跳過上市融資融券使用率抓取")
+        return []
+    url_date = today_str.replace("-", "")
+    url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={url_date}&selectType=ALL"
+    print(f"正在從證交所下載 {today_str} 上市融資融券使用率...")
+    try:
+        r = requests.get(url, timeout=15)
+        data = r.json()
+        if data.get("stat") != "OK":
+            print(f"上市融資融券尚未更新: {data.get('stat')}"); return []
+        table = next(
+            (t for t in data.get("tables", []) if "融資融券彙總" in t.get("title", "")), None
+        )
+        if not table:
+            print("找不到融資融券彙總表"); return []
+        records = []
+        for row in table.get("data", []):
+            stock_id = row[0].strip()
+            if stock_id not in valid_stocks: continue
+            margin_balance = parse_volume(row[6])
+            margin_limit   = parse_volume(row[7])
+            short_balance  = parse_volume(row[12])
+            short_limit    = parse_volume(row[13])
+            records.append({
+                "stock_id":       stock_id,
+                "date":           today_str,
+                "margin_balance": margin_balance,
+                "margin_limit":   margin_limit,
+                "margin_rate":    round(margin_balance / margin_limit * 100, 2) if margin_limit > 0 else None,
+                "short_balance":  short_balance,
+                "short_limit":    short_limit,
+                "short_rate":     round(short_balance / short_limit * 100, 2) if short_limit > 0 else None,
+            })
+        return records
+    except Exception as e:
+        print(f"抓取上市融資融券使用率失敗: {e}"); return []
+
+def fetch_tpex_margin_utilization(valid_stocks):
+    url = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance"
+    print("正在從櫃買中心下載上櫃融資融券使用率...")
+    try:
+        r = requests.get(url, timeout=15)
+        data = r.json()
+    except Exception as e:
+        print(f"抓取上櫃融資融券使用率失敗: {e}"); return []
+    if not data:
+        print("上櫃融資融券使用率查無資料"); return []
+    date_str = data[0].get("Date", "").strip()
+    if len(date_str) != 7:
+        print(f"日期格式異常: {date_str}"); return []
+    record_date = f"{int(date_str[:3]) + 1911}-{date_str[3:5]}-{date_str[5:7]}"
+    print(f"  上櫃資料日期：{record_date}")
+    records = []
+    for row in data:
+        stock_id = row.get("SecuritiesCompanyCode", "").strip()
+        if stock_id not in valid_stocks: continue
+        margin_balance = int(row.get("MarginPurchaseBalance", 0) or 0) * 1000
+        margin_limit   = int(row.get("MarginPurchaseQuota", 0) or 0) * 1000
+        short_balance  = int(row.get("ShortSaleBalance", 0) or 0) * 1000
+        short_limit    = int(row.get("ShortSaleQuota", 0) or 0) * 1000
+        records.append({
+            "stock_id":       stock_id,
+            "date":           record_date,
+            "margin_balance": margin_balance,
+            "margin_limit":   margin_limit,
+            "margin_rate":    float(row.get("MarginPurchaseUtilizationRate", 0) or 0),
+            "short_balance":  short_balance,
+            "short_limit":    short_limit,
+            "short_rate":     float(row.get("ShortSaleUtilizationRate", 0) or 0),
+        })
+    return records
+
+def fetch_margin_utilization(today_str, valid_stocks):
+    records = []
+    records.extend(fetch_twse_margin_utilization(today_str, valid_stocks))
+    records.extend(fetch_tpex_margin_utilization(valid_stocks))
+    return records
 
 # ===== 主程式（無互動，自動執行）=====
 if __name__ == "__main__":
@@ -275,5 +350,9 @@ if __name__ == "__main__":
         all_margin.extend(fetch_tpex_margin(today, valid_stocks))
         save_data_batches("margin_trading", all_margin)
         time.sleep(SLEEP_BETWEEN_API)
+
+        print("\n--- 同步融資融券使用率 ---")
+        utilization_data = fetch_margin_utilization(today, valid_stocks)
+        save_data_batches("margin_utilization", utilization_data)
 
     print("\n✅ 自動排程執行完畢！")
