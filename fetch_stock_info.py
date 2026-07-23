@@ -672,7 +672,102 @@ def fetch_futures_institutional():
         })
 
     return records
+# ==================== 10. 融資融券使用率抓取 ====================
 
+def fetch_twse_margin_utilization(today_str, valid_stocks):
+    """上市融資融券使用率 - 從原本 MI_MARGN 抓限額並自算使用率"""
+    url_date = today_str.replace("-", "")
+    url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={url_date}&selectType=ALL"
+    print(f"正在從證交所下載 {today_str} 上市融資融券使用率...")
+    try:
+        r = requests.get(url, timeout=15)
+        data = r.json()
+        if data.get("stat") != "OK":
+            print(f"上市融資融券尚未更新: {data.get('stat')}"); return []
+
+        table = next(
+            (t for t in data.get("tables", []) if "融資融券彙總" in t.get("title", "")), None
+        )
+        if not table:
+            print("找不到融資融券彙總表"); return []
+
+        records = []
+        for row in table.get("data", []):
+            stock_id = row[0].strip()
+            if stock_id not in valid_stocks:
+                continue
+
+            margin_balance = parse_volume(row[6])   # 融資今日餘額（股）
+            margin_limit   = parse_volume(row[7])   # 融資限額（股）
+            short_balance  = parse_volume(row[12])  # 融券今日餘額（股）
+            short_limit    = parse_volume(row[13])  # 融券限額（股）
+
+            records.append({
+                "stock_id":       stock_id,
+                "date":           today_str,
+                "margin_balance": margin_balance,
+                "margin_limit":   margin_limit,
+                "margin_rate":    round(margin_balance / margin_limit * 100, 2) if margin_limit > 0 else None,
+                "short_balance":  short_balance,
+                "short_limit":    short_limit,
+                "short_rate":     round(short_balance / short_limit * 100, 2) if short_limit > 0 else None,
+            })
+        return records
+    except Exception as e:
+        print(f"抓取上市融資融券使用率失敗: {e}"); return []
+
+
+def fetch_tpex_margin_utilization(valid_stocks):
+    """上櫃融資融券使用率 - 從新 OpenAPI 抓取，直接提供使用率"""
+    url = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance"
+    print("正在從櫃買中心下載上櫃融資融券使用率...")
+    try:
+        r = requests.get(url, timeout=15)
+        data = r.json()
+    except Exception as e:
+        print(f"抓取上櫃融資融券使用率失敗: {e}"); return []
+
+    if not data:
+        print("上櫃融資融券使用率查無資料"); return []
+
+    # 從第一筆取得日期（民國年 1150722 → 2026-07-22）
+    date_str = data[0].get("Date", "").strip()
+    if len(date_str) != 7:
+        print(f"日期格式異常: {date_str}"); return []
+    record_date = f"{int(date_str[:3]) + 1911}-{date_str[3:5]}-{date_str[5:7]}"
+    print(f"  上櫃資料日期：{record_date}")
+
+    records = []
+    for row in data:
+        stock_id = row.get("SecuritiesCompanyCode", "").strip()
+        if stock_id not in valid_stocks:
+            continue
+
+        margin_balance = int(row.get("MarginPurchaseBalance", 0) or 0) * 1000  # 張 → 股
+        margin_limit   = int(row.get("MarginPurchaseQuota", 0) or 0) * 1000    # 張 → 股
+        short_balance  = int(row.get("ShortSaleBalance", 0) or 0) * 1000       # 張 → 股
+        short_limit    = int(row.get("ShortSaleQuota", 0) or 0) * 1000         # 張 → 股
+
+        records.append({
+            "stock_id":       stock_id,
+            "date":           record_date,
+            "margin_balance": margin_balance,
+            "margin_limit":   margin_limit,
+            "margin_rate":    float(row.get("MarginPurchaseUtilizationRate", 0) or 0),
+            "short_balance":  short_balance,
+            "short_limit":    short_limit,
+            "short_rate":     float(row.get("ShortSaleUtilizationRate", 0) or 0),
+        })
+    return records
+
+
+def fetch_margin_utilization(today_str, valid_stocks):
+    """合併上市+上櫃融資融券使用率"""
+    records = []
+    records.extend(fetch_twse_margin_utilization(today_str, valid_stocks))
+    records.extend(fetch_tpex_margin_utilization(valid_stocks))
+    return records
+    
 # ==================== 資料庫儲存工具 ====================
 def save_data_batches(table_name, records):
     if not records: return
@@ -780,6 +875,7 @@ if __name__ == "__main__":
         print(" 7. 同步每日股價 + 三大法人 + 融資融券")
         print(" 8. 同步季報（EPS／淨值／P/B／ROE）")
         print(" 9. 同步期貨三大法人未平倉")
+        print("10. 同步融資融券使用率")
         print(" 0. 全部執行")
         valid_choices = {"1", "2", "3", "4", "5", "6", "7", "8", "9"}
     else:
