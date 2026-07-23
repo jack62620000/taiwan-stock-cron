@@ -1,6 +1,6 @@
-﻿"""
+"""
 期貨三大法人未平倉 - 獨立排程腳本
-台灣時間晚上 7:00 執行，期交所此時已更新當日資料
+台灣時間晚上 9:08 執行，期交所此時已更新當日資料
 """
 import requests
 from supabase import create_client
@@ -55,7 +55,6 @@ def fetch_futures_institutional(today_str):
         if len(date_str) != 8:
             continue
         record_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-
         records.append({
             "date":           record_date,
             "contract_code":  row.get("ContractCode", "").strip(),
@@ -67,7 +66,6 @@ def fetch_futures_institutional(today_str):
             "net_oi":         parse_volume(row.get("OpenInterest(Net)", "")),
             "net_oi_value":   parse_volume(row.get("ContractValueofOpenInterest(Net)(Thousands)", "")),
         })
-
     return records
 
 if __name__ == "__main__":
