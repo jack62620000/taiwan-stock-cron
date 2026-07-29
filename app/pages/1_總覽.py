@@ -4,6 +4,12 @@ import numpy as np
 import sys
 import os
 
+# ===== 登入驗證 =====
+if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
+    st.warning("請先登入")
+    st.switch_page("main.py")
+    st.stop()
+# ===== 主程式碼 =====
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import (
     get_stock_list, get_latest_prices, get_latest_ins,
