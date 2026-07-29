@@ -1,0 +1,53 @@
+﻿import streamlit as st
+
+st.set_page_config(
+    page_title="台股分析系統",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.title("📈 台股分析系統")
+st.markdown("---")
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.info("### 📊 全台股總覽\n瀏覽所有股票的多維度指標")
+    if st.button("前往總覽", use_container_width=True):
+        st.switch_page("pages/1_總覽.py")
+
+with col2:
+    st.info("### 🗂️ 個股分析卡\n查詢個股深度數據分析卡")
+    if st.button("前往個股分析卡", use_container_width=True):
+        st.switch_page("pages/2_個股分析卡.py")
+
+with col3:
+    st.info("### 🔮 期貨三大法人\n臺股期貨未平倉多日數據")
+    if st.button("前往期貨三大法人", use_container_width=True):
+        st.switch_page("pages/3_期貨三大法人.py")
+
+with col4:
+    st.info("### 🏦 台股外資法人\n全台股外資買賣超多日表格、連續買賣超篩選")
+    if st.button("前往台股外資法人", use_container_width=True):
+        st.switch_page("pages/4_台股外資法人.py")
+
+st.markdown("---")
+st.markdown("""
+### 功能說明
+| 功能 | 說明 |
+|------|------|
+| 📊 全台股總覽 | 基本資訊、價值面、成長面、籌碼面、資金面、技術指標 |
+| 🗂️ 個股分析卡 | 深度數據分析卡，含52週區間、基本面、籌碼面、技術面燈號 |
+| 🔮 期貨三大法人 | 臺股期貨未平倉口數與契約金額，多日數據表格 |
+| 🏦 台股外資法人 | 全台股外資買賣超多日橫向表格，支援連續買賣超篩選 |
+
+### 資料來源
+- 股價、法人、融資券：台灣證券交易所、櫃買中心
+- 大戶持股：集保結算所
+- 月營收、季報：公開資訊觀測站
+- 期貨法人：台灣期貨交易所
+""")
+
+st.markdown("---")
+st.caption("⚠️ 本系統資料僅供參考，不構成投資建議。投資有風險，請謹慎評估。")
