@@ -1,5 +1,29 @@
 ﻿import streamlit as st
 
+# ===== 登入驗證 =====
+def check_password():
+    def password_entered():
+        if (st.session_state["username"] == st.secrets["USERNAME"] and
+            st.session_state["password"] == st.secrets["PASSWORD"]):
+            st.session_state["authenticated"] = True
+        else:
+            st.session_state["authenticated"] = False
+            st.error("帳號或密碼錯誤")
+
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
+
+    if not st.session_state["authenticated"]:
+        st.title("🔐 台股分析系統")
+        st.text_input("帳號", key="username")
+        st.text_input("密碼", type="password", key="password")
+        st.button("登入", on_click=password_entered)
+        return False
+    return True
+
+if not check_password():
+    st.stop()
+# ===== 主程式碼 =====
 st.set_page_config(
     page_title="台股分析系統",
     page_icon="📈",
