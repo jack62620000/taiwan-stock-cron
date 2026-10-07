@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 import numpy as np
 import sys
@@ -29,6 +29,7 @@ st.title("📊 全台股總覽")
 
 if st.button("🔄 強制重新整理資料"):
     st.cache_data.clear()
+    get_stock_list.cache_clear()  # 股票清單（含產業別）也一併重新讀取
     st.rerun()
 
 # ===== 載入資料 =====
@@ -120,18 +121,26 @@ if not quarterly.empty:
         on="stock_id", how="left"
     )
 
+# 用最新收盤價重算 P/B（資料庫存的是抓季報當下的股價，放久會過時）
+if "book_value" in df.columns and "close_price" in df.columns:
+    pb_valid = df["book_value"].notna() & (df["book_value"] > 0) & df["close_price"].notna()
+    df["pb_ratio"] = (df["close_price"] / df["book_value"]).where(pb_valid).round(2)
+
 # 計算本益比
+# 季報的 EPS 是「年初至該季」的累計值，年化要用 EPS × 4 ÷ 季別
+# （第 1 季 ×4、第 2 季累計 ×2、第 3 季累計 ×4/3、第 4 季累計 ×1）
 if "eps" in df.columns and "close_price" in df.columns:
     def calc_pe(row):
         eps = row.get("eps")
         close = row.get("close_price")
+        quarter = row.get("quarter")
         if pd.isna(eps):
             return None
         if eps <= 0:
             return "虧損"
-        if pd.isna(close):
+        if pd.isna(close) or pd.isna(quarter) or quarter <= 0:
             return None
-        return round(close / (eps * 4), 2)
+        return round(close / (eps * 4 / quarter), 2)
     df["pe_ratio"] = df.apply(calc_pe, axis=1)
 
 # 計算漲跌
@@ -262,10 +271,10 @@ col_map = {
     "industry":           "產業別",
     "close_price":        "收盤價",
     "volume":             "成交量",
-    "pe_ratio":           "P/E",
+    "pe_ratio":           "P/E(年化)",
     "pb_ratio":           "P/B",
-    "eps":                "EPS",
-    "roe":                "ROE%",
+    "eps":                "EPS(累計)",
+    "roe":                "ROE%(累計)",
     "book_value":         "每股淨值",
     "year_month":         "營收年月",
     "revenue":            "月營收(千)",
@@ -276,7 +285,7 @@ col_map = {
     "dealers_net_shares": "自營買賣超",
     "total_net_shares":   "法人合計",
     "big_holder_ratio":   "大戶持股%",
-    "margin_balance":     "融資餘額",
+    "margin_balance":     "融資餘額(張)",
     "margin_rate":        "融資使用率",  # ✅ 原本是融券餘額，改為融資使用率
 }
 
@@ -297,10 +306,10 @@ for _, row in show_df.iterrows():
         "產業別":      row.get("industry", ""),
         "收盤價":      color_price(row.get("close_price"), row.get("price_change")),
         "成交量":      f"{row['volume']:,.0f}" if pd.notna(row.get("volume")) else "",
-        "P/E":         fmt_pe(row.get("pe_ratio")),
+        "P/E(年化)":         fmt_pe(row.get("pe_ratio")),
         "P/B":         f"{row['pb_ratio']:,.2f}" if pd.notna(row.get("pb_ratio")) else "",
-        "EPS":         color_value(row.get("eps")),
-        "ROE%":        color_value(row.get("roe")),
+        "EPS(累計)":         color_value(row.get("eps")),
+        "ROE%(累計)":        color_value(row.get("roe")),
         "每股淨值":    f"{row['book_value']:,.2f}" if pd.notna(row.get("book_value")) else "",
         "營收年月":    row.get("year_month", "") if pd.notna(row.get("year_month")) else "",
         "月營收(千)":  f"{row['revenue']:,.0f}" if pd.notna(row.get("revenue")) else "",
@@ -311,7 +320,7 @@ for _, row in show_df.iterrows():
         "自營買賣超":  color_int(row.get("dealers_net_shares")),
         "法人合計":    color_int(row.get("total_net_shares")),
         "大戶持股%":   f"{row['big_holder_ratio']:,.2f}" if pd.notna(row.get("big_holder_ratio")) else "",
-        "融資餘額":    f"{row['margin_balance']:,.0f}" if pd.notna(row.get("margin_balance")) else "",
+        "融資餘額(張)":    f"{row['margin_balance']:,.0f}" if pd.notna(row.get("margin_balance")) else "",
         "融資使用率":  color_rate(row.get("margin_rate")),  # ✅ 改為融資使用率
     })
 
