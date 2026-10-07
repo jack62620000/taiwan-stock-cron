@@ -12,6 +12,7 @@
   [F] save_data_batches：過濾主鍵為空與重複的資料，並如實回報成功／失敗筆數
   [G] 每次執行自動更新 stock_info，新上市櫃與轉換市場的股票才會被納入
   [H] 季報：缺少年度或季別的資料不寫入
+  [I] 每日股價、法人、融資券的請求在連線中斷時自動重試（最多 3 次）
 """
 import requests
 from supabase import create_client
@@ -103,6 +104,24 @@ def parse_float(val):
 
 def calc_rate(balance, limit):
     return round(balance / limit * 100, 2) if limit and limit > 0 else None
+
+
+# ==================== 網路請求共用工具 ====================
+def get_json(url, timeout=15, retries=3, wait=5):
+    """
+    [I] GET 並解析 JSON。連線中斷或逾時（例如 IncompleteRead）會自動重試；
+    回應不是 JSON（例如被來源擋下時的錯誤頁）則不重試，直接交給呼叫端處理。
+    """
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.get(url, timeout=timeout)
+            break
+        except requests.exceptions.RequestException as e:
+            if attempt == retries:
+                raise
+            print(f"  第 {attempt} 次請求失敗（{type(e).__name__}），{wait} 秒後重試...")
+            time.sleep(wait)
+    return r.json()
 
 
 # ==================== 櫃買中心共用工具 ====================
@@ -209,8 +228,7 @@ def fetch_twse_daily_all(today_str, valid_stocks):
     url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={url_date}&type=ALLBUT0999&response=json"
     print(f"正在從證交所下載 {today_str} 上市行情...")
     try:
-        r = requests.get(url, timeout=15)
-        data = r.json()
+        data = get_json(url, timeout=15)
         if data.get("stat") != "OK":
             print(f"證交所提示: {data.get('stat')}"); return []
 
@@ -244,8 +262,7 @@ def fetch_tpex_otc_daily(today_str, valid_stocks):
     url = f"https://www.tpex.org.tw/www/zh-tw/afterTrading/otc?date={tpex_url_date(today_str)}&type=AL&id=&response=json&order=0&sort=asc"
     print(f"正在從櫃買中心下載 {today_str} 上櫃行情...")
     try:
-        r = requests.get(url, timeout=30)
-        data = r.json()
+        data = get_json(url, timeout=30)
         tables = data.get("tables", [])
         if not tables or not tables[0].get("data"):
             print("上櫃股價今日尚未更新或查無資料"); return []
@@ -277,8 +294,7 @@ def fetch_twse_stock_ins(today_str, valid_stocks):
     url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={url_date}&selectType=ALLBUT0999&response=json"
     print(f"正在從證交所下載 {today_str} 上市法人...")
     try:
-        r = requests.get(url, timeout=15)
-        data = r.json()
+        data = get_json(url, timeout=15)
         if data.get("stat") != "OK":
             print(f"上市法人尚未更新: {data.get('stat')}"); return []
 
@@ -319,8 +335,7 @@ def fetch_tpex_stock_ins(today_str, valid_stocks):
     url = f"https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade?type=Daily&sect=EW&date={tpex_url_date(today_str)}&id=&response=json"
     print(f"正在從櫃買中心下載 {today_str} 上櫃法人...")
     try:
-        r = requests.get(url, timeout=15)
-        data = r.json()
+        data = get_json(url, timeout=15)
         tables = data.get("tables", [])
         if not tables or not tables[0].get("data"):
             print("上櫃法人今日尚未更新或查無資料"); return []
@@ -357,8 +372,7 @@ def fetch_twse_margin(today_str, valid_stocks):
     url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={url_date}&selectType=ALL"
     print(f"正在從證交所下載 {today_str} 上市融資融券...")
     try:
-        r = requests.get(url, timeout=15)
-        data = r.json()
+        data = get_json(url, timeout=15)
         if data.get("stat") != "OK":
             print(f"上市融資融券尚未更新: {data.get('stat')}"); return []
 
@@ -402,8 +416,7 @@ def fetch_tpex_margin(today_str, valid_stocks):
     url = f"https://www.tpex.org.tw/www/zh-tw/margin/balance?date={tpex_url_date(today_str)}&id=&response=json"
     print(f"正在從櫃買中心下載 {today_str} 上櫃融資融券...")
     try:
-        r = requests.get(url, timeout=15)
-        data = r.json()
+        data = get_json(url, timeout=15)
         tables = data.get("tables", [])
         if not tables or not tables[0].get("data"):
             print("上櫃融資融券今日尚未更新或查無資料"); return []
