@@ -1,27 +1,57 @@
+"""
+台股資料爬蟲（修正版）— 取代儲存庫中的 fetch_stock_info.py
+直接執行是互動模式；auto_fetch.py 也會匯入這個檔案的抓取函式，兩邊共用同一套邏輯。
+
+相較原版的修改：
+  [A] 產業別對照表改為官方代碼（上市、上櫃共用）
+  [B] 上櫃三大法人：日期改用 YYYY%2FMM%2FDD，投信改讀 row[13]，並核對回應日期
+  [C] 融資融券：上市、上櫃統一為「張」；上櫃改用 /margin/balance（含融資、限額、使用率）
+      功能 4 一次寫入 margin_trading 與 margin_utilization，可用區間模式回補；功能 10 併入功能 4
+  [D] 所有櫃買中心帶日期的請求都核對回應日期，不符就不寫入
+  [E] 假日清單改用民國日期解析，並排除「開始交易日／最後交易日」
+  [F] save_data_batches：過濾主鍵為空與重複的資料，並如實回報成功／失敗筆數
+  [G] 每次執行自動更新 stock_info，新上市櫃與轉換市場的股票才會被納入
+  [H] 季報：缺少年度或季別的資料不寫入
+"""
 import requests
 from supabase import create_client
 from dotenv import load_dotenv
 import os
 import time
-from datetime import date, datetime, timedelta  # ✅ 統一匯入
+from datetime import date, datetime, timedelta
 
 load_dotenv()
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-TPEX_INDUSTRY_MAP = {
-    "01": "食品工業", "02": "塑膠工業", "03": "紡織纖維", "04": "機電工業",
-    "05": "電纜電線", "06": "化學工業", "07": "生技醫療", "08": "玻璃陶瓷",
-    "09": "造紙工業", "10": "鋼鐵工業", "11": "橡膠工業", "12": "汽車工業",
-    "13": "電子工業", "14": "建材營造", "15": "航運業", "16": "觀光餐旅",
-    "17": "金融保險", "18": "貿易百貨", "19": "綜合", "20": "其他",
-    "21": "化學生技醫療", "22": "半導體業", "23": "電腦及周邊設備業",
-    "24": "光電業", "25": "通信網路業", "26": "電子零組件業", "27": "電子通路業",
-    "28": "資訊服務業", "29": "其他電子業", "30": "文化創意業", "31": "農業科技業",
-    "32": "電子商務", "33": "觀光事業", "34": "運動休閒", "35": "綠能環保",
-    "36": "數位雲端", "37": "居家生活", "38": "工業應用服務", "39": "未分類",
+# [A] 上市、上櫃共用的官方產業別代碼
+INDUSTRY_MAP = {
+    "01": "水泥工業", "02": "食品工業", "03": "塑膠工業", "04": "紡織纖維",
+    "05": "電機機械", "06": "電器電纜", "08": "玻璃陶瓷", "09": "造紙工業",
+    "10": "鋼鐵工業", "11": "橡膠工業", "12": "汽車工業", "14": "建材營造",
+    "15": "航運業", "16": "觀光餐旅", "17": "金融保險", "18": "貿易百貨",
+    "19": "綜合", "20": "其他", "21": "化學工業", "22": "生技醫療業",
+    "23": "油電燃氣業", "24": "半導體業", "25": "電腦及週邊設備業",
+    "26": "光電業", "27": "通信網路業", "28": "電子零組件業",
+    "29": "電子通路業", "30": "資訊服務業", "31": "其他電子業",
+    "32": "文化創意業", "33": "農業科技業", "34": "電子商務",
+    "35": "綠能環保", "36": "數位雲端", "37": "運動休閒", "38": "居家生活",
+    "80": "管理股票", "91": "存託憑證",
 }
 
 MARKET_MAP = {"listed": "上市", "otc": "上櫃"}
+
+# [F] 各資料表的主鍵，用來在寫入前過濾不完整的資料
+TABLE_KEYS = {
+    "daily_prices":          ("stock_id", "date"),
+    "stock_ins_daily":       ("stock_id", "date"),
+    "margin_trading":        ("stock_id", "date"),
+    "margin_utilization":    ("stock_id", "date"),
+    "holder_distribution":   ("stock_id", "week_date"),
+    "monthly_revenue":       ("stock_id", "year_month"),
+    "quarterly_report":      ("stock_id", "year", "quarter"),
+    "futures_institutional": ("date", "contract_code", "item"),
+}
+
 
 def is_valid_stock(stock_id):
     sid = stock_id.strip()
@@ -63,6 +93,36 @@ def parse_volume(val_str):
     try: return int(val_str)
     except ValueError: return 0
 
+def parse_float(val):
+    if not val:
+        return None
+    try:
+        return float(str(val).replace(",", "").strip())
+    except ValueError:
+        return None
+
+def calc_rate(balance, limit):
+    return round(balance / limit * 100, 2) if limit and limit > 0 else None
+
+
+# ==================== 櫃買中心共用工具 ====================
+def tpex_url_date(today_str):
+    """2026-10-06 -> 2026%2F10%2F06。櫃買中心只認這個格式，其他格式會被忽略。"""
+    dt = datetime.strptime(today_str, "%Y-%m-%d")
+    return f"{dt.year}%2F{dt.strftime('%m')}%2F{dt.strftime('%d')}"
+
+def tpex_date_matches(data, today_str, label):
+    """[D] 櫃買中心看不懂日期時會回傳最新一天的資料，所以一定要核對回應日期。"""
+    resp_date = str(data.get("date", "")).strip()
+    expected = today_str.replace("-", "")
+    if not resp_date:
+        print(f"⚠️ {label}：回應中沒有日期欄位，無法核對，請人工確認")
+        return True
+    if resp_date != expected:
+        print(f"⚠️ {label}：回應日期 {resp_date} 與要求日期 {expected} 不符，跳過不寫入")
+        return False
+    return True
+
 
 # ==================== 1. 個股基本資訊抓取 ====================
 def fetch_listed():
@@ -81,10 +141,10 @@ def fetch_listed():
         records.append({
             "stock_id":     stock_id,
             "stock_name":   row.get("公司簡稱", "").strip(),
-            "industry":     TPEX_INDUSTRY_MAP.get(row.get("產業別", "").strip(), "其他"),
+            "industry":     INDUSTRY_MAP.get(row.get("產業別", "").strip(), "其他"),
             "shares_issued": shares,
             "market":       MARKET_MAP["listed"],
-            "updated_at":   date.today().isoformat(),  # ✅ 修正：改用 date.today()
+            "updated_at":   date.today().isoformat(),
         })
     return records
 
@@ -105,10 +165,10 @@ def fetch_otc():
         records.append({
             "stock_id":     stock_id,
             "stock_name":   row.get("CompanyAbbreviation", "").strip(),
-            "industry":     TPEX_INDUSTRY_MAP.get(row.get("SecuritiesIndustryCode", "").strip(), "其他"),
+            "industry":     INDUSTRY_MAP.get(row.get("SecuritiesIndustryCode", "").strip(), "其他"),
             "shares_issued": shares,
             "market":       MARKET_MAP["otc"],
-            "updated_at":   date.today().isoformat(),  # ✅ 修正：改用 date.today()
+            "updated_at":   date.today().isoformat(),
         })
     return records
 
@@ -116,6 +176,15 @@ def save_to_supabase(records):
     if not records: return
     supabase.table("stock_info").upsert(records, on_conflict="stock_id").execute()
     print(f"Done! {len(records)} records saved to stock_info.")
+
+def refresh_stock_info():
+    """[G] 更新個股基本資訊。任一來源失敗時，沿用資料庫現有清單。"""
+    listed = fetch_listed()
+    otc = fetch_otc()
+    if not listed or not otc:
+        print("⚠️ 個股基本資訊未能完整取得，缺少的部分沿用資料庫現有清單")
+    save_to_supabase(listed)
+    save_to_supabase(otc)
 
 def get_valid_stock_ids():
     valid_stocks = set()
@@ -172,9 +241,7 @@ def fetch_twse_daily_all(today_str, valid_stocks):
 
 
 def fetch_tpex_otc_daily(today_str, valid_stocks):
-    dt = datetime.strptime(today_str, "%Y-%m-%d")  # ✅ 現在 datetime 已正確匯入
-    url_date = f"{dt.year}%2F{dt.strftime('%m')}%2F{dt.strftime('%d')}"
-    url = f"https://www.tpex.org.tw/www/zh-tw/afterTrading/otc?date={url_date}&type=AL&id=&response=json&order=0&sort=asc"
+    url = f"https://www.tpex.org.tw/www/zh-tw/afterTrading/otc?date={tpex_url_date(today_str)}&type=AL&id=&response=json&order=0&sort=asc"
     print(f"正在從櫃買中心下載 {today_str} 上櫃行情...")
     try:
         r = requests.get(url, timeout=30)
@@ -182,6 +249,8 @@ def fetch_tpex_otc_daily(today_str, valid_stocks):
         tables = data.get("tables", [])
         if not tables or not tables[0].get("data"):
             print("上櫃股價今日尚未更新或查無資料"); return []
+        if not tpex_date_matches(data, today_str, "上櫃行情"):
+            return []
 
         records = []
         for row in tables[0]["data"]:
@@ -223,7 +292,8 @@ def fetch_twse_stock_ins(today_str, valid_stocks):
             records.append({
                 "stock_id":           stock_id,
                 "date":               today_str,
-                "foreign_net_shares": parse_volume(row[4]),
+                # 外資含外資自營商（row[7]），與上櫃的「外資及陸資合計」定義一致
+                "foreign_net_shares": parse_volume(row[4]) + parse_volume(row[7]),
                 "sitca_net_shares":   parse_volume(row[10]),
                 "dealers_net_shares": parse_volume(row[11]),
                 "total_net_shares":   parse_volume(row[18]),
@@ -234,13 +304,19 @@ def fetch_twse_stock_ins(today_str, valid_stocks):
 
 
 def fetch_tpex_stock_ins(today_str, valid_stocks):
-    dt = datetime.strptime(today_str, "%Y-%m-%d")  # ✅ 現在 datetime 已正確匯入
+    """
+    [B] 上櫃三大法人。欄位（每組為 買進／賣出／買賣超）：
+      row[2:5]   外資及陸資（不含外資自營商）   row[5:8]   外資自營商
+      row[8:11]  外資及陸資合計                 row[11:14] 投信
+      row[14:17] 自營商（自行買賣）             row[17:20] 自營商（避險）
+      row[20:23] 自營商合計                     row[23]    三大法人合計
+    """
+    dt = datetime.strptime(today_str, "%Y-%m-%d")
     if dt.weekday() >= 5:
         print(f"{today_str} 為週末，跳過上櫃法人抓取")
         return []
 
-    url_date = today_str.replace("-", "")
-    url = f"https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade?type=Daily&sect=EW&date={url_date}&id=&response=json"
+    url = f"https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade?type=Daily&sect=EW&date={tpex_url_date(today_str)}&id=&response=json"
     print(f"正在從櫃買中心下載 {today_str} 上櫃法人...")
     try:
         r = requests.get(url, timeout=15)
@@ -248,31 +324,36 @@ def fetch_tpex_stock_ins(today_str, valid_stocks):
         tables = data.get("tables", [])
         if not tables or not tables[0].get("data"):
             print("上櫃法人今日尚未更新或查無資料"); return []
+        if not tpex_date_matches(data, today_str, "上櫃法人"):
+            return []
 
         records = []
         for row in tables[0]["data"]:
+            if len(row) < 24:
+                continue
             stock_id = row[0].strip()
             if stock_id not in valid_stocks: continue
             records.append({
                 "stock_id":           stock_id,
                 "date":               today_str,
-                "foreign_net_shares": parse_volume(row[4]),
-                "sitca_net_shares":   parse_volume(row[10]),
+                "foreign_net_shares": parse_volume(row[10]),
+                "sitca_net_shares":   parse_volume(row[13]),
                 "dealers_net_shares": parse_volume(row[22]),
                 "total_net_shares":   parse_volume(row[23]),
             })
 
         if len(records) < 500:
-            print(f"⚠️ 警告：上櫃法人資料筆數異常偏低（{len(records)}筆），可能是非交易日或資料異常，仍會寫入請人工確認")
+            print(f"⚠️ 警告：上櫃法人資料筆數異常偏低（{len(records)}筆），請人工確認")
 
         return records
     except Exception as e:
         print(f"抓取上櫃法人失敗: {e}"); return []
 
 
-# ==================== 4. 融資融劵抓取 ====================
+# ==================== 4. 融資融券抓取（餘額＋限額＋使用率，單位一律為「張」）====================
 def fetch_twse_margin(today_str, valid_stocks):
-    url_date = today_str.replace("-", "")  # ✅ 西元年格式
+    """[C] 上市融資融券。MI_MARGN：row[6]/row[7] 融資餘額/限額，row[12]/row[13] 融券餘額/限額"""
+    url_date = today_str.replace("-", "")
     url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={url_date}&selectType=ALL"
     print(f"正在從證交所下載 {today_str} 上市融資融券...")
     try:
@@ -293,11 +374,19 @@ def fetch_twse_margin(today_str, valid_stocks):
             stock_id = row[0].strip()
             if stock_id not in valid_stocks:
                 continue
+            margin_balance = parse_volume(row[6])
+            margin_limit   = parse_volume(row[7])
+            short_balance  = parse_volume(row[12])
+            short_limit    = parse_volume(row[13])
             records.append({
                 "stock_id":       stock_id,
                 "date":           today_str,
-                "margin_balance": parse_volume(row[6]),
-                "short_balance":  parse_volume(row[12]),
+                "margin_balance": margin_balance,
+                "margin_limit":   margin_limit,
+                "margin_rate":    calc_rate(margin_balance, margin_limit),
+                "short_balance":  short_balance,
+                "short_limit":    short_limit,
+                "short_rate":     calc_rate(short_balance, short_limit),
             })
         return records
     except Exception as e:
@@ -305,9 +394,12 @@ def fetch_twse_margin(today_str, valid_stocks):
 
 
 def fetch_tpex_margin(today_str, valid_stocks):
-    dt = datetime.strptime(today_str, "%Y-%m-%d")  # ✅ 現在 datetime 已正確匯入
-    url_date = f"{dt.year}%2F{dt.strftime('%m')}%2F{dt.strftime('%d')}"
-    url = f"https://www.tpex.org.tw/www/zh-tw/margin/sbl?date={url_date}&id=&response=json"
+    """
+    [C] 上櫃融資融券。/margin/balance：
+      row[6] 資餘額   row[8] 資使用率(%)   row[9] 資限額
+      row[14] 券餘額  row[16] 券使用率(%)  row[17] 券限額
+    """
+    url = f"https://www.tpex.org.tw/www/zh-tw/margin/balance?date={tpex_url_date(today_str)}&id=&response=json"
     print(f"正在從櫃買中心下載 {today_str} 上櫃融資融券...")
     try:
         r = requests.get(url, timeout=15)
@@ -315,21 +407,42 @@ def fetch_tpex_margin(today_str, valid_stocks):
         tables = data.get("tables", [])
         if not tables or not tables[0].get("data"):
             print("上櫃融資融券今日尚未更新或查無資料"); return []
+        if not tpex_date_matches(data, today_str, "上櫃融資融券"):
+            return []
 
         records = []
         for row in tables[0]["data"]:
+            if len(row) < 18:
+                continue
             stock_id = row[0].strip()
             if stock_id not in valid_stocks:
                 continue
             records.append({
                 "stock_id":       stock_id,
                 "date":           today_str,
-                "margin_balance": None,
-                "short_balance":  parse_volume(row[6]),
+                "margin_balance": parse_volume(row[6]),
+                "margin_limit":   parse_volume(row[9]),
+                "margin_rate":    parse_float(row[8]),
+                "short_balance":  parse_volume(row[14]),
+                "short_limit":    parse_volume(row[17]),
+                "short_rate":     parse_float(row[16]),
             })
         return records
     except Exception as e:
         print(f"抓取上櫃融資融券失敗: {e}"); return []
+
+
+def to_margin_trading(records):
+    """從完整的融資融券資料取出 margin_trading 需要的欄位"""
+    return [
+        {
+            "stock_id":       r["stock_id"],
+            "date":           r["date"],
+            "margin_balance": r["margin_balance"],
+            "short_balance":  r["short_balance"],
+        }
+        for r in records
+    ]
 
 
 # ==================== 5. 大戶持股比例抓取 ====================
@@ -373,7 +486,7 @@ def fetch_holder_distribution(valid_stocks):
 def parse_year_month(ym_str):
     """民國年月 11503 -> 2026-03"""
     ym_str = str(ym_str).strip()
-    if len(ym_str) == 5:
+    if len(ym_str) == 5 and ym_str.isdigit():
         roc_year = int(ym_str[:3])
         month = ym_str[3:5]
         return f"{roc_year + 1911}-{month}"
@@ -432,14 +545,7 @@ def fetch_monthly_revenue(valid_stocks):
 
 
 # ==================== 7. 季報抓取 ====================
-def parse_float(val):
-    if not val:
-        return None
-    try:
-        return float(str(val).replace(",", "").strip())
-    except ValueError:
-        return None
-
+# 注意：來源的 EPS 與淨利是「年初至該季」的累計值，單季數字需用本季減上季。
 def parse_roc_year(year_str):
     try:
         return int(str(year_str).strip()) + 1911
@@ -568,7 +674,7 @@ def fetch_quarterly_report(valid_stocks):
 
     if latest_date_res.data:
         latest_date = latest_date_res.data[0]["date"]
-        cutoff_date = (datetime.strptime(latest_date, "%Y-%m-%d") - timedelta(days=10)).strftime("%Y-%m-%d")  # ✅ 現在 timedelta 已正確匯入
+        cutoff_date = (datetime.strptime(latest_date, "%Y-%m-%d") - timedelta(days=10)).strftime("%Y-%m-%d")
 
         start = 0
         while True:
@@ -590,6 +696,7 @@ def fetch_quarterly_report(valid_stocks):
         print(f"  取得 {len(price_map)} 檔股票最新收盤價")
 
     records = []
+    skipped = 0
     all_stocks = set(income_data.keys()) | set(balance_data.keys())
 
     for stock_id in all_stocks:
@@ -598,6 +705,11 @@ def fetch_quarterly_report(valid_stocks):
 
         inc  = income_data.get(stock_id, {})
         bal  = balance_data.get(stock_id, {})
+
+        # [H] 沒有年度或季別就無法組成主鍵，不寫入
+        if not inc.get("year") or not inc.get("quarter"):
+            skipped += 1
+            continue
 
         net_income   = inc.get("net_income")
         equity_total = bal.get("equity_total")
@@ -624,6 +736,8 @@ def fetch_quarterly_report(valid_stocks):
             "roe":          roe,
             "updated_at":   inc.get("updated_at"),
         })
+    if skipped:
+        print(f"  有 {skipped} 檔缺少損益表的年度或季別，已略過")
     return records
 
 
@@ -651,7 +765,6 @@ def fetch_futures_institutional():
 
         record_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
 
-        
         records.append({
             "date":           record_date,
             "contract_code":  row.get("ContractCode", "").strip(),
@@ -666,133 +779,70 @@ def fetch_futures_institutional():
 
     return records
 
-# ==================== 10. 融資融券使用率抓取 ====================
-
-def fetch_twse_margin_utilization(today_str, valid_stocks):
-    """上市融資融券使用率 - 從原本 MI_MARGN 抓限額並自算使用率"""
-    url_date = today_str.replace("-", "")
-    url = f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={url_date}&selectType=ALL"
-    print(f"正在從證交所下載 {today_str} 上市融資融券使用率...")
-    try:
-        r = requests.get(url, timeout=15)
-        data = r.json()
-        if data.get("stat") != "OK":
-            print(f"上市融資融券尚未更新: {data.get('stat')}"); return []
-
-        table = next(
-            (t for t in data.get("tables", []) if "融資融券彙總" in t.get("title", "")), None
-        )
-        if not table:
-            print("找不到融資融券彙總表"); return []
-
-        records = []
-        for row in table.get("data", []):
-            stock_id = row[0].strip()
-            if stock_id not in valid_stocks:
-                continue
-
-            margin_balance = parse_volume(row[6])   # 融資今日餘額（股）
-            margin_limit   = parse_volume(row[7])   # 融資限額（股）
-            short_balance  = parse_volume(row[12])  # 融券今日餘額（股）
-            short_limit    = parse_volume(row[13])  # 融券限額（股）
-
-            records.append({
-                "stock_id":       stock_id,
-                "date":           today_str,
-                "margin_balance": margin_balance,
-                "margin_limit":   margin_limit,
-                "margin_rate":    round(margin_balance / margin_limit * 100, 2) if margin_limit > 0 else None,
-                "short_balance":  short_balance,
-                "short_limit":    short_limit,
-                "short_rate":     round(short_balance / short_limit * 100, 2) if short_limit > 0 else None,
-            })
-        return records
-    except Exception as e:
-        print(f"抓取上市融資融券使用率失敗: {e}"); return []
-
-
-def fetch_tpex_margin_utilization(valid_stocks):
-    """上櫃融資融券使用率 - 從新 OpenAPI 抓取，直接提供使用率"""
-    url = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance"
-    print("正在從櫃買中心下載上櫃融資融券使用率...")
-    try:
-        r = requests.get(url, timeout=15)
-        data = r.json()
-    except Exception as e:
-        print(f"抓取上櫃融資融券使用率失敗: {e}"); return []
-
-    if not data:
-        print("上櫃融資融券使用率查無資料"); return []
-
-    # 從第一筆取得日期（民國年 1150722 → 2026-07-22）
-    date_str = data[0].get("Date", "").strip()
-    if len(date_str) != 7:
-        print(f"日期格式異常: {date_str}"); return []
-    record_date = f"{int(date_str[:3]) + 1911}-{date_str[3:5]}-{date_str[5:7]}"
-    print(f"  上櫃資料日期：{record_date}")
-
-    records = []
-    for row in data:
-        stock_id = row.get("SecuritiesCompanyCode", "").strip()
-        if stock_id not in valid_stocks:
-            continue
-
-        margin_balance = int(row.get("MarginPurchaseBalance", 0) or 0) * 1000  # 張 → 股
-        margin_limit   = int(row.get("MarginPurchaseQuota", 0) or 0) * 1000    # 張 → 股
-        short_balance  = int(row.get("ShortSaleBalance", 0) or 0) * 1000       # 張 → 股
-        short_limit    = int(row.get("ShortSaleQuota", 0) or 0) * 1000         # 張 → 股
-
-        records.append({
-            "stock_id":       stock_id,
-            "date":           record_date,
-            "margin_balance": margin_balance,
-            "margin_limit":   margin_limit,
-            "margin_rate":    float(row.get("MarginPurchaseUtilizationRate", 0) or 0),
-            "short_balance":  short_balance,
-            "short_limit":    short_limit,
-            "short_rate":     float(row.get("ShortSaleUtilizationRate", 0) or 0),
-        })
-    return records
-
-
-def fetch_margin_utilization(today_str, valid_stocks):
-    """合併上市+上櫃融資融券使用率"""
-    records = []
-    records.extend(fetch_twse_margin_utilization(today_str, valid_stocks))
-    records.extend(fetch_tpex_margin_utilization(valid_stocks))
-    return records
-
 
 # ==================== 資料庫儲存工具 ====================
 def save_data_batches(table_name, records):
-    if not records: return
+    """[F] 過濾主鍵為空或重複的資料後分批寫入，並如實回報結果。回傳 (成功筆數, 失敗筆數)。"""
+    if not records:
+        print(f"{table_name}：沒有資料可寫入")
+        return 0, 0
+
+    keys = TABLE_KEYS.get(table_name, ())
+    if keys:
+        by_key = {}
+        for r in records:
+            if any(r.get(k) is None or r.get(k) == "" for k in keys):
+                continue
+            by_key[tuple(r[k] for k in keys)] = r  # 主鍵重複時保留最後一筆
+        clean = list(by_key.values())
+    else:
+        clean = list(records)
+    dropped = len(records) - len(clean)
+
+    saved = failed = 0
     batch_size = 500
-    for i in range(0, len(records), batch_size):
-        batch = records[i:i + batch_size]
-        try: supabase.table(table_name).upsert(batch).execute()
-        except Exception as e: print(f"儲存 {table_name} 錯誤 (Index {i}): {e}")
-    print(f"成功儲存/更新共 {len(records)} 筆資料至 {table_name}！")
+    for i in range(0, len(clean), batch_size):
+        batch = clean[i:i + batch_size]
+        try:
+            supabase.table(table_name).upsert(batch).execute()
+            saved += len(batch)
+        except Exception as e:
+            failed += len(batch)
+            print(f"儲存 {table_name} 錯誤 (Index {i}): {e}")
+
+    msg = f"{table_name}：成功寫入 {saved} 筆"
+    if failed:
+        msg += f"，失敗 {failed} 筆 ❌"
+    if dropped:
+        msg += f"，略過 {dropped} 筆（主鍵為空或重複）"
+    print(msg)
+    return saved, failed
 
 
 # ==================== 交易日工具 ====================
 def get_trading_days(start_str, end_str):
-    """從證交所抓取指定區間內的交易日清單，自動排除假日與週末"""
+    """
+    [E] 列出區間內的平日並排除證交所公告的休市日。
+    休市清單只涵蓋當年度，也不含颱風假；那些日子來源會回傳空資料，抓取函式會自行跳過。
+    """
     print("正在從證交所取得交易日曆...")
+    holidays = set()
     try:
         r = requests.get(
             "https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule",
             timeout=10
         )
-        holidays = set()
         for item in r.json():
-            date_str = item.get("Date", "").strip()
-            if date_str:
-                holidays.add(date_str)
+            name = item.get("Name", "")
+            if "開始交易" in name or "最後交易" in name:
+                continue  # 這些是有開盤的日子
+            holiday = parse_roc_date(item.get("Date", ""))
+            if holiday:
+                holidays.add(holiday)
     except Exception as e:
         print(f"⚠️ 無法取得假日清單，僅排除週末: {e}")
-        holidays = set()
 
-    start = datetime.strptime(start_str, "%Y-%m-%d")  # ✅ 現在 datetime 已正確匯入
+    start = datetime.strptime(start_str, "%Y-%m-%d")
     end   = datetime.strptime(end_str, "%Y-%m-%d")
 
     trading_days = []
@@ -860,26 +910,26 @@ if __name__ == "__main__":
         print(" 1. 更新個股基本資訊")
         print(" 2. 同步每日股價")
         print(" 3. 同步三大法人")
-        print(" 4. 同步融資融券")
+        print(" 4. 同步融資融券（餘額＋限額＋使用率）")
         print(" 5. 同步大戶持股比例")
         print(" 6. 同步月營收")
         print(" 7. 同步每日股價 + 三大法人 + 融資融券")
         print(" 8. 同步季報（EPS／淨值／P/B／ROE）")
         print(" 9. 同步期貨三大法人未平倉")
-        print("10. 同步融資融券使用率")
+        print("10. （已併入功能 4）")
         print(" 0. 全部執行")
-        valid_choices = {"1", "2", "3", "4", "5", "6", "7", "8", "9","10"}
+        valid_choices = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}
     else:
         print(" 2. 同步每日股價")
         print(" 3. 同步三大法人")
-        print(" 4. 同步融資融券")
+        print(" 4. 同步融資融券（餘額＋限額＋使用率）")
         print(" 7. 同步每日股價 + 三大法人 + 融資融券（全部）")
         print(" 0. 全部執行")
         valid_choices = {"2", "3", "4", "7"}
 
     print("==================================================")
     if mode == "1":
-        print(" ⚠️  注意：功能 1、5、6 與日期無關，只會執行一次")
+        print(" ⚠️  注意：功能 1、5、6、8、9 與日期無關，只會執行一次")
         print("==================================================")
 
     while True:
@@ -894,18 +944,31 @@ if __name__ == "__main__":
         else:
             break
 
+    if "7" in choices:
+        choices.update({"2", "3", "4"})
+    if "10" in choices:
+        choices.add("4")
+
     valid_stocks = None
+    stock_info_refreshed = False
+
+    def ensure_stock_info():
+        """[G] 每次執行只更新一次個股基本資訊"""
+        global stock_info_refreshed
+        if not stock_info_refreshed:
+            print("\n--- 更新個股基本資訊 ---")
+            refresh_stock_info()
+            stock_info_refreshed = True
 
     def ensure_valid_stocks():
         global valid_stocks
         if valid_stocks is None:
+            ensure_stock_info()
             valid_stocks = get_valid_stock_ids()
             print(f"資料庫內現有 {len(valid_stocks)} 檔股票可供對應。")
 
     if "1" in choices:
-        print("\n--- 步驟 1: 更新個股基本資訊 ---")
-        save_to_supabase(fetch_listed())
-        save_to_supabase(fetch_otc())
+        ensure_stock_info()
 
     if "5" in choices:
         print("\n--- 步驟 5: 同步大戶持股比例 ---")
@@ -917,9 +980,6 @@ if __name__ == "__main__":
         ensure_valid_stocks()
         save_data_batches("monthly_revenue", fetch_monthly_revenue(valid_stocks))
 
-    if "7" in choices:
-        choices.update({"2", "3", "4"})
-
     if "8" in choices:
         print("\n--- 步驟 8: 同步季報 ---")
         ensure_valid_stocks()
@@ -930,13 +990,6 @@ if __name__ == "__main__":
         print("\n--- 步驟 9: 同步期貨三大法人未平倉 ---")
         futures_ins_data = fetch_futures_institutional()
         save_data_batches("futures_institutional", futures_ins_data)
-
-    if "10" in choices:
-        print("\n--- 步驟 10: 同步融資融券使用率 ---")
-        ensure_valid_stocks()
-        today_util = datetime.now().strftime("%Y-%m-%d")  # ✅ 用當天日期
-        utilization_data = fetch_margin_utilization(today_util, valid_stocks)
-        save_data_batches("margin_utilization", utilization_data)
 
     daily_choices = choices & {"2", "3", "4"}
     if daily_choices:
@@ -971,7 +1024,8 @@ if __name__ == "__main__":
                 all_margin.extend(fetch_twse_margin(today, valid_stocks))
                 time.sleep(SLEEP_BETWEEN_API)
                 all_margin.extend(fetch_tpex_margin(today, valid_stocks))
-                save_data_batches("margin_trading", all_margin)
+                save_data_batches("margin_utilization", all_margin)
+                save_data_batches("margin_trading", to_margin_trading(all_margin))
 
             if i < total:
                 time.sleep(SLEEP_BETWEEN_DAYS)
