@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 from datetime import datetime
 import sys
@@ -77,22 +77,43 @@ sitca_10d    = ins["sitca_net_shares"].sum() if not ins.empty else 0
 dealers_10d  = ins["dealers_net_shares"].sum() if not ins.empty else 0
 
 # ===== 計算本益比 =====
+# 季報的 EPS 是「年初至該季」的累計值，不是單季數字：
+#   - 第 4 季的累計就是全年 EPS
+#   - 有去年資料時算近四季：本期累計 + 去年全年 − 去年同期累計
+#   - 否則用累計值年化：EPS × 4 ÷ 季別
 pe_ratio = None
 pe_note  = ""
+q_label  = ""
 if not quarterly.empty:
-    q_sorted  = quarterly.sort_values(["year", "quarter"])
-    recent_4q = q_sorted.tail(4)
-    eps_list  = recent_4q["eps"].dropna().tolist()
-    if len(eps_list) == 4:
-        annual_eps = sum(eps_list)
-        pe_note    = "近4季"
-    elif len(eps_list) >= 1:
-        annual_eps = eps_list[-1] * 4
-        pe_note    = "單季×4"
-    else:
-        annual_eps = None
+    q_sorted = quarterly.sort_values(["year", "quarter"])
+    last_q   = q_sorted.iloc[-1]
+    q_year   = int(last_q["year"])
+    q_num    = int(last_q["quarter"])
+    q_label  = f"{q_year} 年前 {q_num} 季累計"
+    eps_now  = last_q.get("eps")
+
+    annual_eps = None
+    if eps_now is not None and pd.notna(eps_now) and q_num > 0:
+        prev_full = q_sorted[(q_sorted["year"] == q_year - 1) & (q_sorted["quarter"] == 4)]["eps"].dropna()
+        prev_same = q_sorted[(q_sorted["year"] == q_year - 1) & (q_sorted["quarter"] == q_num)]["eps"].dropna()
+        if q_num == 4:
+            annual_eps = eps_now
+            pe_note    = "全年"
+        elif not prev_full.empty and not prev_same.empty:
+            annual_eps = eps_now + prev_full.iloc[-1] - prev_same.iloc[-1]
+            pe_note    = "近4季"
+        else:
+            annual_eps = eps_now * 4 / q_num
+            pe_note    = f"前{q_num}季年化"
     if annual_eps and annual_eps > 0 and close:
         pe_ratio = round(close / annual_eps, 2)
+
+# ===== P/B 用最新收盤價現算（資料庫存的是抓季報當下的股價）=====
+book_value = latest_q.get("book_value")
+if book_value is not None and pd.notna(book_value) and book_value > 0 and close:
+    pb_now = round(close / book_value, 2)
+else:
+    pb_now = latest_q.get("pb_ratio")
 
 up_color = "#dc2626" if change >= 0 else "#16a34a"
 up_arrow = "▲" if change >= 0 else "▼"
@@ -219,12 +240,12 @@ body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp)
 </div>
 
 <div class="sec">
-  <div class="st"><span class="sn">②</span> 基本面指標（最新季）</div>
+  <div class="st"><span class="sn">②</span> 基本面指標（{q_label or "最新季"}）</div>
   <div class="kg5">
-    <div class="kb"><div class="kl">EPS（每股盈餘）</div><div class="kv {'kv-gn' if latest_q.get('eps',0) and latest_q.get('eps',0)>0 else 'kv-rd'}">{fmt(latest_q.get('eps'))}</div><div class="kn">元</div></div>
+    <div class="kb"><div class="kl">EPS（年初累計）</div><div class="kv {'kv-gn' if latest_q.get('eps',0) and latest_q.get('eps',0)>0 else 'kv-rd'}">{fmt(latest_q.get('eps'))}</div><div class="kn">元</div></div>
     <div class="kb"><div class="kl">P/E（本益比・{pe_note}）</div><div class="kv kv-or">{fmt(pe_ratio) if pe_ratio else 'N/A'}</div><div class="kn">倍</div></div>
-    <div class="kb"><div class="kl">ROE（股東權益報酬率）</div><div class="kv kv-or">{fmt(latest_q.get('roe'))}</div><div class="kn">%</div></div>
-    <div class="kb"><div class="kl">P/B（股價淨值比）</div><div class="kv kv-or">{fmt(latest_q.get('pb_ratio'))}</div><div class="kn">倍</div></div>
+    <div class="kb"><div class="kl">ROE（年初累計・未年化）</div><div class="kv kv-or">{fmt(latest_q.get('roe'))}</div><div class="kn">%</div></div>
+    <div class="kb"><div class="kl">P/B（股價淨值比）</div><div class="kv kv-or">{fmt(pb_now)}</div><div class="kn">倍</div></div>
     <div class="kb"><div class="kl">每股淨值</div><div class="kv">{fmt(latest_q.get('book_value'))}</div><div class="kn">元</div></div>
   </div>
 </div>
@@ -252,9 +273,9 @@ body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp)
 <div class="sec">
   <div class="st"><span class="sn">⑤</span> 資金面（融資融券）</div>
   <div class="kg">
-    <div class="kb"><div class="kl">融資餘額</div><div class="kv">{f"{latest_margin.get('margin_balance'):,.0f}" if latest_margin.get('margin_balance') else 'N/A'}</div><div class="kn">股</div></div>
+    <div class="kb"><div class="kl">融資餘額</div><div class="kv">{f"{latest_margin.get('margin_balance'):,.0f}" if latest_margin.get('margin_balance') else 'N/A'}</div><div class="kn">張</div></div>
     <div class="kb"><div class="kl">融資使用率</div><div class="kv kv-or">{fmt(latest_util.get('margin_rate'),'%') if latest_util.get('margin_rate') is not None else 'N/A'}</div></div>
-    <div class="kb"><div class="kl">融券餘額</div><div class="kv">{f"{latest_margin.get('short_balance'):,.0f}" if latest_margin.get('short_balance') else 'N/A'}</div><div class="kn">股</div></div>
+    <div class="kb"><div class="kl">融券餘額</div><div class="kv">{f"{latest_margin.get('short_balance'):,.0f}" if latest_margin.get('short_balance') else 'N/A'}</div><div class="kn">張</div></div>
     <div class="kb"><div class="kl">融券使用率</div><div class="kv kv-or">{fmt(latest_util.get('short_rate'),'%') if latest_util.get('short_rate') is not None else 'N/A'}</div></div>
   </div>
 </div>
