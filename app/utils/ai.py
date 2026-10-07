@@ -1,5 +1,6 @@
-﻿from groq import Groq
+from groq import Groq
 import os
+import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,6 +28,19 @@ def analyze_stock(stock_info, price_data, ins_data, margin_data,
     # 計算月營收年增率趨勢
     yoy_trend = revenue_data["yoy_growth"].tail(3).tolist() if not revenue_data.empty else []
 
+    # 季報期間（EPS、ROE、淨利都是年初至該季的累計值）
+    q_year = latest_quarterly.get("year")
+    q_num  = latest_quarterly.get("quarter")
+    period = f"{int(q_year)} 年前 {int(q_num)} 季累計" if pd.notna(q_year) and pd.notna(q_num) else "N/A"
+
+    # P/B 用最新收盤價現算（資料庫存的是抓季報當下的股價）
+    close_price = latest_price.get("close_price")
+    book_value  = latest_quarterly.get("book_value")
+    if pd.notna(close_price) and pd.notna(book_value) and book_value > 0:
+        pb_ratio = round(close_price / book_value, 2)
+    else:
+        pb_ratio = latest_quarterly.get("pb_ratio", "N/A")
+
     prompt = f"""
 你是一位專業的台股分析師，請根據以下數據對 {stock_info.get('stock_name', '')}（{stock_info.get('stock_id', '')}）進行全面性分析。
 請用繁體中文回答，分為以下六個面向，每個面向給出重點觀察和結論。
@@ -40,15 +54,16 @@ def analyze_stock(stock_info, price_data, ins_data, margin_data,
 ## 一、價值面
 - 最新收盤價：{latest_price.get('close_price', 'N/A')}
 - 每股淨值：{latest_quarterly.get('book_value', 'N/A')}
-- 股價淨值比（P/B）：{latest_quarterly.get('pb_ratio', 'N/A')} 倍
-- EPS（最新季）：{latest_quarterly.get('eps', 'N/A')} 元
-- ROE：{latest_quarterly.get('roe', 'N/A')}%
+- 股價淨值比（P/B）：{pb_ratio} 倍
+- 財報期間：{period}（以下 EPS、ROE、淨利皆為年初至該季的累計值，不是單季，也未年化）
+- EPS（累計）：{latest_quarterly.get('eps', 'N/A')} 元
+- ROE（累計）：{latest_quarterly.get('roe', 'N/A')}%
 
 ## 二、成長面
 - 最新月營收年增率：{latest_revenue.get('yoy_growth', 'N/A')}%
 - 最新月營收月增率：{latest_revenue.get('mom_growth', 'N/A')}%
 - 近3期年增率趨勢：{yoy_trend}
-- 本期淨利：{latest_quarterly.get('net_income', 'N/A')} 千元
+- 本期淨利（累計）：{latest_quarterly.get('net_income', 'N/A')} 千元
 
 ## 三、籌碼面
 - 外資近10日買賣超：{foreign_10d:,} 股
@@ -59,8 +74,8 @@ def analyze_stock(stock_info, price_data, ins_data, margin_data,
 - 大戶持股比例：{latest_holder.get('big_holder_ratio', 'N/A')}%
 
 ## 四、資金面
-- 融資餘額：{latest_margin.get('margin_balance', 'N/A')} 股
-- 融券餘額：{latest_margin.get('short_balance', 'N/A')} 股
+- 融資餘額：{latest_margin.get('margin_balance', 'N/A')} 張
+- 融券餘額：{latest_margin.get('short_balance', 'N/A')} 張
 
 ## 五、技術面
 - RSI：{signals.get('RSI', {}).get('value', 'N/A')} （{signals.get('RSI', {}).get('status', 'N/A')}）
