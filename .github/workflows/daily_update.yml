@@ -3,7 +3,9 @@ on:
   schedule:
     # 平日（週一到五）台灣時間晚上9:08（UTC 13:08）- 期貨專用
     - cron: '08 13 * * 1-5'
-    # 平日（週一到五）台灣時間晚上11:11（UTC 15:11）- 股價/法人/融資券/融資券使用率
+    # 隔日台灣時間早上6:30（UTC 22:30）- 期貨補抓，避免晚上那次抓到的還是前一天
+    - cron: '30 22 * * 1-5'
+    # 平日（週一到五）台灣時間晚上11:11（UTC 15:11）- 股價/法人/融資券
     - cron: '11 15 * * 1-5'
     # 週六台灣時間早上9:06（UTC 01:06）- 大戶持股
     - cron: '06 1 * * 6'
@@ -13,10 +15,17 @@ on:
         description: '只執行大戶持股（測試用）'
         type: boolean
         default: false
+      target_date:
+        description: '補抓指定日期的股價/法人/融資券（YYYY-MM-DD，留空為今天）'
+        type: string
+        default: ''
 
 jobs:
   update-futures:
-    if: github.event.schedule == '08 13 * * 1-5'
+    if: >-
+      github.event.schedule == '08 13 * * 1-5' ||
+      github.event.schedule == '30 22 * * 1-5' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only != 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -49,6 +58,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TARGET_DATE: ${{ github.event.inputs.target_date }}
         run: python auto_fetch.py
 
   update-holder-only:
