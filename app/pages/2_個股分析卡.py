@@ -2,16 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
-from datetime import datetime
 import sys
 import os
-
-# ===== 登入驗證 =====
-if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
-    st.warning("請先登入")
-    st.switch_page("main.py")
-    st.stop()
-# ===== 主程式碼 ====
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import (
@@ -20,6 +12,8 @@ from utils.db import (
     get_margin_utilization, get_stock_list
 )
 from utils.indicators import calc_all, get_latest_signals
+from utils.ui import require_login, UP_COLOR, DOWN_COLOR
+require_login()
 
 st.set_page_config(page_title="個股分析卡", page_icon="🗂️", layout="wide")
 st.title("🗂️ 個股深度分析卡")
@@ -145,17 +139,6 @@ def fmt(v, suffix="", decimals=2):
     if v is None or pd.isna(v):
         return "N/A"
     return f"{v:.{decimals}f}{suffix}"
-
-def fmt_rate(v):
-    """融資融券使用率格式化，加上顏色"""
-    if v is None or pd.isna(v):
-        return "N/A"
-    if v >= 20:
-        return f'<span style="color:#dc2626;font-weight:700;">{v:.2f}%</span>'
-    elif v >= 10:
-        return f'<span style="color:#ea580c;font-weight:600;">{v:.2f}%</span>'
-    else:
-        return f"{v:.2f}%"
 
 # ===== 建立 HTML 卡片 =====
 html = f"""
@@ -335,9 +318,6 @@ body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp)
 st.components.v1.html(html, height=1500, scrolling=True)
 
 # ===== 圖表 =====
-UP_COLOR   = "#dc2626"  # 紅漲
-DOWN_COLOR = "#16a34a"  # 綠跌
-
 st.markdown("---")
 st.subheader("📈 股價走勢")
 range_days = st.radio(

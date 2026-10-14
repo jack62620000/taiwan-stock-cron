@@ -3,14 +3,10 @@ import pandas as pd
 import sys
 import os
 
-# ===== 登入驗證 =====
-if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
-    st.warning("請先登入")
-    st.switch_page("main.py")
-    st.stop()
-# ===== 主程式碼 ====
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from utils.db import get_stock_list, get_recent_dates, supabase
+from utils.db import get_stock_list, get_recent_dates, get_snapshots
+from utils.ui import require_login, color_value, render_html_table
+require_login()
 
 st.set_page_config(
     page_title="台股外資法人",
@@ -33,25 +29,8 @@ def load_recent_ins_data(num_days=5):
     if not dates_found:
         return pd.DataFrame(), []
 
-    # 抓這些日期的所有資料
-    all_data = []
-    for d in dates_found:
-        start = 0
-        while True:
-            r = supabase.table("stock_ins_daily") \
-                .select("stock_id, date, foreign_net_shares") \
-                .eq("date", d) \
-                .order("stock_id", desc=False) \
-                .range(start, start + 999) \
-                .execute()
-            if not r.data:
-                break
-            all_data.extend(r.data)
-            if len(r.data) < 1000:
-                break
-            start += 1000
-
-    return pd.DataFrame(all_data), dates_found
+    data = get_snapshots("stock_ins_daily", dates_found, "stock_id, date, foreign_net_shares")
+    return data, dates_found
 
 stock_list = get_stock_list()
 ins_data, dates_found = load_recent_ins_data(num_days=15)
@@ -81,16 +60,6 @@ with col4:
     )
 
 # ===== 整理成寬表格（pivot）=====
-def color_value(val):
-    if val is None or pd.isna(val):
-        return ""
-    if val > 0:
-        return f'<span style="color:#dc2626;font-weight:600;">{val:,.0f}</span>'
-    elif val < 0:
-        return f'<span style="color:#16a34a;font-weight:600;">{val:,.0f}</span>'
-    else:
-        return f"{val:,.0f}"
-
 # 以股票清單為底，依次合併每一天的資料
 base = stock_list[["stock_id", "stock_name"]].copy()
 
@@ -141,59 +110,7 @@ for _, row in filtered.iterrows():
         record[f"外資\n{d}"] = color_value(row.get(f"外資_{d}"))
     html_rows.append(record)
 
-html_df = pd.DataFrame(html_rows)
-
-# 表頭用換行顯示日期
-display_cols = {}
-for col in html_df.columns:
-    display_cols[col] = col.replace("\n", "<br>")
-html_df_display = html_df.rename(columns=display_cols)
-
-table_html = html_df_display.to_html(escape=False, index=False, classes="ins-table")
-
-table_style = """
-<style>
-.ins-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-    font-family: -apple-system, "Noto Sans TC", sans-serif;
-}
-.ins-table th {
-    background: #f0f2f6;
-    padding: 8px 6px;
-    text-align: center;
-    border-bottom: 2px solid #ddd;
-    position: sticky;
-    top: 0;
-    white-space: nowrap;
-    z-index: 1;
-    line-height: 1.4;
-}
-.ins-table td {
-    padding: 5px 8px;
-    text-align: right;
-    border-bottom: 1px solid #eee;
-    white-space: nowrap;
-}
-.ins-table td:nth-child(1), .ins-table td:nth-child(2) {
-    text-align: left;
-}
-.ins-table tr:hover {
-    background: #f9f9f9;
-}
-.table-container {
-    max-height: 700px;
-    overflow-y: auto;
-    overflow-x: auto;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-}
-</style>
-"""
-
-st.markdown(table_style, unsafe_allow_html=True)
-st.markdown(f'<div class="table-container">{table_html}</div>', unsafe_allow_html=True)
+render_html_table(pd.DataFrame(html_rows), left_cols=2)
 
 # ===== 下載按鈕 =====
 st.markdown("---")

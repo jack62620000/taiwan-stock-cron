@@ -3,14 +3,10 @@ import pandas as pd
 import sys
 import os
 
-# ===== 登入驗證 =====
-if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
-    st.warning("請先登入")
-    st.switch_page("main.py")
-    st.stop()
-# ===== 主程式碼 ====
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from utils.db import get_stock_list, get_recent_dates, supabase
+from utils.db import get_stock_list, get_recent_dates, get_snapshots
+from utils.ui import require_login, color_rate, fmt_number, render_html_table
+require_login()
 
 st.set_page_config(
     page_title="融資使用率",
@@ -33,25 +29,11 @@ def load_margin_util_data(num_days=6):
     if not dates_found:
         return pd.DataFrame(), []
 
-    # 抓這些日期的所有資料
-    all_data = []
-    for d in dates_found:
-        start = 0
-        while True:
-            r = supabase.table("margin_utilization") \
-                .select("stock_id, date, margin_balance, margin_limit, margin_rate") \
-                .eq("date", d) \
-                .order("stock_id", desc=False) \
-                .range(start, start + 999) \
-                .execute()
-            if not r.data:
-                break
-            all_data.extend(r.data)
-            if len(r.data) < 1000:
-                break
-            start += 1000
-
-    return pd.DataFrame(all_data), dates_found
+    data = get_snapshots(
+        "margin_utilization", dates_found,
+        "stock_id, date, margin_balance, margin_limit, margin_rate",
+    )
+    return data, dates_found
 
 stock_list = get_stock_list()
 util_data, dates_found = load_margin_util_data(num_days=6)
@@ -128,23 +110,6 @@ filtered = filtered.reset_index(drop=True)
 st.metric("顯示股票數", f"{len(filtered):,} 檔")
 st.markdown("---")
 
-# ===== 顏色函式 =====
-def color_rate(val):
-    """融資使用率上色：>20% 紅色，>10% 橘色"""
-    if val is None or pd.isna(val):
-        return ""
-    if val >= 20:
-        return f'<span style="color:#dc2626;font-weight:700;">{val:.2f}%</span>'
-    elif val >= 10:
-        return f'<span style="color:#ea580c;font-weight:600;">{val:.2f}%</span>'
-    else:
-        return f"{val:.2f}%"
-
-def fmt_shares(val):
-    if val is None or pd.isna(val) or val == 0:
-        return ""
-    return f"{val:,.0f}"
-
 # ===== 建立 HTML 表格 =====
 html_rows = []
 for _, row in filtered.iterrows():
@@ -152,64 +117,14 @@ for _, row in filtered.iterrows():
         "股票代號": row["stock_id"],
         "公司名稱": row["stock_name"],
         "市場":     row.get("market", ""),
-        "融資限額": fmt_shares(row.get("融資限額")),
+        "融資限額": fmt_number(row.get("融資限額"), blank_zero=True),
     }
     for d in dates_found:
-        record[f"融資餘額\n{d}"]  = fmt_shares(row.get(f"餘額_{d}"))
+        record[f"融資餘額\n{d}"]  = fmt_number(row.get(f"餘額_{d}"), blank_zero=True)
         record[f"融資使用率\n{d}"] = color_rate(row.get(f"使用率_{d}"))
     html_rows.append(record)
 
-html_df = pd.DataFrame(html_rows)
-
-# 表頭換行顯示
-display_cols = {col: col.replace("\n", "<br>") for col in html_df.columns}
-html_df_display = html_df.rename(columns=display_cols)
-
-table_html = html_df_display.to_html(escape=False, index=False, classes="margin-table")
-
-table_style = """
-<style>
-.margin-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-    font-family: -apple-system, "Noto Sans TC", sans-serif;
-}
-.margin-table th {
-    background: #f0f2f6;
-    padding: 8px 6px;
-    text-align: center;
-    border-bottom: 2px solid #ddd;
-    position: sticky;
-    top: 0;
-    white-space: nowrap;
-    z-index: 1;
-    line-height: 1.4;
-}
-.margin-table td {
-    padding: 5px 8px;
-    text-align: right;
-    border-bottom: 1px solid #eee;
-    white-space: nowrap;
-}
-.margin-table td:nth-child(1),
-.margin-table td:nth-child(2),
-.margin-table td:nth-child(3) {
-    text-align: left;
-}
-.margin-table tr:hover { background: #f9f9f9; }
-.table-container {
-    max-height: 700px;
-    overflow-y: auto;
-    overflow-x: auto;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-}
-</style>
-"""
-
-st.markdown(table_style, unsafe_allow_html=True)
-st.markdown(f'<div class="table-container">{table_html}</div>', unsafe_allow_html=True)
+render_html_table(pd.DataFrame(html_rows), left_cols=3)
 
 # ===== 下載按鈕 =====
 st.markdown("---")
