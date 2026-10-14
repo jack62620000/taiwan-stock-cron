@@ -433,6 +433,13 @@ def compute_signals(targets, data):
 # =====================================================================
 # 主程式
 # =====================================================================
+def _error(msg):
+    """印出錯誤；在 GitHub Actions 上同時顯示成錯誤註記"""
+    print(f"❌ {msg}")
+    if os.getenv("GITHUB_ACTIONS"):
+        print("::error title=signals.py::" + str(msg).replace("%", "%25").replace("\n", "%0A"))
+
+
 def save(sb, rows):
     failed = 0
     for i in range(0, len(rows), BATCH_SIZE):
@@ -440,7 +447,7 @@ def save(sb, rows):
             sb.table("daily_signals").upsert(rows[i:i + BATCH_SIZE]).execute()
         except Exception as e:
             failed += len(rows[i:i + BATCH_SIZE])
-            print(f"  寫入失敗 (Index {i}): {e}")
+            _error(f"寫入 daily_signals 失敗（{rows[i]['date']}，Index {i}）：{e}")
     return failed
 
 
@@ -453,7 +460,7 @@ def main():
     sb = _client()
     targets, data = load_inputs(sb, args.start, args.end)
     if not targets:
-        print("❌ 找不到要評分的交易日")
+        _error("找不到要評分的交易日")
         return 1
 
     results = compute_signals(targets, data)
@@ -468,11 +475,20 @@ def main():
         print(f"  {d}：{len(rows)} 檔，前五名 {top_text}")
 
     if failed:
-        print(f"❌ 有 {failed} 筆寫入失敗")
+        _error(f"有 {failed} 筆寫入失敗")
         return 1
     print("✅ 評分完成")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:
+        import traceback
+        tb = traceback.format_exc()
+        print(tb)
+        # 在 GitHub Actions 上同時顯示成錯誤註記，不用下載整份 log 也看得到原因
+        if os.getenv("GITHUB_ACTIONS"):
+            print("::error title=signals.py 執行失敗::" + tb.strip().replace("%", "%25").replace("\n", "%0A"))
+        sys.exit(1)
