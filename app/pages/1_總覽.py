@@ -4,18 +4,14 @@ import numpy as np
 import sys
 import os
 
-# ===== 登入驗證 =====
-if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
-    st.warning("請先登入")
-    st.switch_page("main.py")
-    st.stop()
-# ===== 主程式碼 =====
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from utils.ui import require_login, style_sign, style_rate, DOWN_COLOR
 from utils.db import (
     get_stock_list, get_latest_prices, get_latest_ins,
     get_latest_margin, get_latest_holder, get_latest_revenue,
     get_latest_quarterly, get_latest_margin_utilization, get_recent_closes
 )
+require_login()
 
 st.set_page_config(
     page_title="全台股總覽",
@@ -251,28 +247,7 @@ st.markdown("---")
 st.subheader("📋 全台股數據總覽")
 st.caption("點欄位名稱可排序，滑到表格右上角可搜尋、全螢幕檢視。")
 
-UP_STYLE   = "color:#dc2626;font-weight:600;"  # 紅漲
-DOWN_STYLE = "color:#16a34a;font-weight:600;"  # 綠跌
-
-def style_sign(val):
-    """正數紅色、負數綠色"""
-    if val is None or pd.isna(val):
-        return ""
-    if val > 0:
-        return UP_STYLE
-    if val < 0:
-        return DOWN_STYLE
-    return ""
-
-def style_rate(val):
-    """融資使用率上色：>20% 紅色，>10% 橘色，其餘正常"""
-    if val is None or pd.isna(val):
-        return ""
-    if val >= 20:
-        return "color:#dc2626;font-weight:700;"
-    if val >= 10:
-        return "color:#ea580c;font-weight:600;"
-    return ""
+DOWN_STYLE = f"color:{DOWN_COLOR};font-weight:600;"  # 虧損標示用
 
 # 定義欄位對應（✅ 融券餘額改為融資使用率）
 col_map = {

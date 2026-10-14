@@ -3,14 +3,10 @@ import pandas as pd
 import sys
 import os
 
-# ===== 登入驗證 =====
-if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
-    st.warning("請先登入")
-    st.switch_page("main.py")
-    st.stop()
-# ===== 主程式碼 ====
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from utils.db import supabase
+from utils.db import get_futures_ins
+from utils.ui import require_login, color_value, render_html_table
+require_login()
 
 st.set_page_config(
     page_title="期貨三大法人",
@@ -27,12 +23,7 @@ if st.button("🔄 強制重新整理資料"):
 # ===== 載入資料 =====
 @st.cache_data(ttl=3600)
 def load_futures_data():
-    res = supabase.table("futures_institutional") \
-        .select("*") \
-        .eq("contract_code", "臺股期貨") \
-        .order("date", desc=True) \
-        .execute()
-    return pd.DataFrame(res.data)
+    return get_futures_ins()
 
 df = load_futures_data()
 
@@ -61,49 +52,6 @@ available_items = [item for item in item_map.keys() if item in filtered["item"].
 # ===== 各法人類別分頁 =====
 tabs = st.tabs(available_items)
 
-def color_value(val):
-    """正數紅色、負數綠色"""
-    if val is None or pd.isna(val):
-        return ""
-    if val > 0:
-        return f'<span style="color:#dc2626;font-weight:600;">{val:,.0f}</span>'
-    elif val < 0:
-        return f'<span style="color:#16a34a;font-weight:600;">{val:,.0f}</span>'
-    else:
-        return f"{val:,.0f}"
-
-table_style = """
-<style>
-.futures-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
-    font-family: -apple-system, "Noto Sans TC", sans-serif;
-}
-.futures-table th {
-    background: #f0f2f6;
-    padding: 8px 10px;
-    text-align: center;
-    border-bottom: 2px solid #ddd;
-    white-space: nowrap;
-}
-.futures-table td {
-    padding: 6px 10px;
-    text-align: right;
-    border-bottom: 1px solid #eee;
-    white-space: nowrap;
-}
-.futures-table td:nth-child(1) {
-    text-align: left;
-    font-weight: 600;
-}
-.futures-table tr:hover {
-    background: #f9f9f9;
-}
-</style>
-"""
-st.markdown(table_style, unsafe_allow_html=True)
-
 for tab, item in zip(tabs, available_items):
     with tab:
         item_df = filtered[filtered["item"] == item].copy()
@@ -121,9 +69,7 @@ for tab, item in zip(tabs, available_items):
                 "淨契約金額(千)": color_value(row.get("net_oi_value")),
             })
 
-        html_df = pd.DataFrame(html_rows)
-        table_html = html_df.to_html(escape=False, index=False, classes="futures-table")
-        st.markdown(table_html, unsafe_allow_html=True)
+        render_html_table(pd.DataFrame(html_rows), left_cols=1, font_size=13)
 
         # 下載按鈕
         csv = item_df[["date", "long_oi", "long_oi_value", "short_oi", "short_oi_value", "net_oi", "net_oi_value"]] \

@@ -65,6 +65,29 @@ def get_latest_date(table, date_col="date"):
     dates = get_recent_dates(table, date_col, n=1)
     return dates[0] if dates else None
 
+# ===== 全市場某一天的資料 =====
+def get_snapshot(table, date_col, value, columns="*"):
+    """取全市場在某個日期（或年月、週）的資料，自動分頁"""
+    return pd.DataFrame(_fetch_all(
+        lambda: supabase.table(table)
+            .select(columns)
+            .eq(date_col, value)
+            .order("stock_id", desc=False)
+    ))
+
+def get_snapshots(table, dates, columns="*", date_col="date"):
+    """取全市場在多個日期的資料，依日期逐一查詢後合併"""
+    frames = [get_snapshot(table, date_col, d, columns) for d in dates]
+    frames = [f for f in frames if not f.empty]
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+def _latest_snapshot(table, date_col="date", columns="*"):
+    """取全市場最新一天的資料"""
+    latest = get_latest_date(table, date_col)
+    if latest is None:
+        return pd.DataFrame()
+    return get_snapshot(table, date_col, latest, columns)
+
 # ===== 基本資料 =====
 _STOCK_LIST_TTL = 3600  # 股票清單快取一小時，產業別、新上市櫃更新後不必重啟程式
 _stock_list_cache = {"time": 0.0, "data": None}
@@ -83,19 +106,9 @@ def _clear_stock_list_cache():
 get_stock_list.cache_clear = _clear_stock_list_cache  # 沿用原本 lru_cache 的介面
 
 def _load_stock_list():
-    all_data = []
-    start = 0
-    while True:
-        res = supabase.table("stock_info").select("*") \
-            .order("stock_id", desc=False) \
-            .range(start, start + 999).execute()
-        if not res.data:
-            break
-        all_data.extend(res.data)
-        if len(res.data) < 1000:
-            break
-        start += 1000
-    return pd.DataFrame(all_data)
+    return pd.DataFrame(_fetch_all(
+        lambda: supabase.table("stock_info").select("*").order("stock_id", desc=False)
+    ))
 
 def get_stock_info(stock_id):
     res = supabase.table("stock_info").select("*").eq("stock_id", stock_id).execute()
@@ -106,30 +119,10 @@ def get_daily_prices(stock_id, limit=180):
     return _latest_rows("daily_prices", stock_id, ["date"], limit)
 
 def get_latest_prices():
-    latest_date = get_latest_date("daily_prices", "date")
-    if latest_date is None:
-        return pd.DataFrame()
-    all_data = []
-    start = 0
-    while True:
-        r = supabase.table("daily_prices") \
-            .select("stock_id, date, open_price, high_price, low_price, close_price, volume") \
-            .gte("date", latest_date) \
-            .order("stock_id", desc=False) \
-            .range(start, start + 999) \
-            .execute()
-        if not r.data:
-            break
-        all_data.extend(r.data)
-        if len(r.data) < 1000:
-            break
-        start += 1000
-    if not all_data:
-        return pd.DataFrame()
-    df = pd.DataFrame(all_data)
-    df = df.sort_values("date", ascending=False)
-    df = df.drop_duplicates(subset="stock_id", keep="first")
-    return df
+    return _latest_snapshot(
+        "daily_prices", "date",
+        "stock_id, date, open_price, high_price, low_price, close_price, volume",
+    )
 
 def get_recent_closes(calendar_days=40):
     """
@@ -148,66 +141,25 @@ def get_recent_closes(calendar_days=40):
     ]
 
     def fetch_day(day):
-        return _fetch_all(
-            lambda: supabase.table("daily_prices")
-                .select("stock_id, date, close_price")
-                .eq("date", day)
-                .order("stock_id", desc=False)
-        )
+        return get_snapshot("daily_prices", "date", day, "stock_id, date, close_price")
 
     with ThreadPoolExecutor(max_workers=3) as pool:
-        rows = [r for day_rows in pool.map(fetch_day, days) for r in day_rows]
-    return pd.DataFrame(rows)
+        frames = [f for f in pool.map(fetch_day, days) if not f.empty]
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 # ===== 三大法人 =====
 def get_stock_ins(stock_id, limit=60):
     return _latest_rows("stock_ins_daily", stock_id, ["date"], limit)
 
 def get_latest_ins():
-    latest_date = get_latest_date("stock_ins_daily", "date")
-    if latest_date is None:
-        return pd.DataFrame()
-    all_data = []
-    start = 0
-    while True:
-        r = supabase.table("stock_ins_daily") \
-            .select("*") \
-            .eq("date", latest_date) \
-            .order("stock_id", desc=False) \
-            .range(start, start + 999) \
-            .execute()
-        if not r.data:
-            break
-        all_data.extend(r.data)
-        if len(r.data) < 1000:
-            break
-        start += 1000
-    return pd.DataFrame(all_data)
+    return _latest_snapshot("stock_ins_daily")
 
 # ===== 融資融券 =====
 def get_margin(stock_id, limit=60):
     return _latest_rows("margin_trading", stock_id, ["date"], limit)
 
 def get_latest_margin():
-    latest_date = get_latest_date("margin_trading", "date")
-    if latest_date is None:
-        return pd.DataFrame()
-    all_data = []
-    start = 0
-    while True:
-        r = supabase.table("margin_trading") \
-            .select("*") \
-            .eq("date", latest_date) \
-            .order("stock_id", desc=False) \
-            .range(start, start + 999) \
-            .execute()
-        if not r.data:
-            break
-        all_data.extend(r.data)
-        if len(r.data) < 1000:
-            break
-        start += 1000
-    return pd.DataFrame(all_data)
+    return _latest_snapshot("margin_trading")
 
 # ===== 融資融券使用率 =====
 def get_margin_utilization(stock_id, limit=60):
@@ -216,75 +168,21 @@ def get_margin_utilization(stock_id, limit=60):
 
 def get_latest_margin_utilization():
     """取得所有股票最新融資融券使用率"""
-    latest_date = get_latest_date("margin_utilization", "date")
-    if latest_date is None:
-        return pd.DataFrame()
-    all_data = []
-    start = 0
-    while True:
-        r = supabase.table("margin_utilization") \
-            .select("*") \
-            .eq("date", latest_date) \
-            .order("stock_id", desc=False) \
-            .range(start, start + 999) \
-            .execute()
-        if not r.data:
-            break
-        all_data.extend(r.data)
-        if len(r.data) < 1000:
-            break
-        start += 1000
-    return pd.DataFrame(all_data)
+    return _latest_snapshot("margin_utilization")
 
 # ===== 大戶持股 =====
 def get_holder(stock_id, limit=20):
     return _latest_rows("holder_distribution", stock_id, ["week_date"], limit)
 
 def get_latest_holder():
-    latest_date = get_latest_date("holder_distribution", "week_date")
-    if latest_date is None:
-        return pd.DataFrame()
-    all_data = []
-    start = 0
-    while True:
-        r = supabase.table("holder_distribution") \
-            .select("*") \
-            .eq("week_date", latest_date) \
-            .order("stock_id", desc=False) \
-            .range(start, start + 999) \
-            .execute()
-        if not r.data:
-            break
-        all_data.extend(r.data)
-        if len(r.data) < 1000:
-            break
-        start += 1000
-    return pd.DataFrame(all_data)
+    return _latest_snapshot("holder_distribution", "week_date")
 
 # ===== 月營收 =====
 def get_revenue(stock_id, limit=12):
     return _latest_rows("monthly_revenue", stock_id, ["year_month"], limit)
 
 def get_latest_revenue():
-    latest_ym = get_latest_date("monthly_revenue", "year_month")
-    if latest_ym is None:
-        return pd.DataFrame()
-    all_data = []
-    start = 0
-    while True:
-        r = supabase.table("monthly_revenue") \
-            .select("*") \
-            .eq("year_month", latest_ym) \
-            .order("stock_id", desc=False) \
-            .range(start, start + 999) \
-            .execute()
-        if not r.data:
-            break
-        all_data.extend(r.data)
-        if len(r.data) < 1000:
-            break
-        start += 1000
-    return pd.DataFrame(all_data)
+    return _latest_snapshot("monthly_revenue", "year_month")
 
 # ===== 季報 =====
 def get_quarterly(stock_id, limit=8):
@@ -325,15 +223,13 @@ def get_latest_quarterly():
     return df.reset_index(drop=True)
 
 # ===== 期貨三大法人 =====
-def get_futures_ins(limit=60):
-    """取最近 limit 個交易日（每天 3 種身分別），依日期由舊到新排列"""
-    res = supabase.table("futures_institutional") \
-        .select("*") \
-        .eq("contract_code", "臺股期貨") \
-        .order("date", desc=True) \
-        .limit(limit * 3) \
-        .execute()
-    df = pd.DataFrame(res.data)
-    if df.empty:
-        return df
-    return df.sort_values(["date", "item"]).reset_index(drop=True)
+def get_futures_ins():
+    """取臺股期貨三大法人全部歷史資料（自動分頁，不受單次 1000 筆上限影響），依日期由新到舊排列"""
+    df = pd.DataFrame(_fetch_all(
+        lambda: supabase.table("futures_institutional")
+            .select("*")
+            .eq("contract_code", "臺股期貨")
+            .order("date", desc=True)
+            .order("item", desc=False)
+    ))
+    return df.reset_index(drop=True)
