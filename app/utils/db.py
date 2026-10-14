@@ -124,9 +124,9 @@ def get_latest_prices():
         "stock_id, date, open_price, high_price, low_price, close_price, volume",
     )
 
-def get_recent_closes(calendar_days=40):
+def get_recent_closes(calendar_days=40, columns="stock_id, date, close_price"):
     """
-    取所有股票最近 calendar_days 天（日曆天）的收盤價，給總覽頁算 RSI 用。
+    取所有股票最近 calendar_days 天（日曆天）的收盤價，給總覽頁算 RSI、葛蘭碧頁算均線用。
     40 個日曆天約 25 個交易日，遇到長假也夠算 RSI(14)。
     """
     latest_date = get_latest_date("daily_prices", "date")
@@ -141,7 +141,7 @@ def get_recent_closes(calendar_days=40):
     ]
 
     def fetch_day(day):
-        return get_snapshot("daily_prices", "date", day, "stock_id, date, close_price")
+        return get_snapshot("daily_prices", "date", day, columns)
 
     with ThreadPoolExecutor(max_workers=3) as pool:
         frames = [f for f in pool.map(fetch_day, days) if not f.empty]
