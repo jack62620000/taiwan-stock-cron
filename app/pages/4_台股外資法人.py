@@ -10,7 +10,7 @@ if "authenticated" not in st.session_state or not st.session_state["authenticate
     st.stop()
 # ===== 主程式碼 ====
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from utils.db import get_stock_list, supabase
+from utils.db import get_stock_list, get_recent_dates, supabase
 
 st.set_page_config(
     page_title="台股外資法人",
@@ -28,34 +28,10 @@ if st.button("🔄 強制重新整理資料"):
 @st.cache_data(ttl=3600)
 def load_recent_ins_data(num_days=5):
     """抓取最近N個交易日的三大法人資料"""
-    # 先取得最近N個不同日期
-    res = supabase.table("stock_ins_daily") \
-        .select("date") \
-        .order("date", desc=True) \
-        .limit(1) \
-        .execute()
-    if not res.data:
+    # 一次查出最近 N 個交易日（走主鍵索引，不必一天一天往回找）
+    dates_found = get_recent_dates("stock_ins_daily", n=num_days)
+    if not dates_found:
         return pd.DataFrame(), []
-
-    latest_date = res.data[0]["date"]
-
-    # 往前找N個不同的交易日
-    dates_found = []
-    current_date = latest_date
-    max_try = 30
-    tried = 0
-    while len(dates_found) < num_days and tried < max_try:
-        check = supabase.table("stock_ins_daily").select("date") \
-            .eq("date", current_date).limit(1).execute()
-        if check.data:
-            dates_found.append(current_date)
-        # 往前一天找下一個有資料的日期
-        prev_res = supabase.table("stock_ins_daily").select("date") \
-            .lt("date", current_date).order("date", desc=True).limit(1).execute()
-        if not prev_res.data:
-            break
-        current_date = prev_res.data[0]["date"]
-        tried += 1
 
     # 抓這些日期的所有資料
     all_data = []

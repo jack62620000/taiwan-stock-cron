@@ -40,6 +40,31 @@ def _fetch_all(make_query, page_size=1000):
     return rows
 
 
+# ===== 找最新日期 =====
+# 各表只有 (stock_id, 日期) 主鍵，沒有單獨的日期索引。直接 order by 日期 要掃整張表
+# （約 2 秒，同時查幾個就會超過 Supabase 3 秒的 statement timeout）。
+# 改查幾檔每個交易日都有資料的權值股，走主鍵索引，不到 0.1 秒。
+_ANCHOR_STOCKS = ["2330", "2317", "2454"]  # 台積電、鴻海、聯發科
+
+def get_recent_dates(table, date_col="date", n=1):
+    """取資料表最近 n 個有資料的日期，由新到舊排列"""
+    res = supabase.table(table).select(date_col) \
+        .in_("stock_id", _ANCHOR_STOCKS) \
+        .order(date_col, desc=True) \
+        .limit(n * len(_ANCHOR_STOCKS)) \
+        .execute()
+    dates = sorted({r[date_col] for r in res.data}, reverse=True)[:n]
+    if dates:
+        return dates
+    # 權值股都查不到（不太可能發生）時，退回掃整張表找最新一天
+    res = supabase.table(table).select(date_col) \
+        .order(date_col, desc=True).limit(1).execute()
+    return [res.data[0][date_col]] if res.data else []
+
+def get_latest_date(table, date_col="date"):
+    dates = get_recent_dates(table, date_col, n=1)
+    return dates[0] if dates else None
+
 # ===== 基本資料 =====
 _STOCK_LIST_TTL = 3600  # 股票清單快取一小時，產業別、新上市櫃更新後不必重啟程式
 _stock_list_cache = {"time": 0.0, "data": None}
@@ -81,14 +106,9 @@ def get_daily_prices(stock_id, limit=180):
     return _latest_rows("daily_prices", stock_id, ["date"], limit)
 
 def get_latest_prices():
-    res = supabase.table("daily_prices") \
-        .select("date") \
-        .order("date", desc=True) \
-        .limit(1) \
-        .execute()
-    if not res.data:
+    latest_date = get_latest_date("daily_prices", "date")
+    if latest_date is None:
         return pd.DataFrame()
-    latest_date = res.data[0]["date"]
     all_data = []
     start = 0
     while True:
@@ -116,14 +136,10 @@ def get_recent_closes(calendar_days=40):
     取所有股票最近 calendar_days 天（日曆天）的收盤價，給總覽頁算 RSI 用。
     40 個日曆天約 25 個交易日，遇到長假也夠算 RSI(14)。
     """
-    res = supabase.table("daily_prices") \
-        .select("date") \
-        .order("date", desc=True) \
-        .limit(1) \
-        .execute()
-    if not res.data:
+    latest_date = get_latest_date("daily_prices", "date")
+    if latest_date is None:
         return pd.DataFrame()
-    latest_date = pd.to_datetime(res.data[0]["date"])
+    latest_date = pd.to_datetime(latest_date)
     # 一天一個查詢（走主鍵索引，每次只要幾十毫秒），少量同時送出；週末不會有資料，直接略過
     days = [
         d.strftime("%Y-%m-%d")
@@ -148,14 +164,9 @@ def get_stock_ins(stock_id, limit=60):
     return _latest_rows("stock_ins_daily", stock_id, ["date"], limit)
 
 def get_latest_ins():
-    res = supabase.table("stock_ins_daily") \
-        .select("date") \
-        .order("date", desc=True) \
-        .limit(1) \
-        .execute()
-    if not res.data:
+    latest_date = get_latest_date("stock_ins_daily", "date")
+    if latest_date is None:
         return pd.DataFrame()
-    latest_date = res.data[0]["date"]
     all_data = []
     start = 0
     while True:
@@ -178,14 +189,9 @@ def get_margin(stock_id, limit=60):
     return _latest_rows("margin_trading", stock_id, ["date"], limit)
 
 def get_latest_margin():
-    res = supabase.table("margin_trading") \
-        .select("date") \
-        .order("date", desc=True) \
-        .limit(1) \
-        .execute()
-    if not res.data:
+    latest_date = get_latest_date("margin_trading", "date")
+    if latest_date is None:
         return pd.DataFrame()
-    latest_date = res.data[0]["date"]
     all_data = []
     start = 0
     while True:
@@ -210,14 +216,9 @@ def get_margin_utilization(stock_id, limit=60):
 
 def get_latest_margin_utilization():
     """取得所有股票最新融資融券使用率"""
-    res = supabase.table("margin_utilization") \
-        .select("date") \
-        .order("date", desc=True) \
-        .limit(1) \
-        .execute()
-    if not res.data:
+    latest_date = get_latest_date("margin_utilization", "date")
+    if latest_date is None:
         return pd.DataFrame()
-    latest_date = res.data[0]["date"]
     all_data = []
     start = 0
     while True:
@@ -240,14 +241,9 @@ def get_holder(stock_id, limit=20):
     return _latest_rows("holder_distribution", stock_id, ["week_date"], limit)
 
 def get_latest_holder():
-    res = supabase.table("holder_distribution") \
-        .select("week_date") \
-        .order("week_date", desc=True) \
-        .limit(1) \
-        .execute()
-    if not res.data:
+    latest_date = get_latest_date("holder_distribution", "week_date")
+    if latest_date is None:
         return pd.DataFrame()
-    latest_date = res.data[0]["week_date"]
     all_data = []
     start = 0
     while True:
@@ -270,14 +266,9 @@ def get_revenue(stock_id, limit=12):
     return _latest_rows("monthly_revenue", stock_id, ["year_month"], limit)
 
 def get_latest_revenue():
-    res = supabase.table("monthly_revenue") \
-        .select("year_month") \
-        .order("year_month", desc=True) \
-        .limit(1) \
-        .execute()
-    if not res.data:
+    latest_ym = get_latest_date("monthly_revenue", "year_month")
+    if latest_ym is None:
         return pd.DataFrame()
-    latest_ym = res.data[0]["year_month"]
     all_data = []
     start = 0
     while True:
