@@ -16,7 +16,7 @@ st.set_page_config(page_title="每日選股訊號", page_icon="🎯", layout="wi
 st.title("🎯 每日選股訊號")
 st.caption(
     "每個交易日收盤後，依固定規則幫全市場股票打分數："
-    "總分 100 = 籌碼 25 + 資金 25 + 基本面 25 + 技術面 25。"
+    "總分 100 = 籌碼 25 + 資金 25 + 基本面 35 + 技術面 15（規則 v2）。"
     "排名只列 20 日均量 500 張以上的股票。風險提醒不扣分，僅供參考。"
 )
 
@@ -31,6 +31,8 @@ DIMENSIONS = {
     "fund_score": "基本面",
     "tech_score": "技術",
 }
+# 各面向滿分（規則 v2）
+MAX_SCORE = {"chip_score": 25, "margin_score": 25, "fund_score": 35, "tech_score": 15}
 
 
 # ===== 載入資料 =====
@@ -84,7 +86,7 @@ with tab_rank:
         mins = {}
         for c, (key, label) in zip([c1, c2, c3, c4], DIMENSIONS.items()):
             with c:
-                mins[key] = st.slider(f"{label}至少", 0, 25, 0, key=f"min_{key}")
+                mins[key] = st.slider(f"{label}至少", 0, MAX_SCORE[key], 0, key=f"min_{key}")
         c5, c6, c7 = st.columns([1, 2, 1])
         with c5:
             markets = sorted(day["market"].dropna().unique().tolist())
@@ -139,8 +141,8 @@ with tab_rank:
             "total_score": st.column_config.ProgressColumn("總分", min_value=0, max_value=100, format="%d"),
             "chip_score": st.column_config.ProgressColumn("籌碼", min_value=0, max_value=25, format="%d"),
             "margin_score": st.column_config.ProgressColumn("資金", min_value=0, max_value=25, format="%d"),
-            "fund_score": st.column_config.ProgressColumn("基本面", min_value=0, max_value=25, format="%d"),
-            "tech_score": st.column_config.ProgressColumn("技術", min_value=0, max_value=25, format="%d"),
+            "fund_score": st.column_config.ProgressColumn("基本面", min_value=0, max_value=35, format="%d"),
+            "tech_score": st.column_config.ProgressColumn("技術", min_value=0, max_value=15, format="%d"),
             "close_price": st.column_config.NumberColumn("收盤", format="%.2f"),
             "change_5d": st.column_config.NumberColumn("5日%", format="%.2f"),
             "change_20d": st.column_config.NumberColumn("20日%", format="%.2f"),
@@ -160,13 +162,18 @@ with tab_rank:
 | **資金（25）** | 融資使用率 < 10% / < 20% | 8 / 4 |
 | | 資減價漲（5 日融資減少且股價上漲）/ 融資 5 日增幅 ≤ 5% | 9 / 4 |
 | | 券資比 ≥ 10% / ≥ 5% | 8 / 4 |
-| **基本面（25）** | 月營收年增 > 0 / ≥ 20% | 5 / 10 |
+| **基本面（35）** | 月營收年增 > 0 / ≥ 20% | 4 / 8 |
 | | 累計營收年增 > 0 | 4 |
-| | 營收連 3 月年增 | 5 |
-| | 營收創近期新高 | 6 |
-| **技術（25）** | 站上月線 / 站上季線 / 月線在季線上 | 5 / 5 / 4 |
-| | 量增價漲（5 日均量 ≥ 20 日 1.5 倍且當日上漲） | 5 |
-| | RSI 在 50～75 / 20 日漲幅為正 | 3 / 3 |
+| | 營收連 3 月年增 | 10 |
+| | 營收創近期新高 | 13 |
+| **技術（15）** | 站上月線 | 6 |
+| | RSI 在 50～75 | 4 |
+| | 20 日漲幅為正 | 5 |
+
+**規則 v2 調整了什麼**（2026-10-14，用 6～8 月資料設計、9～10 月資料驗證）：
+- 拿掉「站上季線」「均線多頭排列」「量增價漲」：這三項在兩段期間都讓之後的報酬變差。
+- 「營收連 3 月年增」「營收創新高」加重：兩段期間都有正向效果，基本面改為 35 分。
+- 「近 20 日已大漲」不扣分：資料顯示大漲股之後並沒有比較差，只保留風險提醒。
 
 **風險提醒**（不扣分）：RSI ≥ 80、近 20 日漲幅 ≥ 30%、融資使用率 ≥ 30%、融資 5 日暴增 ≥ 20%、外資投信同步賣超。
 
@@ -189,7 +196,7 @@ with tab_stock:
     rank_text = f"第 {int(row['rank'])} 名" if pd.notna(row["rank"]) else "未列入排名"
     c1.metric("總分", int(row["total_score"]), rank_text, delta_color="off")
     for c, (key, label) in zip([c2, c3, c4, c5], DIMENSIONS.items()):
-        c.metric(label, f"{int(row[key])} / 25")
+        c.metric(label, f"{int(row[key])} / {MAX_SCORE[key]}")
 
     r1, r2 = st.columns(2)
     with r1:
@@ -237,7 +244,7 @@ with tab_stock:
             context = f"""
 以下是 {row.get('stock_name', '')}（{stock_id}，{row.get('industry', '')}）在 {date} 的選股評分：
 - 總分 {row['total_score']} / 100（{rank_text}）
-- 籌碼 {row['chip_score']}/25、資金 {row['margin_score']}/25、基本面 {row['fund_score']}/25、技術 {row['tech_score']}/25
+- 籌碼 {row['chip_score']}/25、資金 {row['margin_score']}/25、基本面 {row['fund_score']}/35、技術 {row['tech_score']}/15
 - 收盤 {row['close_price']}，近5日 {row['change_5d']}%，近20日 {row['change_20d']}%，20日均量 {row['avg_volume_20']} 張
 - 加分理由：{'；'.join(row['reasons']) or '無'}
 - 風險提醒：{'；'.join(row['warnings']) or '無'}
