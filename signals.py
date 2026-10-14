@@ -223,7 +223,9 @@ class Features:
         cols = ["yoy", "cum_yoy", "yoy3", "new_high", "n_months"]
         if not months:
             return pd.DataFrame(columns=cols, dtype=float)
-        rev, yoy, cum = (x.loc[list(months)] for x in (self.rev, self.yoy, self.cum_yoy))
+        # pivot 會丟掉整列（或整欄）都是空值的月份與股票，用 reindex 補回空值，避免查不到
+        rev = self.rev.reindex(index=list(months))
+        yoy, cum = (x.reindex(index=list(months), columns=rev.columns) for x in (self.yoy, self.cum_yoy))
         out = {}
         for sid in rev.columns:
             r = rev[sid].dropna()
