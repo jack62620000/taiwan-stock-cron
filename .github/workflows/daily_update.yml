@@ -61,6 +61,29 @@ jobs:
           TARGET_DATE: ${{ github.event.inputs.target_date }}
         run: python auto_fetch.py
 
+  # 每日資料抓完後，幫全市場股票打分數（寫進 daily_signals）
+  # 就算抓資料那一步回報不完整（例如少了某個市場），已經抓到的資料仍然可以評分
+  update-signals:
+    needs: update-daily-data
+    if: always() && needs.update-daily-data.result != 'skipped' && needs.update-daily-data.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run signal scoring
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SIGNALS_START: ${{ github.event.inputs.target_date }}
+          SIGNALS_END: ${{ github.event.inputs.target_date }}
+        run: python signals.py
+
   update-holder-only:
     if: github.event.schedule == '06 1 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only == 'true')
     runs-on: ubuntu-latest

@@ -233,3 +233,30 @@ def get_futures_ins():
             .order("item", desc=False)
     ))
     return df.reset_index(drop=True)
+
+# ===== 每日選股訊號 =====
+def get_signal_dates(n=120):
+    """daily_signals 最近 n 個評分日，由新到舊（表上有日期索引，直接查即可）"""
+    res = supabase.table("daily_signals").select("date") \
+        .in_("stock_id", _ANCHOR_STOCKS) \
+        .order("date", desc=True) \
+        .limit(n * len(_ANCHOR_STOCKS)) \
+        .execute()
+    return sorted({r["date"] for r in res.data}, reverse=True)[:n]
+
+def get_signals(date):
+    """某一個評分日全市場的評分"""
+    return pd.DataFrame(_fetch_all(
+        lambda: supabase.table("daily_signals").select("*")
+            .eq("date", date)
+            .order("stock_id", desc=False)
+    ))
+
+def get_signal_history(stock_id, limit=60):
+    """單一股票最近 limit 個評分日的分數"""
+    return _latest_rows("daily_signals", stock_id, ["date"], limit)
+
+def get_signal_performance(top_n=20, horizon=5):
+    """規則回測：每個評分日前 N 名持有 horizon 個交易日的平均報酬 vs 全市場平均（%）"""
+    res = supabase.rpc("signal_performance", {"top_n": top_n, "horizon": horizon}).execute()
+    return pd.DataFrame(res.data)
