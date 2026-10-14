@@ -16,7 +16,6 @@ from utils.db import (
     get_latest_margin, get_latest_holder, get_latest_revenue,
     get_latest_quarterly, get_latest_margin_utilization, get_recent_closes
 )
-from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(
     page_title="全台股總覽",
@@ -61,7 +60,8 @@ def load_latest_rsi(period=14):
 
 @st.cache_data(ttl=3600)
 def load_overview_data():
-    # 各資料表互不相關，同時查詢，總等待時間約等於最慢的那一個
+    # 依序查詢，不要同時送出：這幾張表的 date 欄位沒有索引，「找最新日期」要掃整張表，
+    # 同時查會讓 Supabase 超過 statement timeout（3 秒）而被取消
     loaders = [
         get_stock_list,
         get_latest_prices,
@@ -74,9 +74,7 @@ def load_overview_data():
         load_latest_rsi,
     ]
     with st.spinner("正在載入資料..."):
-        with ThreadPoolExecutor(max_workers=len(loaders)) as pool:
-            futures = [pool.submit(f) for f in loaders]
-            return tuple(f.result() for f in futures)
+        return tuple(f() for f in loaders)
 
 stock_list, prices, ins, margin, margin_util, holder, revenue, quarterly, rsi = load_overview_data()
 
