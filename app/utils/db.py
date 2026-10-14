@@ -110,6 +110,29 @@ def get_latest_prices():
     df = df.drop_duplicates(subset="stock_id", keep="first")
     return df
 
+def get_recent_closes(calendar_days=40):
+    """
+    取所有股票最近 calendar_days 天（日曆天）的收盤價，給總覽頁算 RSI 用。
+    40 個日曆天約 25 個交易日，遇到長假也夠算 RSI(14)。
+    """
+    res = supabase.table("daily_prices") \
+        .select("date") \
+        .order("date", desc=True) \
+        .limit(1) \
+        .execute()
+    if not res.data:
+        return pd.DataFrame()
+    latest_date = pd.to_datetime(res.data[0]["date"])
+    start_date = (latest_date - pd.Timedelta(days=calendar_days)).strftime("%Y-%m-%d")
+    rows = _fetch_all(
+        lambda: supabase.table("daily_prices")
+            .select("stock_id, date, close_price")
+            .gte("date", start_date)
+            .order("stock_id", desc=False)
+            .order("date", desc=False)
+    )
+    return pd.DataFrame(rows)
+
 # ===== 三大法人 =====
 def get_stock_ins(stock_id, limit=60):
     return _latest_rows("stock_ins_daily", stock_id, ["date"], limit)
