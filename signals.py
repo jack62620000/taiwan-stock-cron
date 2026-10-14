@@ -2,7 +2,14 @@
 每日選股訊號評分 - 給 GitHub Actions 排程使用，也可以手動回補
 
 每個交易日幫全市場股票打分數，寫進 Supabase 的 daily_signals 表。
-總分 100 = 籌碼 25 + 資金 25 + 基本面 25 + 技術面 25，評分規則見下方 score_day()。
+總分 100 = 籌碼 25 + 資金 25 + 基本面 35 + 技術面 15，評分規則見下方 score_stock()。
+
+規則版本（RULE_VERSION）：
+  v1（2026-10-14）：四面向各 25 分。
+  v2（2026-10-14）：用 6～8 月資料設計、9～10 月資料驗證後調整：
+      - 拿掉「站上季線」「均線多頭排列」「量增價漲」：這三項在兩段期間都讓之後的報酬變差
+      - 營收連 3 月年增、營收創新高加重（兩段期間都有正向效果），基本面改為 35 分
+      - 「近 20 日已大漲」不扣分：資料顯示大漲股之後並沒有比較差，只保留風險提醒
 
 用法：
     python signals.py                                   # 評分資料庫裡最新的交易日
@@ -29,7 +36,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-LOOKBACK_DAYS = 70          # 評分日之前要多載入的交易日數（MA60、20 日漲幅需要）
+RULE_VERSION = 2
+LOOKBACK_DAYS = 30          # 評分日之前要多載入的交易日數（MA20、RSI、20 日漲幅需要）
 LIQUID_MIN_LOTS = 500       # 20 日均量至少 500 張才列入排名
 ANCHOR_STOCKS = ["2330", "2317", "2454"]  # 用權值股找交易日，走主鍵索引比較快
 BATCH_SIZE = 500
@@ -169,7 +177,6 @@ class Features:
         self.close_ff = self.close.ffill(limit=5)
 
         self.ma20 = self.close_ff.rolling(20, min_periods=15).mean()
-        self.ma60 = self.close_ff.rolling(60, min_periods=45).mean()
         self.chg1 = self.close_ff / self.close_ff.shift(1) - 1
         self.chg5 = self.close_ff / self.close_ff.shift(5) - 1
         self.chg20 = self.close_ff / self.close_ff.shift(20) - 1
@@ -312,48 +319,37 @@ def score_stock(x):
         elif ratio >= 0.05:
             margin += 4
 
-    # ---------- 基本面（25）----------
+    # ---------- 基本面（35）----------
+    # 營收連續成長、創新高是兩段回測期間都最穩定的正向因子，所以權重最高
     fund = 0
     yoy, cum = x["yoy"], x["cum_yoy"]
     if _num(yoy) and yoy > 0:
-        fund += 10 if yoy >= 20 else 5
+        fund += 8 if yoy >= 20 else 4
         reasons.append(f"月營收年增 {yoy:.1f}%")
     if _num(cum) and cum > 0:
         fund += 4
         reasons.append(f"累計營收年增 {cum:.1f}%")
     if x["yoy3"] is True:
-        fund += 5
+        fund += 10
         reasons.append("營收連3月年增")
     if x["new_high"] is True:
-        fund += 6
+        fund += 13
         reasons.append(f"營收創近{int(x['n_months'])}月新高")
 
-    # ---------- 技術面（25）----------
+    # ---------- 技術面（15）----------
+    # v1 的「站上季線」「均線多頭排列」「量增價漲」回測都是負效果，已拿掉
     tech = 0
-    close, ma20, ma60 = x["close"], x["ma20"], x["ma60"]
-    above20 = _num(ma20) and close > ma20
-    above60 = _num(ma60) and close > ma60
-    if above20:
-        tech += 5
-    if above60:
-        tech += 5
-    if above20 and above60:
-        reasons.append("站上月線與季線")
-    elif above20:
+    close, ma20 = x["close"], x["ma20"]
+    if _num(ma20) and close > ma20:
+        tech += 6
         reasons.append("站上月線")
-    elif above60:
-        reasons.append("站上季線")
-    if _num(ma20) and _num(ma60) and ma20 > ma60:
-        tech += 4
-        reasons.append("均線多頭排列")
-    if x["vol20"] > 0 and x["vol5"] / x["vol20"] >= 1.5 and _num(x["chg1"]) and x["chg1"] > 0:
-        tech += 5
-        reasons.append(f"量增價漲（5日均量為20日的 {x['vol5'] / x['vol20']:.1f} 倍）")
     rsi = x["rsi"]
     if _num(rsi) and 50 <= rsi <= 75:
-        tech += 3
+        tech += 4
+        reasons.append(f"RSI 強勢區（{rsi:.0f}）")
     if _num(x["chg20"]) and x["chg20"] > 0:
-        tech += 3
+        tech += 5
+        reasons.append(f"近20日上漲 {x['chg20']:.1%}")
 
     # ---------- 風險提醒（不扣分）----------
     if _num(rsi) and rsi >= 80:
@@ -381,7 +377,7 @@ def score_day(feat, d):
 
     # 先把每張寬表當天那一列取出來，逐檔查詢時就只是查 dict
     day = {}
-    for name in ("ma20", "ma60", "chg1", "chg5", "chg20", "rsi", "vol5", "vol20",
+    for name in ("ma20", "chg1", "chg5", "chg20", "rsi", "vol5", "vol20",
                  "f5", "s5", "f_streak", "s_streak", "mb", "sb", "rate", "mb_chg5"):
         wide = getattr(feat, name)
         day[name] = wide.loc[d].to_dict() if (not wide.empty and d in wide.index) else {}
@@ -396,7 +392,7 @@ def score_day(feat, d):
         r = rev.loc[sid] if sid in rev.index else None
         x = {
             "close": close_today[sid],
-            "ma20": at("ma20", sid), "ma60": at("ma60", sid),
+            "ma20": at("ma20", sid),
             "chg1": at("chg1", sid), "chg5": at("chg5", sid), "chg20": at("chg20", sid),
             "rsi": at("rsi", sid),
             "vol5": np.nan_to_num(at("vol5", sid)), "vol20": np.nan_to_num(at("vol20", sid)),
@@ -429,6 +425,7 @@ def score_day(feat, d):
             "change_20d": round(float(x["chg20"]) * 100, 2) if _num(x["chg20"]) else None,
             "avg_volume_20": int(round(lots20)),
             "liquid": bool(lots20 >= LIQUID_MIN_LOTS),
+            "rule_version": RULE_VERSION,
         })
 
     # 排名：只排有流動性的股票，同分時籌碼分高、成交量大的在前

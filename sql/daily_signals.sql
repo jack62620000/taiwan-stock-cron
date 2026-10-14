@@ -63,3 +63,9 @@ as $$
   group by s.date, dd.fwd_date
   order by s.date;
 $$;
+
+-- 2026-10-14 規則 v2：基本面改為 0~35、技術面改為 0~15，並記錄規則版本
+alter table public.daily_signals add column if not exists rule_version smallint not null default 1;
+comment on column public.daily_signals.rule_version is '評分規則版本（signals.py 的 RULE_VERSION）';
+comment on column public.daily_signals.fund_score is '基本面分數（v2: 0~35）：月營收成長';
+comment on column public.daily_signals.tech_score is '技術面分數（v2: 0~15）：月線、RSI、20日漲幅';
