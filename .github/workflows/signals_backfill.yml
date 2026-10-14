@@ -1,0 +1,39 @@
+name: 訊號評分回補
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: '開始日期（YYYY-MM-DD）'
+        required: true
+        type: string
+        default: '2026-06-01'
+      end_date:
+        description: '結束日期（YYYY-MM-DD，留空為最新交易日）'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: signals-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill-signals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run signal scoring backfill
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SIGNALS_START: ${{ github.event.inputs.start_date }}
+          SIGNALS_END: ${{ github.event.inputs.end_date }}
+        run: python signals.py

@@ -27,7 +27,9 @@ if st.button("🔄 強制重新整理資料"):
 stock_list = get_stock_list()
 options = (stock_list["stock_id"] + " " + stock_list["stock_name"].fillna("")).tolist() \
     if not stock_list.empty else []
-default_index = next((i for i, o in enumerate(options) if o.startswith("2330 ")), None)
+# 從「每日選股訊號」頁跳過來時，預設選那檔股票；否則預設台積電
+default_id = st.session_state.get("card_stock_id", "2330")
+default_index = next((i for i, o in enumerate(options) if o.startswith(f"{default_id} ")), None)
 selected = st.selectbox(
     "搜尋股票（輸入代號或公司名稱）", options, index=default_index,
     placeholder="例如: 2330 或 台積電",
