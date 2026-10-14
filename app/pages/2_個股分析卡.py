@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import altair as alt
 from datetime import datetime
 import sys
 import os
@@ -15,27 +17,40 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import (
     get_stock_info, get_daily_prices, get_quarterly,
     get_revenue, get_stock_ins, get_margin, get_holder,
-    get_margin_utilization  # ✅ 新增
+    get_margin_utilization, get_stock_list
 )
 from utils.indicators import calc_all, get_latest_signals
 
 st.set_page_config(page_title="個股分析卡", page_icon="🗂️", layout="wide")
 st.title("🗂️ 個股深度分析卡")
 
-# ===== 股票搜尋 =====
-stock_id = st.text_input("輸入股票代號", value="2330", placeholder="例如: 2330")
-if not stock_id:
-    st.info("請輸入股票代號")
+if st.button("🔄 強制重新整理資料"):
+    st.cache_data.clear()
+    get_stock_list.cache_clear()
+    st.rerun()
+
+# ===== 股票搜尋（可輸入代號或公司名稱）=====
+stock_list = get_stock_list()
+options = (stock_list["stock_id"] + " " + stock_list["stock_name"].fillna("")).tolist() \
+    if not stock_list.empty else []
+default_index = next((i for i, o in enumerate(options) if o.startswith("2330 ")), None)
+selected = st.selectbox(
+    "搜尋股票（輸入代號或公司名稱）", options, index=default_index,
+    placeholder="例如: 2330 或 台積電",
+)
+if not selected:
+    st.info("請選擇股票")
     st.stop()
+stock_id = selected.split(" ", 1)[0]
 
 # ===== 載入資料 =====
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600)
 def load_card_data(stock_id):
     info        = get_stock_info(stock_id)
     prices      = get_daily_prices(stock_id, limit=250)
     quarterly   = get_quarterly(stock_id, limit=8)
     revenue     = get_revenue(stock_id, limit=12)
-    ins         = get_stock_ins(stock_id, limit=10)
+    ins         = get_stock_ins(stock_id, limit=60)  # 圖表用 60 日，卡片取最後 10 日
     margin      = get_margin(stock_id, limit=1)
     holder      = get_holder(stock_id, limit=1)
     utilization = get_margin_utilization(stock_id, limit=60)  # ✅ 新增
@@ -72,9 +87,10 @@ latest_margin = margin.iloc[-1] if not margin.empty else {}
 latest_holder = holder.iloc[-1] if not holder.empty else {}
 latest_util   = utilization.iloc[-1] if not utilization.empty else {}  # ✅ 新增
 
-foreign_10d  = ins["foreign_net_shares"].sum() if not ins.empty else 0
-sitca_10d    = ins["sitca_net_shares"].sum() if not ins.empty else 0
-dealers_10d  = ins["dealers_net_shares"].sum() if not ins.empty else 0
+ins_10d      = ins.tail(10)
+foreign_10d  = ins_10d["foreign_net_shares"].sum() if not ins.empty else 0
+sitca_10d    = ins_10d["sitca_net_shares"].sum() if not ins.empty else 0
+dealers_10d  = ins_10d["dealers_net_shares"].sum() if not ins.empty else 0
 
 # ===== 計算本益比 =====
 # 季報的 EPS 是「年初至該季」的累計值，不是單季數字：
@@ -317,3 +333,96 @@ body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp)
 """
 
 st.components.v1.html(html, height=1500, scrolling=True)
+
+# ===== 圖表 =====
+UP_COLOR   = "#dc2626"  # 紅漲
+DOWN_COLOR = "#16a34a"  # 綠跌
+
+st.markdown("---")
+st.subheader("📈 股價走勢")
+range_days = st.radio(
+    "顯示區間", [60, 120, 250], index=1, horizontal=True,
+    format_func=lambda d: f"近 {d} 個交易日",
+)
+
+chart_df = prices_ta.tail(range_days).copy()
+chart_df["date"] = chart_df["date"].astype(str)
+chart_df["漲跌"] = np.where(chart_df["close_price"] >= chart_df["open_price"], "漲", "跌")
+
+# 日期用類別軸，週末與休市日不會留空；標籤大約顯示 6 個
+step = max(1, len(chart_df) // 6)
+x_axis = alt.X(
+    "date:O", title=None,
+    axis=alt.Axis(values=chart_df["date"].iloc[::step].tolist(), labelAngle=0),
+)
+up_down = alt.Color(
+    "漲跌:N", scale=alt.Scale(domain=["漲", "跌"], range=[UP_COLOR, DOWN_COLOR]), legend=None,
+)
+price_tooltip = [
+    alt.Tooltip("date:N", title="日期"),
+    alt.Tooltip("open_price:Q", title="開盤", format=",.2f"),
+    alt.Tooltip("high_price:Q", title="最高", format=",.2f"),
+    alt.Tooltip("low_price:Q", title="最低", format=",.2f"),
+    alt.Tooltip("close_price:Q", title="收盤", format=",.2f"),
+    alt.Tooltip("volume:Q", title="成交量", format=","),
+]
+
+base = alt.Chart(chart_df).encode(x=x_axis)
+wick = base.mark_rule(strokeWidth=1).encode(
+    y=alt.Y("low_price:Q", title="股價", scale=alt.Scale(zero=False)),
+    y2="high_price:Q", color=up_down, tooltip=price_tooltip,
+)
+body = base.mark_bar(size=max(2, int(600 / len(chart_df)))).encode(
+    y="open_price:Q", y2="close_price:Q", color=up_down, tooltip=price_tooltip,
+)
+
+ma_cols = [c for c in ["MA5", "MA20", "MA60"] if c in chart_df.columns and chart_df[c].notna().any()]
+layers = [wick, body]
+if ma_cols:
+    ma_lines = base.transform_fold(ma_cols, as_=["均線", "值"]).mark_line(strokeWidth=2).encode(
+        y="值:Q",
+        color=alt.Color(
+            "均線:N",
+            scale=alt.Scale(domain=["MA5", "MA20", "MA60"], range=["#2a78d6", "#eda100", "#e87ba4"]),
+            legend=alt.Legend(orient="top", title=None),
+        ),
+        tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("均線:N"),
+                 alt.Tooltip("值:Q", title="數值", format=",.2f")],
+    )
+    layers.append(ma_lines)
+
+price_chart = alt.layer(*layers).resolve_scale(color="independent").properties(height=320)
+volume_chart = base.mark_bar(size=max(2, int(600 / len(chart_df)))).encode(
+    y=alt.Y("volume:Q", title="成交量", axis=alt.Axis(format="~s")),
+    color=up_down, tooltip=price_tooltip,
+).properties(height=110)
+
+# 分成兩張圖各自撐滿寬度（vconcat 無法自動配合頁面寬度）；兩張用同一份資料，日期軸會對齊
+st.altair_chart(price_chart, width="stretch")
+st.altair_chart(volume_chart, width="stretch")
+
+st.subheader("🏦 三大法人買賣超（近 60 個交易日）")
+if ins.empty:
+    st.info("無法人買賣超資料")
+else:
+    ins_df = ins[["date", "foreign_net_shares", "sitca_net_shares", "dealers_net_shares"]].copy()
+    ins_df["date"] = ins_df["date"].astype(str)
+    ins_df = ins_df.rename(columns={
+        "foreign_net_shares": "外資", "sitca_net_shares": "投信", "dealers_net_shares": "自營商",
+    })
+    ins_long = ins_df.melt("date", var_name="法人", value_name="買賣超")
+    ins_step = max(1, len(ins_df) // 6)
+    ins_chart = alt.Chart(ins_long).mark_bar().encode(
+        x=alt.X("date:O", title=None,
+                axis=alt.Axis(values=ins_df["date"].iloc[::ins_step].tolist(), labelAngle=0)),
+        xOffset=alt.XOffset("法人:N", sort=["外資", "投信", "自營商"]),
+        y=alt.Y("買賣超:Q", title="買賣超（股）", axis=alt.Axis(format="~s")),
+        color=alt.Color(
+            "法人:N",
+            scale=alt.Scale(domain=["外資", "投信", "自營商"], range=["#2a78d6", "#eb6834", "#1baf7a"]),
+            legend=alt.Legend(orient="top", title=None),
+        ),
+        tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("法人:N"),
+                 alt.Tooltip("買賣超:Q", title="買賣超（股）", format=",")],
+    ).properties(height=260)
+    st.altair_chart(ins_chart, width="stretch")
