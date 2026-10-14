@@ -124,7 +124,7 @@ def get_recent_closes(calendar_days=40):
     if not res.data:
         return pd.DataFrame()
     latest_date = pd.to_datetime(res.data[0]["date"])
-    # 一天一個查詢、多個同時送出，比整段區間一頁一頁依序抓快很多（週末不會有資料，直接略過）
+    # 一天一個查詢（走主鍵索引，每次只要幾十毫秒），少量同時送出；週末不會有資料，直接略過
     days = [
         d.strftime("%Y-%m-%d")
         for d in pd.date_range(end=latest_date, periods=calendar_days + 1)
@@ -139,7 +139,7 @@ def get_recent_closes(calendar_days=40):
                 .order("stock_id", desc=False)
         )
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         rows = [r for day_rows in pool.map(fetch_day, days) for r in day_rows]
     return pd.DataFrame(rows)
 
