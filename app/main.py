@@ -35,7 +35,7 @@ st.set_page_config(
 st.title("📈 台股分析系統")
 st.markdown("---")
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
     st.info("### 📊 全台股總覽\n瀏覽所有股票的多維度指標")
@@ -57,6 +57,11 @@ with col4:
     if st.button("前往台股外資法人", use_container_width=True):
         st.switch_page("pages/4_台股外資法人.py")
 
+with col5:
+    st.info("### 💰 融資使用率\n全台股融資餘額與使用率多日表格")
+    if st.button("前往融資使用率", use_container_width=True):
+        st.switch_page("pages/5_融資融券使用率.py")
+
 st.markdown("---")
 st.markdown("""
 ### 功能說明
@@ -66,6 +71,7 @@ st.markdown("""
 | 🗂️ 個股分析卡 | 深度數據分析卡，含52週區間、基本面、籌碼面、技術面燈號 |
 | 🔮 期貨三大法人 | 臺股期貨未平倉口數與契約金額，多日數據表格 |
 | 🏦 台股外資法人 | 全台股外資買賣超多日橫向表格，支援連續買賣超篩選 |
+| 💰 融資使用率 | 全台股融資餘額、融資限額與使用率多日表格，支援使用率篩選 |
 
 ### 資料來源
 - 股價、法人、融資券：台灣證券交易所、櫃買中心

@@ -180,8 +180,8 @@ body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp)
 .st::after{{content:"";flex:1;height:1px;background:var(--bdr);}}
 .sn{{color:var(--or);}}
 .rl2{{display:flex;justify-content:space-between;font-family:"JetBrains Mono",monospace;font-size:11px;margin-bottom:7px;}}
-.lo{{color:var(--rd);font-weight:700;}} .mi{{color:var(--ts);}} .hi{{color:var(--gn);font-weight:700;}}
-.rt{{position:relative;height:10px;background:linear-gradient(90deg,#fee2e2 0%,#fef3c7 50%,#dcfce7 100%);border-radius:5px;border:1px solid var(--bdr2);}}
+.lo{{color:var(--gn);font-weight:700;}} .mi{{color:var(--ts);}} .hi{{color:var(--rd);font-weight:700;}}
+.rt{{position:relative;height:10px;background:linear-gradient(90deg,#dcfce7 0%,#fef3c7 50%,#fee2e2 100%);border-radius:5px;border:1px solid var(--bdr2);}}
 .rth{{position:absolute;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:#fff;border-radius:50%;box-shadow:0 0 0 2px #fff,0 0 0 4px var(--or);left:{position_pct}%;}}
 .rm2{{display:flex;justify-content:space-between;margin-top:7px;font-size:11px;color:var(--ts);}}
 .kg{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}}
@@ -197,9 +197,9 @@ body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp)
 .tb{{background:var(--inn);border:1px solid var(--bdr);border-radius:8px;padding:10px 12px;text-align:center;}}
 .tlb{{font-size:9.5px;color:var(--td);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;}}
 .tbdg{{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;white-space:nowrap;}}
-.bull{{background:var(--gbg);color:var(--gn);border:1px solid var(--gbr);}}
+.bull{{background:var(--rbg);color:var(--rd);border:1px solid var(--rbr);}}
 .neu{{background:var(--obg);color:var(--or);border:1px solid var(--obr);}}
-.bear{{background:var(--rbg);color:var(--rd);border:1px solid var(--rbr);}}
+.bear{{background:var(--gbg);color:var(--gn);border:1px solid var(--gbr);}}
 .tdd{{font-size:10px;color:var(--td);margin-top:5px;line-height:1.4;}}
 .cf{{background:#fffaf5;border-top:1px solid var(--bdr);padding:12px 28px;font-size:10px;color:var(--td);line-height:1.6;}}
 </style>
@@ -242,7 +242,7 @@ body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp)
 <div class="sec">
   <div class="st"><span class="sn">②</span> 基本面指標（{q_label or "最新季"}）</div>
   <div class="kg5">
-    <div class="kb"><div class="kl">EPS（年初累計）</div><div class="kv {'kv-gn' if latest_q.get('eps',0) and latest_q.get('eps',0)>0 else 'kv-rd'}">{fmt(latest_q.get('eps'))}</div><div class="kn">元</div></div>
+    <div class="kb"><div class="kl">EPS（年初累計）</div><div class="kv {'kv-rd' if latest_q.get('eps',0) and latest_q.get('eps',0)>0 else 'kv-gn'}">{fmt(latest_q.get('eps'))}</div><div class="kn">元</div></div>
     <div class="kb"><div class="kl">P/E（本益比・{pe_note}）</div><div class="kv kv-or">{fmt(pe_ratio) if pe_ratio else 'N/A'}</div><div class="kn">倍</div></div>
     <div class="kb"><div class="kl">ROE（年初累計・未年化）</div><div class="kv kv-or">{fmt(latest_q.get('roe'))}</div><div class="kn">%</div></div>
     <div class="kb"><div class="kl">P/B（股價淨值比）</div><div class="kv kv-or">{fmt(pb_now)}</div><div class="kn">倍</div></div>
@@ -255,17 +255,17 @@ body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp)
   <div class="kg">
     <div class="kb"><div class="kl">營收年月</div><div class="kv">{latest_rev.get('year_month','N/A')}</div></div>
     <div class="kb"><div class="kl">月營收</div><div class="kv">{fmt(latest_rev.get('revenue',0)/1000,'',1) if latest_rev.get('revenue') else 'N/A'}</div><div class="kn">百萬元</div></div>
-    <div class="kb"><div class="kl">年增率</div><div class="kv {'kv-gn' if (latest_rev.get('yoy_growth') or 0)>0 else 'kv-rd'}">{fmt(latest_rev.get('yoy_growth'),'%')}</div></div>
-    <div class="kb"><div class="kl">月增率</div><div class="kv {'kv-gn' if (latest_rev.get('mom_growth') or 0)>0 else 'kv-rd'}">{fmt(latest_rev.get('mom_growth'),'%')}</div></div>
+    <div class="kb"><div class="kl">年增率</div><div class="kv {'kv-rd' if (latest_rev.get('yoy_growth') or 0)>0 else 'kv-gn'}">{fmt(latest_rev.get('yoy_growth'),'%')}</div></div>
+    <div class="kb"><div class="kl">月增率</div><div class="kv {'kv-rd' if (latest_rev.get('mom_growth') or 0)>0 else 'kv-gn'}">{fmt(latest_rev.get('mom_growth'),'%')}</div></div>
   </div>
 </div>
 
 <div class="sec">
   <div class="st"><span class="sn">④</span> 籌碼面（近10日累計＋最新）</div>
   <div class="kg">
-    <div class="kb"><div class="kl">外資買賣超</div><div class="kv {'kv-gn' if foreign_10d>0 else 'kv-rd'}">{foreign_10d:,.0f}</div><div class="kn">股</div></div>
-    <div class="kb"><div class="kl">投信買賣超</div><div class="kv {'kv-gn' if sitca_10d>0 else 'kv-rd'}">{sitca_10d:,.0f}</div><div class="kn">股</div></div>
-    <div class="kb"><div class="kl">自營商買賣超</div><div class="kv {'kv-gn' if dealers_10d>0 else 'kv-rd'}">{dealers_10d:,.0f}</div><div class="kn">股</div></div>
+    <div class="kb"><div class="kl">外資買賣超</div><div class="kv {'kv-rd' if foreign_10d>0 else 'kv-gn'}">{foreign_10d:,.0f}</div><div class="kn">股</div></div>
+    <div class="kb"><div class="kl">投信買賣超</div><div class="kv {'kv-rd' if sitca_10d>0 else 'kv-gn'}">{sitca_10d:,.0f}</div><div class="kn">股</div></div>
+    <div class="kb"><div class="kl">自營商買賣超</div><div class="kv {'kv-rd' if dealers_10d>0 else 'kv-gn'}">{dealers_10d:,.0f}</div><div class="kn">股</div></div>
     <div class="kb"><div class="kl">大戶持股比例</div><div class="kv kv-or">{fmt(latest_holder.get('big_holder_ratio'))}</div><div class="kn">%</div></div>
   </div>
 </div>

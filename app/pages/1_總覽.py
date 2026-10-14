@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 import numpy as np
 import sys
@@ -14,10 +14,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import (
     get_stock_list, get_latest_prices, get_latest_ins,
     get_latest_margin, get_latest_holder, get_latest_revenue,
-    get_latest_quarterly, get_latest_margin_utilization
+    get_latest_quarterly, get_latest_margin_utilization, get_recent_closes
 )
-from utils.indicators import calc_all, get_latest_signals
-from utils.db import get_daily_prices
+from utils.indicators import calc_rsi
 
 st.set_page_config(
     page_title="全台股總覽",
@@ -33,6 +32,21 @@ if st.button("🔄 強制重新整理資料"):
     st.rerun()
 
 # ===== 載入資料 =====
+def load_latest_rsi():
+    """用近期收盤價算每檔股票最新的 RSI(14)，算法與個股分析卡相同"""
+    closes = get_recent_closes()
+    if closes.empty:
+        return pd.DataFrame(columns=["stock_id", "RSI"])
+    closes["close_price"] = pd.to_numeric(closes["close_price"], errors="coerce")
+    closes = closes.sort_values(["stock_id", "date"])
+    latest = []
+    for stock_id, g in closes.groupby("stock_id", sort=False):
+        g = calc_rsi(g.reset_index(drop=True))
+        latest.append({"stock_id": stock_id, "RSI": g["RSI"].iloc[-1]})
+    out = pd.DataFrame(latest)
+    out["RSI"] = pd.to_numeric(out["RSI"], errors="coerce")
+    return out
+
 @st.cache_data(ttl=3600)
 def load_overview_data():
     with st.spinner("正在載入資料..."):
@@ -44,9 +58,10 @@ def load_overview_data():
         holder            = get_latest_holder()
         revenue           = get_latest_revenue()
         quarterly         = get_latest_quarterly()
-    return stock_list, prices, ins, margin, margin_util, holder, revenue, quarterly
+        rsi               = load_latest_rsi()
+    return stock_list, prices, ins, margin, margin_util, holder, revenue, quarterly, rsi
 
-stock_list, prices, ins, margin, margin_util, holder, revenue, quarterly = load_overview_data()
+stock_list, prices, ins, margin, margin_util, holder, revenue, quarterly, rsi = load_overview_data()
 
 # ===== 合併資料 =====
 df = stock_list.copy()
@@ -59,6 +74,10 @@ if not prices.empty:
         on="stock_id", how="left"
     )
     df.rename(columns={"date": "price_date"}, inplace=True)
+
+# 合併 RSI
+if not rsi.empty:
+    df = df.merge(rsi, on="stock_id", how="left")
 
 # 合併三大法人
 if not ins.empty:
@@ -201,6 +220,9 @@ if "yoy_growth" in filtered.columns:
 if "foreign_net_shares" in filtered.columns:
     filtered = filtered[filtered["foreign_net_shares"].isna() | (filtered["foreign_net_shares"] >= foreign_min)]
 
+if "RSI" in filtered.columns:
+    filtered = filtered[filtered["RSI"].isna() | ((filtered["RSI"] >= rsi_min) & (filtered["RSI"] <= rsi_max))]
+
 # ===== 顯示統計 =====
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("篩選後股票數", f"{len(filtered):,} 檔")
@@ -287,6 +309,7 @@ col_map = {
     "big_holder_ratio":   "大戶持股%",
     "margin_balance":     "融資餘額(張)",
     "margin_rate":        "融資使用率",  # ✅ 原本是融券餘額，改為融資使用率
+    "RSI":                "RSI",
 }
 
 available_cols = {k: v for k, v in col_map.items() if k in filtered.columns}
@@ -322,6 +345,7 @@ for _, row in show_df.iterrows():
         "大戶持股%":   f"{row['big_holder_ratio']:,.2f}" if pd.notna(row.get("big_holder_ratio")) else "",
         "融資餘額(張)":    f"{row['margin_balance']:,.0f}" if pd.notna(row.get("margin_balance")) else "",
         "融資使用率":  color_rate(row.get("margin_rate")),  # ✅ 改為融資使用率
+        "RSI":         f"{row['RSI']:.2f}" if pd.notna(row.get("RSI")) else "",
     })
 
 html_df = pd.DataFrame(html_rows)
