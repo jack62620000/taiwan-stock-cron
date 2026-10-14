@@ -234,56 +234,30 @@ st.markdown("---")
 
 # ===== 顯示資料表 =====
 st.subheader("📋 全台股數據總覽")
+st.caption("點欄位名稱可排序，滑到表格右上角可搜尋、全螢幕檢視。")
 
-def color_price(val, price_change):
-    if val is None or pd.isna(val):
-        return ""
-    if price_change is None or pd.isna(price_change):
-        return f"{val:,.2f}"
-    if price_change > 0:
-        return f'<span style="color:#dc2626;font-weight:600;">{val:,.2f}</span>'
-    elif price_change < 0:
-        return f'<span style="color:#16a34a;font-weight:600;">{val:,.2f}</span>'
-    else:
-        return f"{val:,.2f}"
+UP_STYLE   = "color:#dc2626;font-weight:600;"  # 紅漲
+DOWN_STYLE = "color:#16a34a;font-weight:600;"  # 綠跌
 
-def color_value(val):
+def style_sign(val):
+    """正數紅色、負數綠色"""
     if val is None or pd.isna(val):
         return ""
     if val > 0:
-        return f'<span style="color:#dc2626;font-weight:600;">{val:,.2f}</span>'
-    elif val < 0:
-        return f'<span style="color:#16a34a;font-weight:600;">{val:,.2f}</span>'
-    else:
-        return f"{val:,.2f}"
+        return UP_STYLE
+    if val < 0:
+        return DOWN_STYLE
+    return ""
 
-def color_int(val):
-    if val is None or pd.isna(val):
-        return ""
-    if val > 0:
-        return f'<span style="color:#dc2626;font-weight:600;">{val:,.0f}</span>'
-    elif val < 0:
-        return f'<span style="color:#16a34a;font-weight:600;">{val:,.0f}</span>'
-    else:
-        return f"{val:,.0f}"
-
-def fmt_pe(val):
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return ""
-    if val == "虧損":
-        return '<span style="color:#16a34a;font-weight:600;">虧損</span>'
-    return f"{val:,.2f}"
-
-def color_rate(val):
+def style_rate(val):
     """融資使用率上色：>20% 紅色，>10% 橘色，其餘正常"""
     if val is None or pd.isna(val):
         return ""
     if val >= 20:
-        return f'<span style="color:#dc2626;font-weight:700;">{val:.2f}%</span>'
-    elif val >= 10:
-        return f'<span style="color:#ea580c;font-weight:600;">{val:.2f}%</span>'
-    else:
-        return f"{val:.2f}%"
+        return "color:#dc2626;font-weight:700;"
+    if val >= 10:
+        return "color:#ea580c;font-weight:600;"
+    return ""
 
 # 定義欄位對應（✅ 融券餘額改為融資使用率）
 col_map = {
@@ -314,84 +288,64 @@ col_map = {
 
 available_cols = {k: v for k, v in col_map.items() if k in filtered.columns}
 show_cols = list(available_cols.keys())
-if "price_change" not in show_cols and "price_change" in filtered.columns:
-    show_cols.append("price_change")
+if "price_change" in filtered.columns:
+    show_cols.append("price_change")  # 收盤價上色用，不顯示
 
 show_df = filtered[show_cols].copy()
 show_df = show_df.sort_values("stock_id").reset_index(drop=True)
 
-html_rows = []
-for _, row in show_df.iterrows():
-    html_rows.append({
-        "股票代號":    row.get("stock_id", ""),
-        "公司名稱":    row.get("stock_name", ""),
-        "市場":        row.get("market", ""),
-        "產業別":      row.get("industry", ""),
-        "收盤價":      color_price(row.get("close_price"), row.get("price_change")),
-        "成交量":      f"{row['volume']:,.0f}" if pd.notna(row.get("volume")) else "",
-        "P/E(年化)":         fmt_pe(row.get("pe_ratio")),
-        "P/B":         f"{row['pb_ratio']:,.2f}" if pd.notna(row.get("pb_ratio")) else "",
-        "EPS(累計)":         color_value(row.get("eps")),
-        "ROE%(累計)":        color_value(row.get("roe")),
-        "每股淨值":    f"{row['book_value']:,.2f}" if pd.notna(row.get("book_value")) else "",
-        "營收年月":    row.get("year_month", "") if pd.notna(row.get("year_month")) else "",
-        "月營收(千)":  f"{row['revenue']:,.0f}" if pd.notna(row.get("revenue")) else "",
-        "年增率%":     color_value(row.get("yoy_growth")),
-        "月增率%":     color_value(row.get("mom_growth")),
-        "外資買賣超":  color_int(row.get("foreign_net_shares")),
-        "投信買賣超":  color_int(row.get("sitca_net_shares")),
-        "自營買賣超":  color_int(row.get("dealers_net_shares")),
-        "法人合計":    color_int(row.get("total_net_shares")),
-        "大戶持股%":   f"{row['big_holder_ratio']:,.2f}" if pd.notna(row.get("big_holder_ratio")) else "",
-        "融資餘額(張)":    f"{row['margin_balance']:,.0f}" if pd.notna(row.get("margin_balance")) else "",
-        "融資使用率":  color_rate(row.get("margin_rate")),  # ✅ 改為融資使用率
-        "RSI":         f"{row['RSI']:.2f}" if pd.notna(row.get("RSI")) else "",
-    })
+# P/E 轉成數字才能排序；虧損的公司設為無限大（排序時排在最貴的一端），顯示時標「虧損」
+loss_mask = pd.Series(False, index=show_df.index)
+if "pe_ratio" in show_df.columns:
+    loss_mask = show_df["pe_ratio"] == "虧損"
+    show_df["pe_ratio"] = pd.to_numeric(show_df["pe_ratio"].where(~loss_mask), errors="coerce")
+    show_df.loc[loss_mask, "pe_ratio"] = np.inf
 
-html_df = pd.DataFrame(html_rows)
-table_html = html_df.to_html(escape=False, index=False, classes="stock-table")
+price_change = show_df.pop("price_change") if "price_change" in show_df.columns \
+    else pd.Series(index=show_df.index, dtype=float)
 
-table_style = """
-<style>
-.stock-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
-    font-family: -apple-system, "Noto Sans TC", sans-serif;
-}
-.stock-table th {
-    background: #f0f2f6;
-    padding: 8px 6px;
-    text-align: center;
-    border-bottom: 2px solid #ddd;
-    position: sticky;
-    top: 0;
-    white-space: nowrap;
-    z-index: 1;
-}
-.stock-table td {
-    padding: 6px 8px;
-    text-align: right;
-    border-bottom: 1px solid #eee;
-    white-space: nowrap;
-}
-.stock-table td:nth-child(1), .stock-table td:nth-child(2),
-.stock-table td:nth-child(3), .stock-table td:nth-child(4) {
-    text-align: left;
-}
-.stock-table tr:hover { background: #f9f9f9; }
-.table-container {
-    max-height: 700px;
-    overflow-y: auto;
-    overflow-x: auto;
-    border: 1px solid #ddd;
-    border-radius: 6px;
-}
-</style>
-"""
+display_df = show_df.rename(columns=available_cols)
+present = set(display_df.columns)
+def cols(*names):
+    return [c for c in names if c in present]
 
-st.markdown(table_style, unsafe_allow_html=True)
-st.markdown(f'<div class="table-container">{table_html}</div>', unsafe_allow_html=True)
+fmt_2   = cols("收盤價", "P/B", "EPS(累計)", "ROE%(累計)", "每股淨值",
+               "年增率%", "月增率%", "大戶持股%", "RSI", "P/E(年化)")
+fmt_int = cols("成交量", "月營收(千)", "外資買賣超", "投信買賣超",
+               "自營買賣超", "法人合計", "融資餘額(張)")
+sign_cols = cols("EPS(累計)", "ROE%(累計)", "年增率%", "月增率%",
+                 "外資買賣超", "投信買賣超", "自營買賣超", "法人合計")
+
+styler = display_df.style \
+    .format("{:,.2f}", subset=fmt_2, na_rep="") \
+    .format("{:,.0f}", subset=fmt_int, na_rep="") \
+    .map(style_sign, subset=sign_cols)
+
+if "融資使用率" in present:
+    styler = styler.format("{:.2f}%", subset=["融資使用率"], na_rep="") \
+        .map(style_rate, subset=["融資使用率"])
+
+if "收盤價" in present:
+    # 收盤價依當日漲跌上色
+    styler = styler.apply(
+        lambda s: [style_sign(c) for c in price_change], subset=["收盤價"], axis=0
+    )
+
+if "P/E(年化)" in present and loss_mask.any():
+    loss_idx = show_df.index[loss_mask]
+    styler = styler.format(lambda _: "虧損", subset=pd.IndexSlice[loss_idx, ["P/E(年化)"]]) \
+        .map(lambda _: DOWN_STYLE, subset=pd.IndexSlice[loss_idx, ["P/E(年化)"]])
+
+st.dataframe(
+    styler,
+    hide_index=True,
+    width="stretch",
+    height=700,
+    column_config={
+        "股票代號": st.column_config.TextColumn(pinned=True),
+        "公司名稱": st.column_config.TextColumn(pinned=True),
+    },
+)
 
 # ===== 下載按鈕 =====
 st.markdown("---")
