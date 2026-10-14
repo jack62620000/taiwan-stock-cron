@@ -20,7 +20,7 @@
 import argparse
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
+import time
 from functools import lru_cache
 
 import numpy as np
@@ -43,10 +43,23 @@ def _client():
     return create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 
+def _execute(make_request, retries=4):
+    """執行查詢，遇到連線被中斷等暫時性錯誤就等一下重試"""
+    for attempt in range(1, retries + 1):
+        try:
+            return make_request().execute()
+        except Exception as e:
+            if attempt == retries:
+                raise
+            wait = 3 * attempt
+            print(f"  連線錯誤，{wait} 秒後重試（第 {attempt} 次）：{type(e).__name__}")
+            time.sleep(wait)
+
+
 def _fetch_all(make_query, page_size=1000):
     rows, start = [], 0
     while True:
-        res = make_query().range(start, start + page_size - 1).execute()
+        res = _execute(lambda: make_query().range(start, start + page_size - 1))
         if not res.data:
             break
         rows.extend(res.data)
@@ -67,11 +80,14 @@ def trading_dates(sb, end=None):
 
 
 def load_daily(sb, table, columns, dates):
-    """逐日載入全市場資料（每天一個查詢、走主鍵索引），合併成一張表"""
-    def one(d):
-        return _fetch_all(lambda: sb.table(table).select(columns).eq("date", d).order("stock_id", desc=False))
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        rows = [r for chunk in pool.map(one, dates) for r in chunk]
+    """
+    逐日載入全市場資料（每天一個查詢、走主鍵索引），合併成一張表。
+    依序查詢、不平行：同一個連線同時送太多請求，Supabase 會中斷連線。
+    """
+    rows = []
+    for d in dates:
+        rows.extend(_fetch_all(
+            lambda d=d: sb.table(table).select(columns).eq("date", d).order("stock_id", desc=False)))
     return pd.DataFrame(rows)
 
 
@@ -443,10 +459,11 @@ def _error(msg):
 def save(sb, rows):
     failed = 0
     for i in range(0, len(rows), BATCH_SIZE):
+        batch = rows[i:i + BATCH_SIZE]
         try:
-            sb.table("daily_signals").upsert(rows[i:i + BATCH_SIZE]).execute()
+            _execute(lambda: sb.table("daily_signals").upsert(batch))
         except Exception as e:
-            failed += len(rows[i:i + BATCH_SIZE])
+            failed += len(batch)
             _error(f"寫入 daily_signals 失敗（{rows[i]['date']}，Index {i}）：{e}")
     return failed
 
