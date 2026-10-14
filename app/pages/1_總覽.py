@@ -16,7 +16,7 @@ from utils.db import (
     get_latest_margin, get_latest_holder, get_latest_revenue,
     get_latest_quarterly, get_latest_margin_utilization, get_recent_closes
 )
-from utils.indicators import calc_rsi
+from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(
     page_title="全台股總覽",
@@ -32,34 +32,51 @@ if st.button("🔄 強制重新整理資料"):
     st.rerun()
 
 # ===== 載入資料 =====
-def load_latest_rsi():
-    """用近期收盤價算每檔股票最新的 RSI(14)，算法與個股分析卡相同"""
+def load_latest_rsi(period=14):
+    """
+    用近期收盤價算每檔股票最新的 RSI(14)，算法與個股分析卡（indicators.calc_rsi）相同，
+    但一次對全部股票做 groupby 計算，不逐檔迴圈。
+    """
     closes = get_recent_closes()
     if closes.empty:
         return pd.DataFrame(columns=["stock_id", "RSI"])
     closes["close_price"] = pd.to_numeric(closes["close_price"], errors="coerce")
-    closes = closes.sort_values(["stock_id", "date"])
-    latest = []
-    for stock_id, g in closes.groupby("stock_id", sort=False):
-        g = calc_rsi(g.reset_index(drop=True))
-        latest.append({"stock_id": stock_id, "RSI": g["RSI"].iloc[-1]})
-    out = pd.DataFrame(latest)
-    out["RSI"] = pd.to_numeric(out["RSI"], errors="coerce")
-    return out
+    closes = closes.sort_values(["stock_id", "date"]).reset_index(drop=True)
+    grouped = closes.groupby("stock_id", sort=False)
+
+    delta = grouped["close_price"].diff()
+    closes["gain"] = delta.where(delta > 0, 0)
+    closes["loss"] = (-delta).where(delta < 0, 0)
+    avg = closes.groupby("stock_id", sort=False)[["gain", "loss"]] \
+        .rolling(window=period).mean().reset_index(level=0)
+    closes["avg_gain"] = avg["gain"]
+    closes["avg_loss"] = avg["loss"]
+    closes["RSI"] = (100 - 100 / (1 + closes["avg_gain"] / closes["avg_loss"])).round(2)
+
+    out = closes.groupby("stock_id", sort=False).tail(1)[["stock_id", "RSI"]].copy()
+    # 與 calc_rsi 一致：資料不足 period + 1 天不算
+    counts = grouped.size()
+    out.loc[out["stock_id"].map(counts) < period + 1, "RSI"] = np.nan
+    return out.reset_index(drop=True)
 
 @st.cache_data(ttl=3600)
 def load_overview_data():
+    # 各資料表互不相關，同時查詢，總等待時間約等於最慢的那一個
+    loaders = [
+        get_stock_list,
+        get_latest_prices,
+        get_latest_ins,
+        get_latest_margin,
+        get_latest_margin_utilization,
+        get_latest_holder,
+        get_latest_revenue,
+        get_latest_quarterly,
+        load_latest_rsi,
+    ]
     with st.spinner("正在載入資料..."):
-        stock_list        = get_stock_list()
-        prices            = get_latest_prices()
-        ins               = get_latest_ins()
-        margin            = get_latest_margin()
-        margin_util       = get_latest_margin_utilization()  # ✅ 新增
-        holder            = get_latest_holder()
-        revenue           = get_latest_revenue()
-        quarterly         = get_latest_quarterly()
-        rsi               = load_latest_rsi()
-    return stock_list, prices, ins, margin, margin_util, holder, revenue, quarterly, rsi
+        with ThreadPoolExecutor(max_workers=len(loaders)) as pool:
+            futures = [pool.submit(f) for f in loaders]
+            return tuple(f.result() for f in futures)
 
 stock_list, prices, ins, margin, margin_util, holder, revenue, quarterly, rsi = load_overview_data()
 
