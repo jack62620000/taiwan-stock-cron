@@ -1,5 +1,6 @@
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from supabase import create_client
 from dotenv import load_dotenv
@@ -123,14 +124,23 @@ def get_recent_closes(calendar_days=40):
     if not res.data:
         return pd.DataFrame()
     latest_date = pd.to_datetime(res.data[0]["date"])
-    start_date = (latest_date - pd.Timedelta(days=calendar_days)).strftime("%Y-%m-%d")
-    rows = _fetch_all(
-        lambda: supabase.table("daily_prices")
-            .select("stock_id, date, close_price")
-            .gte("date", start_date)
-            .order("stock_id", desc=False)
-            .order("date", desc=False)
-    )
+    # 一天一個查詢、多個同時送出，比整段區間一頁一頁依序抓快很多（週末不會有資料，直接略過）
+    days = [
+        d.strftime("%Y-%m-%d")
+        for d in pd.date_range(end=latest_date, periods=calendar_days + 1)
+        if d.weekday() < 5
+    ]
+
+    def fetch_day(day):
+        return _fetch_all(
+            lambda: supabase.table("daily_prices")
+                .select("stock_id, date, close_price")
+                .eq("date", day)
+                .order("stock_id", desc=False)
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        rows = [r for day_rows in pool.map(fetch_day, days) for r in day_rows]
     return pd.DataFrame(rows)
 
 # ===== 三大法人 =====
