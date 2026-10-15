@@ -5,7 +5,7 @@ import sys
 import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from utils.db import get_stock_list, get_recent_closes, get_paper_trades
+from utils.db import get_stock_list, get_recent_closes
 from utils.granville import RULES, STABLE_RULES, granville_signals, simulate_trades
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR
 require_login()
@@ -210,11 +210,6 @@ WARMUP_DAYS = 100  # 回測起點之前多載入的日曆天，夠算季線
 
 
 @st.cache_data(ttl=3600)
-def load_paper_trades():
-    return get_paper_trades()
-
-
-@st.cache_data(ttl=3600)
 def load_sim_prices(calendar_days):
     with st.spinner(f"正在載入近 {calendar_days} 天股價（含開盤價），第一次需要一點時間..."):
         return get_recent_closes(
@@ -236,60 +231,6 @@ def run_simulation(period_days, buy_rules, sell_rules, hold_days, stop_loss_pct,
 
 
 with tab_sim:
-    # ===== 每日紙上交易（排程每天依固定條件記錄）=====
-    st.subheader("📒 每日紙上交易")
-    st.caption(
-        "從 2026-10-15 起，每個交易日收盤後由排程依固定條件自動模擬買賣："
-        "法則 2 買進、法則 6/7 賣出、最長持有 20 天、停損 8%、20 日均量 ≥ 500 張、20 日均線。"
-        "和下方歷史回測用同一套規則，但這裡是從今天往後累積的真實結果。"
-    )
-    try:
-        paper = load_paper_trades()
-    except Exception:
-        paper = None
-        st.warning("紙上交易資料暫時讀取失敗，請稍後按「強制重新整理資料」再試。")
-    if paper is not None and paper.empty:
-        st.info("還沒有紙上交易紀錄，第一筆會在下一個交易日收盤後的排程寫入。")
-    elif paper is not None:
-        paper = paper.merge(stock_list[["stock_id", "stock_name"]], on="stock_id", how="left")
-        paper["return_pct"] = pd.to_numeric(paper["return_pct"], errors="coerce")
-        holding = paper[paper["status"] == "open"]
-        done = paper[paper["status"] == "closed"]
-        pending = paper[paper["status"] == "pending"]
-        p1, p2, p3, p4 = st.columns(4)
-        p1.metric("持有中", f"{len(holding):,} 檔", f"明天開盤買進 {len(pending):,} 檔", delta_color="off")
-        p2.metric("持有中平均未實現報酬", f"{holding['return_pct'].mean():+.2f}%" if len(holding) else "—")
-        p3.metric("已出場筆數", f"{len(done):,}", f"勝率 {(done['return_pct'] > 0).mean():.0%}" if len(done) else None,
-                  delta_color="off")
-        p4.metric("已出場平均報酬", f"{done['return_pct'].mean():+.2f}%" if len(done) else "—")
-
-        paper_cols = {
-            "stock_id": "股票代號", "stock_name": "公司名稱", "status_text": "狀態",
-            "signal_date": "訊號日", "entry_date": "買進日", "entry_price": "買進價",
-            "exit_date": "賣出日", "exit_price": "賣出價", "exit_reason": "出場原因", "return_pct": "報酬%",
-        }
-        paper["status_text"] = paper["status"].map({"pending": "明天買進", "open": "持有中", "closed": "已出場"})
-        for c in ("entry_price", "exit_price"):
-            paper[c] = pd.to_numeric(paper[c], errors="coerce")
-        paper_df = paper.sort_values(["status", "signal_date"], ascending=[False, False])[list(paper_cols)] \
-            .rename(columns=paper_cols)
-        st.dataframe(
-            paper_df.style
-                .format("{:,.2f}", subset=["買進價", "賣出價"], na_rep="")
-                .format("{:+.2f}", subset=["報酬%"], na_rep="")
-                .map(style_sign, subset=["報酬%"]),
-            hide_index=True,
-            width="stretch",
-            height=400,
-            column_config={
-                "股票代號": st.column_config.TextColumn(pinned=True),
-                "公司名稱": st.column_config.TextColumn(pinned=True),
-            },
-        )
-        st.caption("持有中的報酬是用最新收盤價算的未實現報酬；報酬已扣手續費與證交稅。")
-
-    st.markdown("---")
-    st.subheader("🧪 歷史回測")
     st.markdown(
         "用過去的股價假設「照著法則買賣」，看看會賺還是賠。"
         "收盤出現買進訊號 → **隔天開盤買進**；出現賣出訊號或跌破停損 → **隔天開盤賣出**；"
