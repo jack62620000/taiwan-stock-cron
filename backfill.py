@@ -10,6 +10,7 @@
                 prices = 每日股價
                 ins    = 三大法人
                 margin = 融資融券（餘額＋限額＋使用率）
+                adjust = 還原權值事件（除權息、減資、變更面額；整段區間一次抓）
 
 有缺漏、寫入失敗或疑似被來源封鎖時，會以錯誤碼結束，GitHub 會把這次執行標成失敗。
 """
@@ -18,7 +19,11 @@ import sys
 import time
 from datetime import datetime, timezone
 
+import fetch_adjustments as adj
 import fetch_stock_info as f
+
+ADJUST_KEY = "adjust"
+ADJUST_LABEL = "還原權值事件"
 
 SLEEP_BETWEEN_API    = 2
 SLEEP_BETWEEN_DAYS   = 5
@@ -68,9 +73,10 @@ def read_config():
         errors.append("開始日期不能晚於結束日期")
     if not keys:
         errors.append("DATASETS 沒有指定要回補的資料")
-    unknown = [k for k in keys if k not in DATASETS]
+    allowed = list(DATASETS) + [ADJUST_KEY]
+    unknown = [k for k in keys if k not in allowed]
     if unknown:
-        errors.append(f"DATASETS 有無法辨識的項目：{', '.join(unknown)}（可用：{', '.join(DATASETS)}）")
+        errors.append(f"DATASETS 有無法辨識的項目：{', '.join(unknown)}（可用：{', '.join(allowed)}）")
     return start, end, keys, errors
 
 
@@ -89,7 +95,8 @@ def main():
             print(f"❌ {e}")
         return 1
 
-    names = "、".join(DATASETS[k][0] for k in keys)
+    names = "、".join(DATASETS[k][0] if k in DATASETS else ADJUST_LABEL for k in keys)
+    day_keys = [k for k in keys if k in DATASETS]  # 逐日抓的資料；還原權值事件整段區間一次抓
     print(f"========== 區間回補：{start} ～ {end}｜{names} ==========")
 
     days = f.get_trading_days(start, end)
@@ -110,12 +117,21 @@ def main():
     twse_only_fails = consecutive_empty = 0
     aborted = None
 
-    for i, day in enumerate(days, 1):
+    if ADJUST_KEY in keys:
+        print(f"\n--- {ADJUST_LABEL} ---")
+        events, adj_problems = adj.fetch_range(start, end, valid_stocks)
+        problems.extend(adj_problems)
+        if events:
+            _, failed = f.save_data_batches(adj.TABLE, events)
+            if failed:
+                problems.append(f"{adj.TABLE}：{failed} 筆寫入失敗")
+
+    for i, day in enumerate(days if day_keys else [], 1):
         print(f"\n========== [{i}/{len(days)}] {day} ==========")
         day_has_data = False
         twse_missing = False
 
-        for key in keys:
+        for key in day_keys:
             label, fetch_twse, fetch_tpex, to_tables = DATASETS[key]
             twse = fetch_twse(day, valid_stocks)
             time.sleep(SLEEP_BETWEEN_API)
