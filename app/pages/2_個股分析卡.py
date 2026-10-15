@@ -322,6 +322,7 @@ st.components.v1.html(html, height=1500, scrolling=True)
 # ===== 圖表 =====
 st.markdown("---")
 st.subheader("📈 股價走勢")
+st.caption("股價已還原權值：除權息、減資、變更面額之前的價格依參考價等比例調整，均線與各項指標不會因此出現假跳空；最新股價不受影響。")
 range_days = st.radio(
     "顯示區間", [60, 120, 250], index=1, horizontal=True,
     format_func=lambda d: f"近 {d} 個交易日",
