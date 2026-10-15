@@ -41,6 +41,8 @@ LOOKBACK_DAYS = 30          # 評分日之前要多載入的交易日數（MA20�
 LIQUID_MIN_LOTS = 500       # 20 日均量至少 500 張才列入排名
 ANCHOR_STOCKS = ["2330", "2317", "2454"]  # 用權值股找交易日，走主鍵索引比較快
 BATCH_SIZE = 500
+KEEP_FULL_DAYS = 60         # 最近這麼多個評分日保留完整資料；更早的只留回測需要的股票、清空加分理由
+BACKTEST_MAX_HORIZON = 20   # 規則回測最長持有天數，精簡時要保留這段期間內曾列入排名的股票
 
 
 # =====================================================================
@@ -489,6 +491,19 @@ def main():
         top = sorted((r for r in rows if r["rank"]), key=lambda r: r["rank"])[:5]
         top_text = "、".join(f"{r['stock_id']}({r['total_score']})" for r in top)
         print(f"  {d}：{len(rows)} 檔，前五名 {top_text}")
+
+    # 精簡舊資料：KEEP_FULL_DAYS 個評分日以前的資料，刪掉回測用不到的冷門股、清空加分理由
+    # 只處理剛超過保留期的幾天（回補了多少天就多處理幾天），每次都很快
+    try:
+        res = _execute(lambda: sb.rpc("prune_daily_signals", {
+            "keep_days": KEEP_FULL_DAYS,
+            "lookback": BACKTEST_MAX_HORIZON,
+            "max_dates": len(targets) + 5,
+        }))
+        print(f"  精簡舊評分：刪除 {res.data} 筆冷門股資料")
+    except Exception as e:
+        _error(f"精簡舊評分失敗（評分已寫入，不影響今天的結果）：{e}")
+        failed += 1
 
     if failed:
         _error(f"有 {failed} 筆寫入失敗")

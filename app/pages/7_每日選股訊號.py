@@ -80,6 +80,9 @@ with tab_rank:
     if day.empty:
         st.warning(f"{date} 沒有評分資料")
         st.stop()
+    # 和 signals.py 的 KEEP_FULL_DAYS 一致：更早的評分日已精簡
+    if dates.index(date) >= 60:
+        st.caption("📦 這一天超過 60 個評分日，為了節省資料庫空間，只保留回測需要的股票，也不含加分理由；分數與排名不變。")
 
     with st.expander("🔍 進階篩選", expanded=False):
         c1, c2, c3, c4 = st.columns(4)

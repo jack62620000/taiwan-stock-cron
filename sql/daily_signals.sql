@@ -74,3 +74,47 @@ comment on column public.daily_signals.tech_score is '技術面分數（v2: 0~15
 -- 沒有這個索引時，資料庫快取冷的情況下要 4~5 秒，會超過 API 的 3 秒逾時
 create index if not exists daily_signals_date_stock_cover_idx
     on public.daily_signals (date, stock_id) include (close_price, rank, liquid);
+
+-- 2026-10-15 評分表瘦身：最近 keep_days 個評分日保留完整資料；更早的評分日
+--   1. 刪掉當天沒列入排名、而且前 lookback 個評分日也都沒列入排名的股票（規則回測用不到）
+--   2. 清空加分理由（reasons），風險提醒（warnings）很小，保留
+-- signals.py 每次評分完會呼叫，只處理剛超過保留期的 max_dates 個評分日；回傳刪除筆數
+create or replace function public.prune_daily_signals(keep_days int default 60, lookback int default 20, max_dates int default 5)
+returns int
+language plpgsql
+as $$
+declare
+  cutoff date;
+  d      date;
+  since  date;
+  k      int;
+  n      int := 0;
+begin
+  select x.date into cutoff
+  from (select distinct s.date from public.daily_signals s order by s.date desc offset keep_days - 1 limit 1) x;
+  if cutoff is null then
+    return 0;
+  end if;
+
+  for d in
+    select distinct s.date from public.daily_signals s
+    where s.date < cutoff order by s.date desc limit max_dates
+  loop
+    select min(x.date) into since
+    from (select distinct s.date from public.daily_signals s
+          where s.date < d order by s.date desc limit lookback) x;
+
+    delete from public.daily_signals s
+    where s.date = d and not s.liquid
+      and not exists (
+        select 1 from public.daily_signals t
+        where t.stock_id = s.stock_id and t.liquid and t.date >= coalesce(since, d) and t.date < d
+      );
+    get diagnostics k = row_count;
+    n := n + k;
+
+    update public.daily_signals set reasons = '{}' where date = d and reasons <> '{}';
+  end loop;
+  return n;
+end;
+$$;
