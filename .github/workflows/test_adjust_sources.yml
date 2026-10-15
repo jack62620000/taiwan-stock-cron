@@ -3,13 +3,13 @@ name: 還原權值資料來源測試
 on:
   push:
     branches: [claude/project-thread-3bhtks]
-    paths: [test_adjust_sources.py, .github/workflows/test_adjust_sources.yml]
+    paths: [fetch_adjustments.py, .github/workflows/test_adjust_sources.yml]
   workflow_dispatch:
 
 jobs:
   test-sources:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,5 +19,9 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: pip install requests
-      - name: Test data sources
-        run: python test_adjust_sources.py
+      - name: Dry run
+        env:
+          DRY_RUN: '1'
+          START_DATE: '2025-09-01'
+          END_DATE: '2026-10-15'
+        run: python -u fetch_adjustments.py
