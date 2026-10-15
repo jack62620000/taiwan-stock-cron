@@ -3,6 +3,9 @@ import sys, time
 sys.path.insert(0, "app")
 import pandas as pd
 from utils import db
+from concurrent.futures import ThreadPoolExecutor
+# GitHub Actions 上多執行緒共用連線會被斷線（網頁本身不受影響），測試時改成逐日依序讀
+db.ThreadPoolExecutor = lambda max_workers=1: ThreadPoolExecutor(max_workers=1)
 from utils.indicators import calc_all
 
 for sid in ("6669", "4747", "6949", "2380", "2330"):
