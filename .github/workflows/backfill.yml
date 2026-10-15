@@ -12,7 +12,7 @@ on:
         type: string
         default: ''
       datasets:
-        description: '要回補的資料（prices=股價、ins=三大法人、margin=融資融券）'
+        description: '要回補的資料（prices=股價、ins=三大法人、margin=融資融券、adjust=還原權值事件）'
         required: true
         type: choice
         default: 'ins,margin'
@@ -22,6 +22,7 @@ on:
           - 'prices,ins,margin'
           - 'ins'
           - 'margin'
+          - 'adjust'
 
 # 同一時間只允許一個回補在跑，避免請求頻率加倍
 concurrency:

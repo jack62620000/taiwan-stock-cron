@@ -1,6 +1,7 @@
 """
 自動化版本 - 給 GitHub Actions 排程使用
-每次執行會同步一個交易日的股價、三大法人、融資融券（餘額＋限額＋使用率）。
+每次執行會同步一個交易日的股價、三大法人、融資融券（餘額＋限額＋使用率），
+以及最近兩週的還原權值事件。
 
 抓取函式全部來自 fetch_stock_info.py，這裡不再複製一份，
 之後只要改 fetch_stock_info.py，排程就會跟著更新。
@@ -10,11 +11,13 @@
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+import fetch_adjustments as adj
 import fetch_stock_info as f
 
 SLEEP_BETWEEN_API = 2
+ADJUST_LOOKBACK_DAYS = 14   # 還原權值事件每天重抓最近兩週，漏抓一兩天也會補上
 
 
 def target_date():
@@ -86,6 +89,15 @@ def main():
         _, failed = f.save_data_batches(table, records)
         if failed:
             problems.append(f"{table} 有 {failed} 筆寫入失敗")
+
+    print("\n--- 還原權值事件（除權息、減資、變更面額）---")
+    adj_start = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=ADJUST_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    events, adj_problems = adj.fetch_range(adj_start, today, valid_stocks)
+    problems.extend(adj_problems)
+    if events:
+        _, failed = f.save_data_batches(adj.TABLE, events)
+        if failed:
+            problems.append(f"{adj.TABLE} 有 {failed} 筆寫入失敗")
 
     if problems:
         print(f"\n❌ {today} 的同步不完整：")
