@@ -118,3 +118,33 @@ begin
   return n;
 end;
 $$;
+
+-- 2026-10-15 規則回測改用還原權值報酬：持有期間（評分日之後、到期日當天以前）若有除權息、減資、變更面額，
+-- 報酬再除以這段期間各事件 factor 的乘積，除息、分割不會被算成虧損。adj 只對 price_adjustments 小表運算，速度影響很小
+create or replace function public.signal_performance(top_n int default 20, horizon int default 5)
+returns table (date date, fwd_date date, top_return numeric, market_return numeric, top_count int)
+language sql stable
+as $$
+  with d as (
+    select distinct s.date from public.daily_signals s
+  ), dd as (
+    select d.date, lead(d.date, horizon) over (order by d.date) as fwd_date from d
+  ), adj as (
+    select a.stock_id, dd.date, exp(sum(ln(a.factor))) as factor
+    from dd
+    join public.price_adjustments a on a.date > dd.date and a.date <= dd.fwd_date
+    group by a.stock_id, dd.date
+  )
+  select s.date,
+         dd.fwd_date,
+         round(avg(f.close_price / s.close_price / coalesce(adj.factor, 1) - 1) filter (where s.rank <= top_n) * 100, 2) as top_return,
+         round(avg(f.close_price / s.close_price / coalesce(adj.factor, 1) - 1) * 100, 2) as market_return,
+         (count(*) filter (where s.rank <= top_n))::int as top_count
+  from public.daily_signals s
+  join dd on dd.date = s.date and dd.fwd_date is not null
+  join public.daily_signals f on f.stock_id = s.stock_id and f.date = dd.fwd_date
+  left join adj on adj.stock_id = s.stock_id and adj.date = s.date
+  where s.liquid and s.close_price > 0
+  group by s.date, dd.fwd_date
+  order by s.date;
+$$;
