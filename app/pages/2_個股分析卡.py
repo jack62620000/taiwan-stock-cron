@@ -66,8 +66,10 @@ if prices.empty:
 prices_ta = calc_all(prices.copy())
 signals   = get_latest_signals(prices_ta)
 
-latest    = prices.iloc[-1]
-prev      = prices.iloc[-2] if len(prices) > 1 else latest
+# 停牌或沒有成交的日子已在 calc_all 補成股價不變，並以 no_trade 標記
+latest    = prices_ta.iloc[-1]
+prev      = prices_ta.iloc[-2] if len(prices_ta) > 1 else latest
+no_trade_days = prices_ta[prices_ta["no_trade"]]["date"].astype(str).tolist()
 close     = latest["close_price"]
 prev_close = prev["close_price"]
 change    = close - prev_close
@@ -322,6 +324,13 @@ st.components.v1.html(html, height=1500, scrolling=True)
 # ===== 圖表 =====
 st.markdown("---")
 st.subheader("📈 股價走勢")
+if latest["no_trade"]:
+    last_traded = prices[pd.to_numeric(prices["close_price"], errors="coerce").notna()]["date"]
+    since = f"，最後成交日 {last_traded.iloc[-1]}" if not last_traded.empty else ""
+    st.warning(f"⏸️ {latest['date']} 沒有成交（停牌或當天無人交易）{since}，價格沿用最後成交價。")
+if no_trade_days:
+    st.caption(f"⏸️ 近 {len(prices_ta)} 個交易日中有 {len(no_trade_days)} 天沒有成交（停牌或無人交易），"
+               "圖上以灰色標示，這些天視為股價不變。")
 st.caption("股價已還原權值：除權息、減資、變更面額之前的價格依參考價等比例調整，均線與各項指標不會因此出現假跳空；最新股價不受影響。")
 range_days = st.radio(
     "顯示區間", [60, 120, 250], index=1, horizontal=True,
@@ -330,7 +339,8 @@ range_days = st.radio(
 
 chart_df = prices_ta.tail(range_days).copy()
 chart_df["date"] = chart_df["date"].astype(str)
-chart_df["漲跌"] = np.where(chart_df["close_price"] >= chart_df["open_price"], "漲", "跌")
+chart_df["漲跌"] = np.select(
+    [chart_df["no_trade"], chart_df["close_price"] >= chart_df["open_price"]], ["無成交", "漲"], "跌")
 
 # 日期用類別軸，週末與休市日不會留空；標籤大約顯示 6 個
 step = max(1, len(chart_df) // 6)
@@ -339,10 +349,12 @@ x_axis = alt.X(
     axis=alt.Axis(values=chart_df["date"].iloc[::step].tolist(), labelAngle=0),
 )
 up_down = alt.Color(
-    "漲跌:N", scale=alt.Scale(domain=["漲", "跌"], range=[UP_COLOR, DOWN_COLOR]), legend=None,
+    "漲跌:N", scale=alt.Scale(domain=["漲", "跌", "無成交"], range=[UP_COLOR, DOWN_COLOR, "#9ca3af"]),
+    legend=None,
 )
 price_tooltip = [
     alt.Tooltip("date:N", title="日期"),
+    alt.Tooltip("漲跌:N", title="狀態"),
     alt.Tooltip("open_price:Q", title="開盤", format=",.2f"),
     alt.Tooltip("high_price:Q", title="最高", format=",.2f"),
     alt.Tooltip("low_price:Q", title="最低", format=",.2f"),
@@ -360,7 +372,11 @@ body = base.mark_bar(size=max(2, int(600 / len(chart_df)))).encode(
 )
 
 ma_cols = [c for c in ["MA5", "MA20", "MA60"] if c in chart_df.columns and chart_df[c].notna().any()]
-layers = [wick, body]
+# 沒有成交的日子開高低收相同，K 棒看不到，改畫灰色菱形標記
+no_trade_mark = base.transform_filter("datum['漲跌'] == '無成交'").mark_point(
+    shape="diamond", filled=True, size=40, color="#9ca3af", opacity=1,
+).encode(y="close_price:Q", tooltip=price_tooltip)
+layers = [wick, body, no_trade_mark]
 if ma_cols:
     ma_lines = base.transform_fold(ma_cols, as_=["均線", "值"]).mark_line(strokeWidth=2).encode(
         y="值:Q",

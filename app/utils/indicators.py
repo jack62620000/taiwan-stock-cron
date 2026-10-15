@@ -62,11 +62,30 @@ def calc_bollinger(df, period=20, std=2):
     df["BB_LOW"] = (df["BB_MID"] - std * bb_std).round(2)
     return df
 
-def calc_all(df):
-    """計算所有技術指標"""
-    if df.empty or len(df) < 5:
-        return df
+def fill_no_trade(df):
+    """
+    停牌或當天沒有成交時，資料庫的開高低收是空值。依交易所慣例視為股價不變：
+    收盤沿用前一個成交日，開高低等於收盤、成交量為 0，並用 no_trade 欄位標記這些日子。
+    這樣均線、RSI 等指標不會因為一天空值，整段（例如 20 日均線就是 20 天）都算不出來。
+    """
     df = df.copy()
+    close = pd.to_numeric(df["close_price"], errors="coerce")
+    df["no_trade"] = close.isna()
+    df["close_price"] = close.ffill()
+    for col in ("open_price", "high_price", "low_price"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").where(~df["no_trade"], df["close_price"])
+    if "volume" in df.columns:
+        df["volume"] = pd.to_numeric(df["volume"], errors="coerce").where(~df["no_trade"], 0)
+    return df
+
+def calc_all(df):
+    """計算所有技術指標（無成交的日子先依 fill_no_trade 補成股價不變）"""
+    if df.empty:
+        return df
+    df = fill_no_trade(df)
+    if len(df) < 5:
+        return df
     df = calc_ma(df)
     df = calc_rsi(df)
     df = calc_macd(df)

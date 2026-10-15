@@ -32,7 +32,10 @@ def rule_frames(close, ma_days=20, slope_days=5, lookback=5,
     """
     對「每一天」判斷八大法則。close 是 日期 × 股票 的收盤價寬表。
     回傳 dict：ma、bias、slope、slope_before（寬表）與 hits（{法則編號: 布林寬表}）。
+    停牌或沒有成交的日子（收盤價空值）視為股價不變來算均線，但當天不判斷法則。
     """
+    traded = close.notna()
+    close = close.ffill()
     ma = close.rolling(ma_days, min_periods=ma_days).mean()
     ma_long = close.rolling(trend_days, min_periods=trend_days).mean()
     slope = ma - ma.shift(slope_days)
@@ -61,7 +64,7 @@ def rule_frames(close, ma_days=20, slope_days=5, lookback=5,
         8: rising & (bias >= bias_pct),
     }
     # 資料不足（收盤價、均線或一段時間前的均線方向算不出來）的日子不判斷
-    valid = close.notna() & ma.notna() & slope_before.notna()
+    valid = traded & ma.notna() & slope_before.notna()
     hits = {n: h & valid for n, h in hits.items()}
     # 法則 2 的四個條件分開保留，給觀察名單逐項顯示
     rule2_parts = [rising & (slope_before > 0), w_min < 0, close > ma, above_long]
@@ -86,7 +89,8 @@ def confirm_frames(close, volume=None, foreign=None):
     缺資料的條件不會出現在 hits 裡。
     """
     values, hits = {}, {}
-    # MACD(12, 26, 9)，和 indicators.py 相同算法
+    # MACD(12, 26, 9)，和 indicators.py 相同算法；沒有成交的日子視為股價不變
+    close = close.ffill()
     ema_fast = close.ewm(span=12, adjust=False).mean()
     ema_slow = close.ewm(span=26, adjust=False).mean()
     dif = ema_fast - ema_slow
@@ -134,7 +138,7 @@ def granville_signals(prices, ma_days=20, slope_days=5, lookback=5,
     close = _pivot(prices, "close_price")
     f = rule_frames(close, ma_days, slope_days, lookback, near_pct, bias_pct, trend_days)
 
-    c_t, c_y = close.iloc[-1], close.iloc[-2]
+    c_t, c_y = close.iloc[-1], close.ffill().iloc[-2]  # 昨天沒有成交時，和最後成交價比
     ma_t = f["ma"].iloc[-1]
     slope_t = f["slope"].iloc[-1]
     rising, falling = slope_t > 0, slope_t < 0
@@ -240,7 +244,7 @@ def rule1_watchlist(prices, ins=None, min_volume=500, watch_days=WATCH_DAYS,
         s = int(idx[-1])
         r2 = hits[2][sid].to_numpy()[s + 1: min(s + watch_days, last) + 1]
         found = np.flatnonzero(r2)
-        c = close[sid]
+        c = close[sid].ffill()  # 今天沒有成交時顯示最後成交價
         row = {
             "stock_id": sid,
             "setup_date": dates[s],
