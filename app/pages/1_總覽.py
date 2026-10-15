@@ -37,6 +37,8 @@ def load_latest_rsi(period=14):
         return pd.DataFrame(columns=["stock_id", "RSI"])
     closes["close_price"] = pd.to_numeric(closes["close_price"], errors="coerce")
     closes = closes.sort_values(["stock_id", "date"]).reset_index(drop=True)
+    # 停牌或沒有成交的日子收盤價是空值，視為股價不變（與 indicators.fill_no_trade 相同）
+    closes["close_price"] = closes.groupby("stock_id", sort=False)["close_price"].ffill()
     grouped = closes.groupby("stock_id", sort=False)
 
     delta = grouped["close_price"].diff()
