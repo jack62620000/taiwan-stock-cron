@@ -5,7 +5,7 @@ import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import get_stock_list, get_recent_closes
-from utils.granville import RULES, granville_signals
+from utils.granville import RULES, STABLE_RULES, granville_signals
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR
 require_login()
 
@@ -25,9 +25,9 @@ if st.button("🔄 強制重新整理資料"):
 # ===== 載入資料 =====
 @st.cache_data(ttl=3600)
 def load_prices():
-    # 60 個日曆天約 40 個交易日，夠算 20 日均線與它前一週的方向
-    with st.spinner("正在載入近 60 天股價..."):
-        return get_recent_closes(calendar_days=60, columns="stock_id, date, close_price, volume")
+    # 100 個日曆天約 65 個交易日，夠算季線（60 日均線）給法則 2 用
+    with st.spinner("正在載入近 100 天股價..."):
+        return get_recent_closes(calendar_days=100, columns="stock_id, date, close_price, volume")
 
 stock_list = get_stock_list()
 prices = load_prices()
@@ -52,7 +52,10 @@ markets = ["全部"] + sorted(stock_list["market"].dropna().unique().tolist())
 selected_market = st.sidebar.selectbox("市場", markets)
 industries = ["全部"] + sorted(stock_list["industry"].dropna().unique().tolist())
 selected_industry = st.sidebar.selectbox("產業別", industries)
-min_volume = st.sidebar.number_input("當日成交量下限（張）", 0, 1000000, 0, step=100)
+min_volume = st.sidebar.number_input(
+    "20 日均量下限（張）", 0, 1000000, 500, step=100,
+    help="回測顯示冷門股的訊號雜訊很大，預設只看 20 日均量 500 張以上的股票",
+)
 
 # ===== 計算訊號 =====
 signals = granville_signals(
@@ -75,7 +78,7 @@ if selected_market != "全部":
 if selected_industry != "全部":
     df = df[df["industry"] == selected_industry]
 if min_volume > 0:
-    df = df[df["volume"] >= min_volume]
+    df = df[df["avg_volume_20"] >= min_volume]
 
 # ===== 各法則檔數 =====
 counts = {n: int(df["rules"].apply(lambda r: n in r).sum()) for n in RULES}
@@ -84,19 +87,27 @@ st.caption(f"資料日期：{latest_date}　·　依 {ma_days} 日均線判斷�
 
 buy_cols = st.columns(4)
 sell_cols = st.columns(4)
-for n, (side, desc) in RULES.items():
+for n, (side, desc, level) in RULES.items():
     col = buy_cols[n - 1] if n <= 4 else sell_cols[n - 5]
-    col.metric(f"法則{n}（{side}）", f"{counts[n]:,} 檔", help=desc)
+    col.metric(f"法則{n}（{side}·{level}）", f"{counts[n]:,} 檔", help=desc)
 
 with st.expander("📖 八大法則說明與判斷方式"):
-    st.markdown("\n".join(f"- **法則{n}（{side}）**：{desc}" for n, (side, desc) in RULES.items()))
+    st.markdown("\n".join(f"- **法則{n}（{side}·{level}）**：{desc}" for n, (side, desc, level) in RULES.items()))
     st.markdown(f"""
 **程式怎麼判斷（以最新一個交易日為準，參數可在左側調整）**
 - 均線上揚／下彎：今天的均線比 {slope_days} 天前高／低。
 - 法則 1、5：今天剛突破／跌破均線，而且 {slope_days} 天前的均線方向是相反或走平的（代表均線正在轉折）。
-- 法則 2、6：均線方向一直沒變，過去 {lookback} 天內曾經跌破／突破均線，今天又回到原本那一側。
+- 法則 2、6：均線方向一直沒變，過去 {lookback} 天內曾經跌破／突破均線，今天又回到原本那一側；法則 2 另外要求均線在季線（60 日均線）之上。
 - 法則 3、7：過去 {lookback} 天都在均線同一側，最接近均線時乖離在 {near_pct}% 以內，今天往遠離均線的方向走。
 - 法則 4、8：乖離率（收盤價與均線的差距）超過 ±{bias_pct}%。
+
+**可靠度怎麼來的**
+用 2025-09 ~ 2026-10 的資料回測（20 日均量 500 張以上、持有 10 個交易日，和同一天所有股票平均比較），
+分成前後兩段期間：兩段方向一致的標「穩定」，兩段結果相反或樣本太少的標「參考」。
+- 法則 2、6、7 兩段都和預期方向一致。
+- 法則 8 原本是賣訊，但兩段期間都是續漲，乖離越大漲越多，所以改成「過熱」提醒。
+- 法則 1、3、4、5 兩段結果不一致，預設不顯示，可在下方自行勾選。
+- 所有法則的報酬中位數都略低於大盤，平均值是靠少數大漲股撐起來，單看訊號勝率不會超過五成。
 """)
     st.caption("技術分析僅供參考，請搭配其他指標與基本面判斷。")
 
@@ -107,15 +118,15 @@ rule_options = list(RULES)
 selected_rules = st.multiselect(
     "顯示符合這些法則的股票",
     rule_options,
-    default=rule_options,
-    format_func=lambda n: f"法則{n}（{RULES[n][0]}）",
+    default=STABLE_RULES,
+    format_func=lambda n: f"法則{n}（{RULES[n][0]}·{RULES[n][2]}）",
 )
 
 result = df[df["rules"].apply(lambda r: any(n in selected_rules for n in r))].copy()
 
 def signal_of(rules):
     sides = {RULES[n][0] for n in rules}
-    return "、".join(s for s in ["買進", "賣出"] if s in sides)
+    return "、".join(s for s in ["買進", "賣出", "過熱"] if s in sides)
 
 result["signal"] = result["rules"].apply(signal_of)
 result["rule_text"] = result["rules"].apply(lambda r: "、".join(f"法則{n}" for n in r))
@@ -141,14 +152,20 @@ col_map = {
     "bias":        "乖離率%",
     "ma_trend":    "均線方向",
     "volume":      "成交量(張)",
+    "avg_volume_20": "20日均量(張)",
 }
 display_df = result[list(col_map)].rename(columns=col_map)
+
+WARN_COLOR = "#d97706"  # 過熱提醒用橘色，和買進紅、賣出綠區分
+
 
 def style_signal(val):
     if val == "買進":
         return f"color:{UP_COLOR};font-weight:700;"
     if val == "賣出":
         return f"color:{DOWN_COLOR};font-weight:700;"
+    if val == "過熱":
+        return f"color:{WARN_COLOR};font-weight:700;"
     return ""
 
 def style_trend(val):
@@ -157,7 +174,7 @@ def style_trend(val):
 change = result["change"]
 styler = display_df.style \
     .format("{:,.2f}", subset=["收盤價", "漲跌", f"{ma_days}日均線", "乖離率%"], na_rep="") \
-    .format("{:,.0f}", subset=["成交量(張)"], na_rep="") \
+    .format("{:,.0f}", subset=["成交量(張)", "20日均量(張)"], na_rep="") \
     .map(style_sign, subset=["漲跌", "乖離率%"]) \
     .map(style_signal, subset=["訊號"]) \
     .map(style_trend, subset=["均線方向"]) \
