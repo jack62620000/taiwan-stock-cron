@@ -258,5 +258,13 @@ def get_signal_history(stock_id, limit=60):
 
 def get_signal_performance(top_n=20, horizon=5):
     """規則回測：每個評分日前 N 名持有 horizon 個交易日的平均報酬 vs 全市場平均（%）"""
-    res = supabase.rpc("signal_performance", {"top_n": top_n, "horizon": horizon}).execute()
-    return pd.DataFrame(res.data)
+    # 資料庫快取是冷的時候，這個函式可能超過 Supabase API 的查詢逾時（anon 3 秒）；
+    # 第一次失敗通常已把資料讀進快取，等一下再試一次多半就會成功
+    for attempt in range(2):
+        try:
+            res = supabase.rpc("signal_performance", {"top_n": top_n, "horizon": horizon}).execute()
+            return pd.DataFrame(res.data)
+        except Exception:
+            if attempt == 1:
+                raise
+            time.sleep(1)

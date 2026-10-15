@@ -273,8 +273,14 @@ with tab_backtest:
     with c2:
         bt_h = st.selectbox("持有幾個交易日", [5, 10, 20], index=0)
 
-    perf = load_performance(bt_top, bt_h)
-    if perf.empty:
+    try:
+        perf = load_performance(bt_top, bt_h)
+    except Exception:
+        perf = None
+        st.warning("回測資料暫時讀取失敗（資料庫查詢逾時），請稍後按「強制重新整理」或重新選一次條件。")
+    if perf is None:
+        pass
+    elif perf.empty:
         st.info(f"評分資料還不夠長，需要至少 {bt_h + 1} 個評分日才能計算。")
     else:
         perf["excess"] = perf["top_return"] - perf["market_return"]
