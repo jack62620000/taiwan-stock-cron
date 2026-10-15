@@ -63,7 +63,10 @@ def rule_frames(close, ma_days=20, slope_days=5, lookback=5,
     # 資料不足（收盤價、均線或一段時間前的均線方向算不出來）的日子不判斷
     valid = close.notna() & ma.notna() & slope_before.notna()
     hits = {n: h & valid for n, h in hits.items()}
-    return {"ma": ma, "bias": bias, "slope": slope, "slope_before": slope_before, "hits": hits}
+    # 法則 2 的四個條件分開保留，給觀察名單逐項顯示
+    rule2_parts = [rising & (slope_before > 0), w_min < 0, close > ma, above_long]
+    return {"ma": ma, "bias": bias, "slope": slope, "slope_before": slope_before, "hits": hits,
+            "rule2_parts": rule2_parts}
 
 
 # 買進確認條件：只加在買進法則上。依 2025-12 ~ 2026-10 回測，
@@ -215,7 +218,8 @@ def rule1_watchlist(prices, ins=None, min_volume=500, watch_days=WATCH_DAYS,
     vol = _pivot(prices, "volume").reindex(index=close.index, columns=close.columns) \
         if "volume" in prices.columns else None
     foreign = _pivot(ins, "foreign_net_shares") if ins is not None and not ins.empty else None
-    hits = rule_frames(close, **rule_params)["hits"]
+    frames = rule_frames(close, **rule_params)
+    hits, parts = frames["hits"], frames["rule2_parts"]
     cf = confirm_frames(close, vol, foreign)
     setup = hits[1] & _confirmed(cf, ("foreign", "macd", "volume"), close.columns)
     if vol is not None:
@@ -245,8 +249,11 @@ def rule1_watchlist(prices, ins=None, min_volume=500, watch_days=WATCH_DAYS,
             "rule2_day": None,
             "held_days": None,
         }
+        # 法則 2 四個條件：已出現的看出現當天（全部符合），其餘看最新一天
+        k = s + 1 + int(found[0]) if len(found) else last
+        for i, part in enumerate(parts, 1):
+            row[f"r2_c{i}"] = "符合" if bool(part[sid].iloc[k]) else "觀察"
         if len(found):
-            k = s + 1 + int(found[0])
             row.update(status="已出現法則2", rule2_date=dates[k], rule2_day=k - s, held_days=last - k)
         elif last - s >= watch_days:
             if last - s > watch_days + show_expired_days:

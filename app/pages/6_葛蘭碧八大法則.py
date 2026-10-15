@@ -212,17 +212,18 @@ with tab_today:
     with st.container(border=True):
         st.subheader("🔭 法則 1 觀察名單")
         lo, hi = HOLD_HINT
+        R2_COLS = ("①均線上揚", "②曾跌破均線", "③站回均線", "④在季線上")
         st.caption(
             f"近期符合「法則 1 + 外資 5 日買超 + MACD 柱 > 0 + 當日量 > 1.5 倍均量」的股票（固定條件，不受左側勾選影響）。"
             f"起點後 {WATCH_DAYS} 個交易日內出現法則 2 → 隔天開盤買進、建議持有 {lo}～{hi} 個交易日；"
             f"超過 {WATCH_DAYS} 天沒出現視為過期。回測只有 24 筆交易，僅供參考。"
         )
         st.markdown(
-            f"**法則 2 的判斷條件**（以下 4 項同時成立，參數跟左側設定連動）：\n"
-            f"1. {ma_days} 日均線持續上揚：今天的均線高於 {slope_days} 天前，且 {slope_days} 天前也在上揚\n"
-            f"2. 前 {lookback} 個交易日內，至少有一天收盤價跌破 {ma_days} 日均線\n"
-            f"3. 今天收盤價重新站回 {ma_days} 日均線之上\n"
-            f"4. {ma_days} 日均線在季線（60 日均線）之上"
+            f"**法則 2 的判斷條件**（以下 4 項同時成立，參數跟左側設定連動；表格中①～④欄標「符合」或「觀察」）：  \n"
+            f"① {ma_days} 日均線持續上揚：今天的均線高於 {slope_days} 天前，且 {slope_days} 天前也在上揚  \n"
+            f"② 前 {lookback} 個交易日內，至少有一天收盤價跌破 {ma_days} 日均線  \n"
+            f"③ 今天收盤價重新站回 {ma_days} 日均線之上  \n"
+            f"④ {ma_days} 日均線在季線（60 日均線）之上"
         )
         watch = pd.DataFrame() if ins is None else rule1_watchlist(
             prices, ins=ins, min_volume=min_volume, ma_days=ma_days, slope_days=slope_days,
@@ -248,10 +249,15 @@ with tab_today:
             watch_cols = {
                 "stock_id": "股票代號", "stock_name": "公司名稱", "industry": "產業別",
                 "status": "狀態", "setup_date": "符合法則1日期", "rule2_date": "法則2出現日期",
-                "rule2_day": "起點後", "note": "提醒", "setup_close": "起點收盤價",
+                "rule2_day": "起點後",
+                **{f"r2_c{i}": name for i, name in enumerate(R2_COLS, 1)},
+                "note": "提醒", "setup_close": "起點收盤價",
                 "close_price": "最新收盤價", "change_since": "起點至今%",
             }
             watch_df = watch[list(watch_cols)].rename(columns=watch_cols)
+
+            def style_part(val):
+                return f"color:{UP_COLOR};font-weight:700;" if val == "符合" else "color:#94a3b8;"
 
             def style_status(val):
                 return {
@@ -265,7 +271,8 @@ with tab_today:
                     .format("{:,.2f}", subset=["起點收盤價", "最新收盤價"], na_rep="")
                     .format("{:+.2f}", subset=["起點至今%"], na_rep="")
                     .map(style_sign, subset=["起點至今%"])
-                    .map(style_status, subset=["狀態"]),
+                    .map(style_status, subset=["狀態"])
+                    .map(style_part, subset=list(R2_COLS)),
                 hide_index=True,
                 width="stretch",
                 height=min(500, 38 + 35 * len(watch_df)),
