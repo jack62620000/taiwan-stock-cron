@@ -69,3 +69,8 @@ alter table public.daily_signals add column if not exists rule_version smallint 
 comment on column public.daily_signals.rule_version is '評分規則版本（signals.py 的 RULE_VERSION）';
 comment on column public.daily_signals.fund_score is '基本面分數（v2: 0~35）：月營收成長';
 comment on column public.daily_signals.tech_score is '技術面分數（v2: 0~15）：月線、RSI、20日漲幅';
+
+-- 2026-10-15 規則回測加速：signal_performance 只需要這幾欄，覆蓋索引讓它不必讀整張表（含 reasons/warnings 陣列）
+-- 沒有這個索引時，資料庫快取冷的情況下要 4~5 秒，會超過 API 的 3 秒逾時
+create index if not exists daily_signals_date_stock_cover_idx
+    on public.daily_signals (date, stock_id) include (close_price, rank, liquid);
