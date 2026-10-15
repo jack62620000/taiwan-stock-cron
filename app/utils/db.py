@@ -115,8 +115,12 @@ def get_stock_info(stock_id):
     return res.data[0] if res.data else None
 
 # ===== 股價 =====
-def get_daily_prices(stock_id, limit=180):
-    return _latest_rows("daily_prices", stock_id, ["date"], limit)
+def get_daily_prices(stock_id, limit=180, adjust=True):
+    """個股最近 limit 天股價；adjust=True 時回傳還原權值後的價格（見 apply_adjustments）"""
+    df = _latest_rows("daily_prices", stock_id, ["date"], limit)
+    if adjust and not df.empty:
+        df = apply_adjustments(df, get_price_adjustments(stock_id, df["date"].min()))
+    return df
 
 def get_latest_prices():
     return _latest_snapshot(
@@ -124,12 +128,16 @@ def get_latest_prices():
         "stock_id, date, open_price, high_price, low_price, close_price, volume",
     )
 
-def get_recent_closes(calendar_days=40, columns="stock_id, date, close_price"):
+def get_recent_closes(calendar_days=40, columns="stock_id, date, close_price", adjust=True):
     """
     取所有股票最近 calendar_days 天（日曆天）的收盤價，給總覽頁算 RSI、葛蘭碧頁算均線用。
     40 個日曆天約 25 個交易日，遇到長假也夠算 RSI(14)。
+    adjust=True 時回傳還原權值後的價格（見 apply_adjustments）。
     """
-    return _recent_snapshots("daily_prices", calendar_days, columns)
+    df = _recent_snapshots("daily_prices", calendar_days, columns)
+    if adjust and not df.empty:
+        df = apply_adjustments(df, get_price_adjustments(None, df["date"].min()))
+    return df
 
 def get_recent_ins(calendar_days=10, columns="stock_id, date, foreign_net_shares"):
     """取所有股票最近 calendar_days 天（日曆天）的法人買賣超，給葛蘭碧頁的籌碼確認條件用"""
@@ -154,6 +162,48 @@ def _recent_snapshots(table, calendar_days, columns):
     with ThreadPoolExecutor(max_workers=3) as pool:
         frames = [f for f in pool.map(fetch_day, days) if not f.empty]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+# ===== 還原權值 =====
+# price_adjustments 每筆事件（除權息、減資、變更面額）記錄 factor = 參考價 ÷ 事件前收盤價。
+# 事件日之前的股價乘上之後所有事件的 factor，前後股價就能連續，均線、RSI、KD 等不會被假跳空扭曲。
+# 最新一天的股價不受影響，和看盤軟體的「還原股價」相同。
+_PRICE_COLS = ["open_price", "high_price", "low_price", "close_price"]
+_VOLUME_EVENTS = ("變更面額",)  # 股數跟著等比例變動的事件，成交量也要還原
+
+def get_price_adjustments(stock_id=None, after_date=None):
+    """取還原權值事件；stock_id 為 None 時取全部股票。只取 after_date 之後的事件（之前的不影響）"""
+    def make_query():
+        q = supabase.table("price_adjustments").select("stock_id, date, event_type, factor")
+        if stock_id is not None:
+            q = q.eq("stock_id", stock_id)
+        if after_date is not None:
+            q = q.gt("date", str(after_date))
+        return q.order("date", desc=False).order("stock_id", desc=False).order("event_type", desc=False)
+    return pd.DataFrame(_fetch_all(make_query))
+
+def apply_adjustments(prices, events):
+    """
+    把股價換成還原權值價格。prices 需有 stock_id、date 欄位，有哪些價格欄位就還原哪些；
+    變更面額（例如面額 10 元改 1 元）的成交量也一併還原，讓量能指標前後可比。
+    """
+    if events is None or events.empty:
+        return prices
+    df = prices.copy()
+    ev = events[["stock_id", "date", "event_type", "factor"]].copy()
+    ev["factor"] = pd.to_numeric(ev["factor"], errors="coerce")
+    ev = ev[ev["factor"] > 0]
+    # 每列股價配上同一檔「之後」的所有事件，連乘就是這一列要乘的比例
+    rows = df[["stock_id", "date"]].rename_axis("_row").reset_index().merge(ev, on="stock_id", suffixes=("", "_ev"))
+    rows = rows[pd.to_datetime(rows["date"]) < pd.to_datetime(rows["date_ev"])]
+    price_mult = rows.groupby("_row")["factor"].prod().reindex(df.index, fill_value=1.0)
+    vol_rows = rows[rows["event_type"].isin(_VOLUME_EVENTS)]
+    vol_mult = (1 / vol_rows.groupby("_row")["factor"].prod()).reindex(df.index, fill_value=1.0)
+    for col in _PRICE_COLS:
+        if col in df.columns:
+            df[col] = (pd.to_numeric(df[col], errors="coerce") * price_mult).round(2)
+    if "volume" in df.columns and (vol_mult != 1).any():
+        df["volume"] = (pd.to_numeric(df["volume"], errors="coerce") * vol_mult).round()
+    return df
 
 # ===== 三大法人 =====
 def get_stock_ins(stock_id, limit=60):
