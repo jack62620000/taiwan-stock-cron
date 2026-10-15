@@ -217,6 +217,13 @@ with tab_today:
             f"起點後 {WATCH_DAYS} 個交易日內出現法則 2 → 隔天開盤買進、建議持有 {lo}～{hi} 個交易日；"
             f"超過 {WATCH_DAYS} 天沒出現視為過期。回測只有 24 筆交易，僅供參考。"
         )
+        st.markdown(
+            f"**法則 2 的判斷條件**（以下 4 項同時成立，參數跟左側設定連動）：\n"
+            f"1. {ma_days} 日均線持續上揚：今天的均線高於 {slope_days} 天前，且 {slope_days} 天前也在上揚\n"
+            f"2. 前 {lookback} 個交易日內，至少有一天收盤價跌破 {ma_days} 日均線\n"
+            f"3. 今天收盤價重新站回 {ma_days} 日均線之上\n"
+            f"4. {ma_days} 日均線在季線（60 日均線）之上"
+        )
         watch = pd.DataFrame() if ins is None else rule1_watchlist(
             prices, ins=ins, min_volume=min_volume, ma_days=ma_days, slope_days=slope_days,
             lookback=lookback, near_pct=near_pct, bias_pct=bias_pct,
