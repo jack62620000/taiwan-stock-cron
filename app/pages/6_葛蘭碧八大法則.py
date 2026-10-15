@@ -7,7 +7,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import get_stock_list, get_recent_closes, get_recent_ins
 from utils.granville import (
-    RULES, STABLE_RULES, CONFIRMS, HOLD_HINT, WATCH_DAYS, WATCH_STATUS,
+    RULES, STABLE_RULES, CONFIRMS, HOLD_HINT, WATCH_DAYS, WATCH_STATUS, LATE_STATUS,
     granville_signals, rule1_watchlist, simulate_trades, watch_note,
 )
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR
@@ -238,9 +238,11 @@ with tab_today:
         elif watch.empty:
             st.info("近期沒有股票符合法則 1 + 三個確認條件")
         else:
-            w1, w2, w3 = st.columns(3)
-            for col, status in zip((w1, w2, w3), WATCH_STATUS):
+            for col, status in zip(st.columns(len(WATCH_STATUS)), WATCH_STATUS):
                 col.metric(status, f"{int((watch['status'] == status).sum()):,} 檔")
+            show_late = st.checkbox("也顯示已錯過買點、已過期的股票", value=False, key="watch_show_late")
+            if not show_late:
+                watch = watch[~watch["status"].isin(LATE_STATUS)]
             watch["status_order"] = watch["status"].map({s: i for i, s in enumerate(WATCH_STATUS)})
             watch = watch.sort_values(["status_order", "setup_date"], ascending=[True, False])
             watch["note"] = watch.apply(watch_note, axis=1)
@@ -261,26 +263,30 @@ with tab_today:
 
             def style_status(val):
                 return {
-                    "已出現法則2": f"color:{UP_COLOR};font-weight:700;",
+                    "今天出現法則2": f"color:{UP_COLOR};font-weight:700;",
                     "等待法則2": f"color:{WARN_COLOR};font-weight:700;",
+                    "已錯過買點": "color:#94a3b8;",
                     "已過期": "color:#94a3b8;",
                 }.get(val, "")
 
-            st.dataframe(
-                watch_df.style
-                    .format("{:,.2f}", subset=["起點收盤價", "最新收盤價"], na_rep="")
-                    .format("{:+.2f}", subset=["起點至今%"], na_rep="")
-                    .map(style_sign, subset=["起點至今%"])
-                    .map(style_status, subset=["狀態"])
-                    .map(style_part, subset=list(R2_COLS)),
-                hide_index=True,
-                width="stretch",
-                height=min(500, 38 + 35 * len(watch_df)),
-                column_config={
-                    "股票代號": st.column_config.TextColumn(pinned=True),
-                    "公司名稱": st.column_config.TextColumn(pinned=True),
-                },
-            )
+            if watch_df.empty:
+                st.info("目前沒有今天出現法則 2 或等待中的股票，可勾選上方選項查看已錯過買點、已過期的股票")
+            else:
+                st.dataframe(
+                    watch_df.style
+                        .format("{:,.2f}", subset=["起點收盤價", "最新收盤價"], na_rep="")
+                        .format("{:+.2f}", subset=["起點至今%"], na_rep="")
+                        .map(style_sign, subset=["起點至今%"])
+                        .map(style_status, subset=["狀態"])
+                        .map(style_part, subset=list(R2_COLS)),
+                    hide_index=True,
+                    width="stretch",
+                    height=min(500, 38 + 35 * len(watch_df)),
+                    column_config={
+                        "股票代號": st.column_config.TextColumn(pinned=True),
+                        "公司名稱": st.column_config.TextColumn(pinned=True),
+                    },
+                )
 
     # ===== 買進訊號 =====
     with st.container(border=True):
