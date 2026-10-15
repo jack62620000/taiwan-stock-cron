@@ -189,21 +189,15 @@ def apply_adjustments(prices, events):
     if events is None or events.empty:
         return prices
     df = prices.copy()
-    dates = pd.to_datetime(df["date"])
-    price_mult = pd.Series(1.0, index=df.index)
-    vol_mult = pd.Series(1.0, index=df.index)
-    rows_by_stock = df.groupby("stock_id").groups
-    for ev in events.itertuples(index=False):
-        rows = rows_by_stock.get(ev.stock_id)
-        factor = float(ev.factor)
-        if rows is None or not factor > 0:
-            continue
-        before = rows[dates[rows] < pd.Timestamp(ev.date)]
-        if len(before) == 0:
-            continue
-        price_mult[before] *= factor
-        if ev.event_type in _VOLUME_EVENTS:
-            vol_mult[before] /= factor
+    ev = events[["stock_id", "date", "event_type", "factor"]].copy()
+    ev["factor"] = pd.to_numeric(ev["factor"], errors="coerce")
+    ev = ev[ev["factor"] > 0]
+    # 每列股價配上同一檔「之後」的所有事件，連乘就是這一列要乘的比例
+    rows = df[["stock_id", "date"]].rename_axis("_row").reset_index().merge(ev, on="stock_id", suffixes=("", "_ev"))
+    rows = rows[pd.to_datetime(rows["date"]) < pd.to_datetime(rows["date_ev"])]
+    price_mult = rows.groupby("_row")["factor"].prod().reindex(df.index, fill_value=1.0)
+    vol_rows = rows[rows["event_type"].isin(_VOLUME_EVENTS)]
+    vol_mult = (1 / vol_rows.groupby("_row")["factor"].prod()).reindex(df.index, fill_value=1.0)
     for col in _PRICE_COLS:
         if col in df.columns:
             df[col] = (pd.to_numeric(df[col], errors="coerce") * price_mult).round(2)
