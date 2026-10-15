@@ -6,7 +6,10 @@ import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import get_stock_list, get_recent_closes, get_recent_ins
-from utils.granville import RULES, STABLE_RULES, CONFIRMS, granville_signals, simulate_trades
+from utils.granville import (
+    RULES, STABLE_RULES, CONFIRMS, HOLD_HINT, WATCH_DAYS, WATCH_STATUS,
+    granville_signals, rule1_watchlist, simulate_trades, watch_note,
+)
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR
 require_login()
 
@@ -31,8 +34,8 @@ def load_prices():
         return get_recent_closes(calendar_days=100, columns="stock_id, date, close_price, volume")
 
 @st.cache_data(ttl=3600)
-def load_ins(calendar_days=10):
-    # 10 個日曆天至少有 5 個交易日，夠算外資 5 日買超
+def load_ins(calendar_days=60):
+    # 60 個日曆天約 40 個交易日：夠算外資 5 日買超，也涵蓋觀察名單往回看的 30 個交易日
     return get_recent_ins(calendar_days=calendar_days)
 
 stock_list = get_stock_list()
@@ -101,16 +104,7 @@ if min_volume > 0:
 tab_today, tab_sim = st.tabs(["📋 今日訊號", "🧪 模擬交易"])
 
 with tab_today:
-    # ===== 各法則檔數 =====
-    counts = {n: int(df["rules"].apply(lambda r: n in r).sum()) for n in RULES}
-
     st.caption(f"資料日期：{latest_date}　·　依 {ma_days} 日均線判斷，共 {len(df):,} 檔有足夠資料")
-
-    buy_cols = st.columns(4)
-    sell_cols = st.columns(4)
-    for n, (side, desc, level) in RULES.items():
-        col = buy_cols[n - 1] if n <= 4 else sell_cols[n - 5]
-        col.metric(f"法則{n}（{side}·{level}）", f"{counts[n]:,} 檔", help=desc)
 
     with st.expander("📖 八大法則說明與判斷方式"):
         st.markdown("\n".join(f"- **法則{n}（{side}·{level}）**：{desc}" for n, (side, desc, level) in RULES.items()))
@@ -142,96 +136,150 @@ with tab_today:
 """)
         st.caption("技術分析僅供參考，請搭配其他指標與基本面判斷。")
 
-    st.markdown("---")
 
-    # ===== 結果表 =====
-    rule_options = list(RULES)
-    selected_rules = st.multiselect(
-        "顯示符合這些法則的股票",
-        rule_options,
-        default=STABLE_RULES,
-        format_func=lambda n: f"法則{n}（{RULES[n][0]}·{RULES[n][2]}）",
-    )
+    col_map = {
+        "stock_id":    "股票代號",
+        "stock_name":  "公司名稱",
+        "market":      "市場",
+        "industry":    "產業別",
+        "rule_text":   "符合法則",
+        "close_price": "收盤價",
+        "change":      "漲跌",
+        "ma":          f"{ma_days}日均線",
+        "bias":        "乖離率%",
+        "ma_trend":    "均線方向",
+        "volume":      "成交量(張)",
+        "avg_volume_20": "20日均量(張)",
+        "vol_ratio":   "量比",
+        "foreign_5d":  "外資5日(張)",
+        "macd_hist":   "MACD柱",
+    }
 
-    result = df[df["rules"].apply(lambda r: any(n in selected_rules for n in r))].copy()
+    def style_trend(val):
+        return style_sign({"上揚": 1, "下彎": -1}.get(val, 0))
 
-    def signal_of(rules):
-        sides = {RULES[n][0] for n in rules}
-        return "、".join(s for s in ["買進", "賣出", "過熱"] if s in sides)
+    def show_rule_table(side_rules, key, label):
+        """一個區塊：各法則檔數、法則選擇、結果表、下載按鈕"""
+        cols = st.columns(len(side_rules))
+        for col, n in zip(cols, side_rules):
+            side, desc, level = RULES[n]
+            col.metric(f"法則{n}（{side}·{level}）", f"{int(df['rules'].apply(lambda r: n in r).sum()):,} 檔",
+                       help=desc)
+        selected = st.multiselect(
+            "顯示符合這些法則的股票", side_rules,
+            default=[n for n in side_rules if n in STABLE_RULES],
+            format_func=lambda n: f"法則{n}（{RULES[n][0]}·{RULES[n][2]}）",
+            key=f"rules_{key}",
+        )
+        result = df.assign(rules=df["rules"].apply(lambda r: [n for n in r if n in selected]))
+        result = result[result["rules"].str.len() > 0].copy()
+        if result.empty:
+            st.info("目前沒有股票符合選取的法則")
+            return
+        result["rule_text"] = result["rules"].apply(lambda r: "、".join(f"法則{n}" for n in r))
+        result["first_rule"] = result["rules"].str[0]  # 依法則編號、股票代號排序
+        result = result.sort_values(["first_rule", "stock_id"]).reset_index(drop=True)
+        st.markdown(f"**{label}（{len(result):,} 檔）**")
 
-    result["signal"] = result["rules"].apply(signal_of)
-    result["rule_text"] = result["rules"].apply(lambda r: "、".join(f"法則{n}" for n in r))
-    result["first_rule"] = result["rules"].str[0]  # 依法則編號、股票代號排序
-    result = result.sort_values(["first_rule", "stock_id"]).reset_index(drop=True)
-
-    st.subheader(f"📋 符合條件的股票（{len(result):,} 檔）")
-
-    if result.empty:
-        st.info("目前沒有股票符合選取的法則")
-    else:
-
-        col_map = {
-            "stock_id":    "股票代號",
-            "stock_name":  "公司名稱",
-            "market":      "市場",
-            "industry":    "產業別",
-            "signal":      "訊號",
-            "rule_text":   "符合法則",
-            "close_price": "收盤價",
-            "change":      "漲跌",
-            "ma":          f"{ma_days}日均線",
-            "bias":        "乖離率%",
-            "ma_trend":    "均線方向",
-            "volume":      "成交量(張)",
-            "avg_volume_20": "20日均量(張)",
-            "vol_ratio":   "量比",
-            "foreign_5d":  "外資5日(張)",
-            "macd_hist":   "MACD柱",
-        }
         display_df = result[list(col_map)].rename(columns=col_map)
-
-        def style_signal(val):
-            if val == "買進":
-                return f"color:{UP_COLOR};font-weight:700;"
-            if val == "賣出":
-                return f"color:{DOWN_COLOR};font-weight:700;"
-            if val == "過熱":
-                return f"color:{WARN_COLOR};font-weight:700;"
-            return ""
-
-        def style_trend(val):
-            return style_sign({"上揚": 1, "下彎": -1}.get(val, 0))
-
         change = result["change"]
         styler = display_df.style \
             .format("{:,.2f}", subset=["收盤價", "漲跌", f"{ma_days}日均線", "乖離率%"], na_rep="") \
             .format("{:,.0f}", subset=["成交量(張)", "20日均量(張)", "外資5日(張)"], na_rep="") \
             .format("{:.2f}", subset=["量比", "MACD柱"], na_rep="") \
-            .map(style_sign, subset=["外資5日(張)", "MACD柱"]) \
-            .map(style_sign, subset=["漲跌", "乖離率%"]) \
-            .map(style_signal, subset=["訊號"]) \
+            .map(style_sign, subset=["外資5日(張)", "MACD柱", "漲跌", "乖離率%"]) \
             .map(style_trend, subset=["均線方向"]) \
             .apply(lambda s: [style_sign(c) for c in change], subset=["收盤價"], axis=0)
-
         st.dataframe(
             styler,
             hide_index=True,
             width="stretch",
-            height=600,
+            height=min(600, 38 + 35 * len(display_df)),
             column_config={
                 "股票代號": st.column_config.TextColumn(pinned=True),
                 "公司名稱": st.column_config.TextColumn(pinned=True),
             },
         )
-
-        # ===== 下載按鈕 =====
-        csv = display_df.to_csv(index=False, encoding="utf-8-sig")
         st.download_button(
-            label="📥 下載篩選結果 CSV",
-            data=csv,
-            file_name=f"葛蘭碧八大法則_{latest_date}.csv",
+            label=f"📥 下載{label} CSV",
+            data=display_df.to_csv(index=False, encoding="utf-8-sig"),
+            file_name=f"葛蘭碧{label}_{latest_date}.csv",
             mime="text/csv",
+            key=f"download_{key}",
         )
+
+    # ===== 法則 1 觀察名單 =====
+    with st.container(border=True):
+        st.subheader("🔭 法則 1 觀察名單")
+        lo, hi = HOLD_HINT
+        st.caption(
+            f"近期符合「法則 1 + 外資 5 日買超 + MACD 柱 > 0 + 當日量 > 1.5 倍均量」的股票（固定條件，不受左側勾選影響）。"
+            f"起點後 {WATCH_DAYS} 個交易日內出現法則 2 → 隔天開盤買進、建議持有 {lo}～{hi} 個交易日；"
+            f"超過 {WATCH_DAYS} 天沒出現視為過期。回測只有 24 筆交易，僅供參考。"
+        )
+        watch = pd.DataFrame() if ins is None else rule1_watchlist(
+            prices, ins=ins, min_volume=min_volume, ma_days=ma_days, slope_days=slope_days,
+            lookback=lookback, near_pct=near_pct, bias_pct=bias_pct,
+        )
+        if not watch.empty:
+            # 套用左側的代號、市場、產業篩選
+            watch = watch[watch["stock_id"].isin(df["stock_id"])] \
+                .merge(stock_list[["stock_id", "stock_name", "industry"]], on="stock_id", how="left")
+        if ins is None:
+            st.warning("法人資料讀取失敗，觀察名單暫時無法判斷外資條件。")
+        elif watch.empty:
+            st.info("近期沒有股票符合法則 1 + 三個確認條件")
+        else:
+            w1, w2, w3 = st.columns(3)
+            for col, status in zip((w1, w2, w3), WATCH_STATUS):
+                col.metric(status, f"{int((watch['status'] == status).sum()):,} 檔")
+            watch["status_order"] = watch["status"].map({s: i for i, s in enumerate(WATCH_STATUS)})
+            watch = watch.sort_values(["status_order", "setup_date"], ascending=[True, False])
+            watch["note"] = watch.apply(watch_note, axis=1)
+            watch["rule2_day"] = watch["rule2_day"].apply(lambda d: f"第 {int(d)} 天" if pd.notna(d) else "")
+            watch["rule2_date"] = watch["rule2_date"].fillna("")
+            watch_cols = {
+                "stock_id": "股票代號", "stock_name": "公司名稱", "industry": "產業別",
+                "status": "狀態", "setup_date": "符合法則1日期", "rule2_date": "法則2出現日期",
+                "rule2_day": "起點後", "note": "提醒", "setup_close": "起點收盤價",
+                "close_price": "最新收盤價", "change_since": "起點至今%",
+            }
+            watch_df = watch[list(watch_cols)].rename(columns=watch_cols)
+
+            def style_status(val):
+                return {
+                    "已出現法則2": f"color:{UP_COLOR};font-weight:700;",
+                    "等待法則2": f"color:{WARN_COLOR};font-weight:700;",
+                    "已過期": "color:#94a3b8;",
+                }.get(val, "")
+
+            st.dataframe(
+                watch_df.style
+                    .format("{:,.2f}", subset=["起點收盤價", "最新收盤價"], na_rep="")
+                    .format("{:+.2f}", subset=["起點至今%"], na_rep="")
+                    .map(style_sign, subset=["起點至今%"])
+                    .map(style_status, subset=["狀態"]),
+                hide_index=True,
+                width="stretch",
+                height=min(500, 38 + 35 * len(watch_df)),
+                column_config={
+                    "股票代號": st.column_config.TextColumn(pinned=True),
+                    "公司名稱": st.column_config.TextColumn(pinned=True),
+                },
+            )
+
+    # ===== 買進訊號 =====
+    with st.container(border=True):
+        st.subheader("🔴 買進訊號")
+        if confirms:
+            st.caption("已套用買進確認條件：" + "、".join(CONFIRMS[c] for c in confirms))
+        show_rule_table([1, 2, 3, 4], "buy", "買進訊號")
+
+    # ===== 賣出訊號 =====
+    with st.container(border=True):
+        st.subheader("🟢 賣出訊號與過熱提醒")
+        st.caption("法則 8（正乖離過大）回測多半續漲，列在這裡只當追高風險提醒。")
+        show_rule_table([5, 6, 7, 8], "sell", "賣出訊號")
 
 
 # =====================================================================

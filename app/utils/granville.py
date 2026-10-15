@@ -189,6 +189,91 @@ def _confirmed(cf, confirms, columns):
 
 
 # =====================================================================
+# 法則 1 觀察名單：法則 1 + 三個確認條件當起點，等法則 2 出現再買
+# =====================================================================
+WATCH_DAYS = 20             # 起點後幾個交易日內要出現法則 2，超過視為過期
+HOLD_HINT = (5, 8)          # 法則 2 出現後的建議持有交易日數
+WATCH_STATUS = ["已出現法則2", "等待法則2", "已過期"]
+
+
+def rule1_watchlist(prices, ins=None, min_volume=500, watch_days=WATCH_DAYS,
+                    show_expired_days=10, **rule_params):
+    """
+    近期符合「法則 1 + 外資 5 日買超 + MACD 柱 > 0 + 當日量 > 1.5 倍均量」的股票與後續狀態。
+
+    回測（2025-12 ~ 2026-10，24 筆）：起點後 20 個交易日內出現法則 2 → 隔天開盤買，
+    持有 5～8 個交易日的平均超額報酬約 +1.4%～+2.8%，中位數為正；樣本少，僅供參考。
+
+    每檔股票只看最近一次起點。狀態：
+      等待法則2：起點後還沒出現法則 2，且未超過 watch_days 個交易日
+      已出現法則2：記錄出現日期、起點後第幾天，以及到今天已經過幾個交易日
+      已過期：起點後 watch_days 個交易日內都沒出現法則 2（只列出過期 show_expired_days 個交易日內的）
+    """
+    if prices.empty:
+        return pd.DataFrame()
+    close = _pivot(prices, "close_price")
+    vol = _pivot(prices, "volume").reindex(index=close.index, columns=close.columns) \
+        if "volume" in prices.columns else None
+    foreign = _pivot(ins, "foreign_net_shares") if ins is not None and not ins.empty else None
+    hits = rule_frames(close, **rule_params)["hits"]
+    cf = confirm_frames(close, vol, foreign)
+    setup = hits[1] & _confirmed(cf, ("foreign", "macd", "volume"), close.columns)
+    if vol is not None:
+        avg_vol = vol.fillna(0).rolling(20, min_periods=20).mean() / 1000
+        setup &= avg_vol >= min_volume
+
+    dates = close.index
+    last = len(dates) - 1
+    first = max(0, last - watch_days - show_expired_days)
+    rows = []
+    for sid in close.columns:
+        idx = np.flatnonzero(setup[sid].to_numpy()[first:]) + first
+        if len(idx) == 0:
+            continue
+        s = int(idx[-1])
+        r2 = hits[2][sid].to_numpy()[s + 1: min(s + watch_days, last) + 1]
+        found = np.flatnonzero(r2)
+        c = close[sid]
+        row = {
+            "stock_id": sid,
+            "setup_date": dates[s],
+            "setup_close": c.iloc[s],
+            "close_price": c.iloc[-1],
+            "change_since": (c.iloc[-1] / c.iloc[s] - 1) * 100,
+            "days_since": last - s,
+            "rule2_date": None,
+            "rule2_day": None,
+            "held_days": None,
+        }
+        if len(found):
+            k = s + 1 + int(found[0])
+            row.update(status="已出現法則2", rule2_date=dates[k], rule2_day=k - s, held_days=last - k)
+        elif last - s >= watch_days:
+            if last - s > watch_days + show_expired_days:
+                continue
+            row["status"] = "已過期"
+        else:
+            row["status"] = "等待法則2"
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def watch_note(row):
+    """觀察名單每一列的提醒文字"""
+    lo, hi = HOLD_HINT
+    if row["status"] == "等待法則2":
+        return f"已觀察 {row['days_since']} 天，再 {WATCH_DAYS - row['days_since']} 天內出現法則 2 才考慮買進"
+    if row["status"] == "已過期":
+        return f"{WATCH_DAYS} 個交易日內未出現法則 2，訊號失效"
+    held = int(row["held_days"])
+    if held == 0:
+        return f"今天出現法則 2：可考慮明天開盤買進，建議持有 {lo}～{hi} 個交易日"
+    if held <= hi:
+        return f"法則 2 後第 {held} 個交易日（建議持有 {lo}～{hi} 天，以隔天開盤買進起算）"
+    return f"法則 2 後已過 {held} 個交易日，超過建議持有天數"
+
+
+# =====================================================================
 # 模擬交易（歷史回測）
 # =====================================================================
 BUY_FEE = 0.001425          # 手續費（買、賣各收一次，未打折）
