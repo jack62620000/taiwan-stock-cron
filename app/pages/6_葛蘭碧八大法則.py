@@ -5,8 +5,8 @@ import sys
 import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from utils.db import get_stock_list, get_recent_closes
-from utils.granville import RULES, STABLE_RULES, granville_signals, simulate_trades
+from utils.db import get_stock_list, get_recent_closes, get_recent_ins
+from utils.granville import RULES, STABLE_RULES, CONFIRMS, granville_signals, simulate_trades
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR
 require_login()
 
@@ -30,8 +30,18 @@ def load_prices():
     with st.spinner("正在載入近 100 天股價..."):
         return get_recent_closes(calendar_days=100, columns="stock_id, date, close_price, volume")
 
+@st.cache_data(ttl=3600)
+def load_ins(calendar_days=10):
+    # 10 個日曆天至少有 5 個交易日，夠算外資 5 日買超
+    return get_recent_ins(calendar_days=calendar_days)
+
 stock_list = get_stock_list()
 prices = load_prices()
+try:
+    ins = load_ins()
+except Exception:
+    ins = None
+    st.warning("法人資料暫時讀取失敗，外資條件先不顯示。")
 
 if prices.empty:
     st.warning("查無股價資料")
@@ -58,10 +68,17 @@ min_volume = st.sidebar.number_input(
     help="回測顯示冷門股的訊號雜訊很大，預設只看 20 日均量 500 張以上的股票",
 )
 
+st.sidebar.header("✅ 買進確認條件")
+st.sidebar.caption("勾選後，買進法則 1～4 還要同時符合這些條件才算數；賣出、過熱不受影響。")
+confirms = tuple(
+    key for key, label in CONFIRMS.items()
+    if st.sidebar.checkbox(label, value=False, key=f"confirm_{key}")
+)
+
 # ===== 計算訊號 =====
 signals = granville_signals(
     prices, ma_days=ma_days, slope_days=slope_days, lookback=lookback,
-    near_pct=near_pct, bias_pct=bias_pct,
+    near_pct=near_pct, bias_pct=bias_pct, ins=ins, confirms=confirms,
 )
 
 volume = prices[prices["date"] == latest_date][["stock_id", "volume"]] \
@@ -112,6 +129,16 @@ with tab_today:
 - 法則 8 原本是賣訊，但兩段期間都是續漲，乖離越大漲越多，所以改成「過熱」提醒。
 - 法則 1、3、4、5 兩段結果不一致，預設不顯示，可在下方自行勾選。
 - 所有法則的報酬中位數都略低於大盤，平均值是靠少數大漲股撐起來，單看訊號勝率不會超過五成。
+
+**買進確認條件（左側勾選）**
+- 外資 5 日買超：近 5 個交易日外資買賣超合計 > 0。
+- MACD 柱狀體 > 0：MACD(12, 26, 9) 的 DIF 高於訊號線。
+- 當日量 > 1.5 倍 20 日均量：今天成交量是前 20 日平均的 1.5 倍以上（表格的「量比」）。
+
+用 2025-12 ~ 2026-10 回測法則 2（持有 10 日相對大盤的超額報酬，分三段期間）：
+單獨加 MACD 或量增，最近一段反而變差；三個一起用時三段分別從 +1.0%／+1.6%／+0.4% 提高到
++4.0%／+3.7%／+1.7%，勝率約五成，但每天只剩約 3 檔訊號。這個組合是看過資料後挑出來的，
+建議用「模擬交易」分頁勾選前後比較，並持續觀察。RSI、KD 的「健康區間」條件回測沒有幫助，所以沒有加入。
 """)
         st.caption("技術分析僅供參考，請搭配其他指標與基本面判斷。")
 
@@ -157,6 +184,9 @@ with tab_today:
             "ma_trend":    "均線方向",
             "volume":      "成交量(張)",
             "avg_volume_20": "20日均量(張)",
+            "vol_ratio":   "量比",
+            "foreign_5d":  "外資5日(張)",
+            "macd_hist":   "MACD柱",
         }
         display_df = result[list(col_map)].rename(columns=col_map)
 
@@ -175,7 +205,9 @@ with tab_today:
         change = result["change"]
         styler = display_df.style \
             .format("{:,.2f}", subset=["收盤價", "漲跌", f"{ma_days}日均線", "乖離率%"], na_rep="") \
-            .format("{:,.0f}", subset=["成交量(張)", "20日均量(張)"], na_rep="") \
+            .format("{:,.0f}", subset=["成交量(張)", "20日均量(張)", "外資5日(張)"], na_rep="") \
+            .format("{:.2f}", subset=["量比", "MACD柱"], na_rep="") \
+            .map(style_sign, subset=["外資5日(張)", "MACD柱"]) \
             .map(style_sign, subset=["漲跌", "乖離率%"]) \
             .map(style_signal, subset=["訊號"]) \
             .map(style_trend, subset=["均線方向"]) \
@@ -219,14 +251,24 @@ def load_sim_prices(calendar_days):
 
 
 @st.cache_data(ttl=3600)
-def run_simulation(period_days, buy_rules, sell_rules, hold_days, stop_loss_pct, min_vol, params):
+def load_sim_ins(calendar_days):
+    with st.spinner(f"正在載入近 {calendar_days} 天法人買賣超..."):
+        return get_recent_ins(calendar_days=calendar_days)
+
+
+@st.cache_data(ttl=3600)
+def run_simulation(period_days, buy_rules, sell_rules, hold_days, stop_loss_pct, min_vol, params,
+                   confirms=()):
     sim_prices = load_sim_prices(period_days + WARMUP_DAYS)
     if sim_prices.empty:
         return pd.DataFrame(), None
+    # 外資條件才需要法人資料
+    sim_ins = load_sim_ins(period_days + WARMUP_DAYS) if "foreign" in confirms else None
     start = (pd.to_datetime(sim_prices["date"].max()) - pd.Timedelta(days=period_days)).strftime("%Y-%m-%d")
     return simulate_trades(
         sim_prices, list(buy_rules), list(sell_rules), hold_days=hold_days,
-        stop_loss_pct=stop_loss_pct or None, min_volume=min_vol, start_date=start, **dict(params),
+        stop_loss_pct=stop_loss_pct or None, min_volume=min_vol, start_date=start,
+        ins=sim_ins, confirms=confirms, **dict(params),
     )
 
 
@@ -254,7 +296,9 @@ with tab_sim:
         sim_amount = st.number_input("每筆投入金額（元）", 10000, 10000000, 100000, step=10000)
     st.caption(
         f"均線參數與左側相同（{ma_days} 日均線），只買 20 日均量 ≥ {min_volume:,} 張的股票；"
-        "市場、產業、代號篩選不套用在模擬上。"
+        "買進確認條件："
+        + ("、".join(CONFIRMS[c] for c in confirms) if confirms else "未勾選")
+        + "（在左側勾選）。市場、產業、代號篩選不套用在模擬上。"
     )
 
     if st.button("▶️ 開始模擬", type="primary"):
@@ -265,11 +309,17 @@ with tab_sim:
     elif st.session_state.get("granville_sim"):
         params = (("ma_days", ma_days), ("slope_days", slope_days), ("lookback", lookback),
                   ("near_pct", near_pct), ("bias_pct", bias_pct))
-        trades, _ = run_simulation(
-            SIM_PERIODS[sim_period], tuple(sorted(sim_buy)), tuple(sorted(sim_sell)),
-            int(sim_hold), float(sim_stop), int(min_volume), params,
-        )
-        if trades.empty:
+        try:
+            trades, _ = run_simulation(
+                SIM_PERIODS[sim_period], tuple(sorted(sim_buy)), tuple(sorted(sim_sell)),
+                int(sim_hold), float(sim_stop), int(min_volume), params, confirms,
+            )
+        except Exception:
+            trades = None
+            st.warning("模擬用的股價或法人資料暫時讀取失敗，請稍後再按一次「開始模擬」。")
+        if trades is None:
+            pass
+        elif trades.empty:
             st.info("這段期間沒有符合條件的交易")
         else:
             closed = trades[trades["exit_reason"] != "未平倉"]

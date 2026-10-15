@@ -66,8 +66,46 @@ def rule_frames(close, ma_days=20, slope_days=5, lookback=5,
     return {"ma": ma, "bias": bias, "slope": slope, "slope_before": slope_before, "hits": hits}
 
 
+# 買進確認條件：只加在買進法則上。依 2025-12 ~ 2026-10 回測，
+# 單獨使用效果不穩，三個一起用時三段期間的超額報酬都明顯改善（詳見頁面說明）。
+CONFIRMS = {
+    "foreign": "外資 5 日買超",
+    "macd": "MACD 柱狀體 > 0",
+    "volume": "當日量 > 1.5 倍 20 日均量",
+}
+VOLUME_RATIO = 1.5
+
+
+def confirm_frames(close, volume=None, foreign=None):
+    """
+    買進確認條件的 日期 × 股票 寬表。
+    回傳 dict：values（顯示用數值：外資 5 日買超張數、MACD 柱、量比）與 hits（{條件: 布林寬表}）。
+    缺資料的條件不會出現在 hits 裡。
+    """
+    values, hits = {}, {}
+    # MACD(12, 26, 9)，和 indicators.py 相同算法
+    ema_fast = close.ewm(span=12, adjust=False).mean()
+    ema_slow = close.ewm(span=26, adjust=False).mean()
+    dif = ema_fast - ema_slow
+    hist = dif - dif.ewm(span=9, adjust=False).mean()
+    values["macd_hist"] = hist
+    hits["macd"] = hist > 0
+    if volume is not None:
+        vol = volume.reindex(index=close.index, columns=close.columns)
+        prev_avg = vol.fillna(0).shift(1).rolling(20, min_periods=20).mean()
+        ratio = vol / prev_avg.where(prev_avg > 0)
+        values["vol_ratio"] = ratio
+        hits["volume"] = ratio > VOLUME_RATIO
+    if foreign is not None:
+        f = foreign.reindex(index=close.index, columns=close.columns).fillna(0)
+        f5 = f.rolling(5, min_periods=1).sum() / 1000  # 股 → 張
+        values["foreign_5d"] = f5
+        hits["foreign"] = f5 > 0
+    return {"values": values, "hits": hits}
+
+
 def granville_signals(prices, ma_days=20, slope_days=5, lookback=5,
-                      near_pct=2.0, bias_pct=10.0, trend_days=60):
+                      near_pct=2.0, bias_pct=10.0, trend_days=60, ins=None, confirms=()):
     """
     依葛蘭碧八大法則，判斷每檔股票在最新一個交易日符合哪幾條。
 
@@ -80,7 +118,11 @@ def granville_signals(prices, ma_days=20, slope_days=5, lookback=5,
     trend_days：長期均線（季線）天數。法則 2 另外要求均線在季線之上，回測兩段期間都比較好；
                 資料不足算不出季線的股票不套用這個條件。
 
-    回傳每檔股票一筆：收盤價、漲跌、均線、乖離率、均線方向、20 日均量（張）、符合的法則（list）。
+    ins：法人買賣超（stock_id、date、foreign_net_shares），算外資 5 日買超用，可省略。
+    confirms：要套用的買進確認條件（CONFIRMS 的 key）；不符合的股票不列入買進法則 1～4。
+
+    回傳每檔股票一筆：收盤價、漲跌、均線、乖離率、均線方向、20 日均量（張）、
+    外資 5 日買超（張）、MACD 柱、量比、符合的法則（list）。
     資料不足的股票（例如新上市）不列出。
     """
     if prices.empty:
@@ -94,11 +136,16 @@ def granville_signals(prices, ma_days=20, slope_days=5, lookback=5,
     slope_t = f["slope"].iloc[-1]
     rising, falling = slope_t > 0, slope_t < 0
 
-    if "volume" in prices.columns:
-        vol = _pivot(prices, "volume").reindex(index=close.index, columns=close.columns)
-        avg_vol20 = (vol.fillna(0).tail(20).mean() / 1000).round(0)  # 股 → 張
-    else:
-        avg_vol20 = pd.Series(np.nan, index=close.columns)
+    vol = _pivot(prices, "volume").reindex(index=close.index, columns=close.columns) \
+        if "volume" in prices.columns else None
+    avg_vol20 = (vol.fillna(0).tail(20).mean() / 1000).round(0) if vol is not None \
+        else pd.Series(np.nan, index=close.columns)  # 股 → 張
+    foreign = _pivot(ins, "foreign_net_shares") if ins is not None and not ins.empty else None
+    cf = confirm_frames(close, vol, foreign)
+
+    def last_value(name):
+        wide = cf["values"].get(name)
+        return wide.iloc[-1].reindex(close.columns).values if wide is not None else np.nan
 
     out = pd.DataFrame({
         "stock_id": close.columns,
@@ -108,15 +155,37 @@ def granville_signals(prices, ma_days=20, slope_days=5, lookback=5,
         "bias": f["bias"].iloc[-1].round(2).values,
         "ma_trend": np.select([rising, falling], ["上揚", "下彎"], "走平"),
         "avg_volume_20": avg_vol20.values,
+        "foreign_5d": last_value("foreign_5d"),
+        "macd_hist": last_value("macd_hist"),
+        "vol_ratio": last_value("vol_ratio"),
     })
     valid = (c_t.notna() & ma_t.notna() & f["slope_before"].iloc[-1].notna()).values
     out = out[valid].reset_index(drop=True)
     today = {n: h.iloc[-1] for n, h in f["hits"].items()}
+    ok = _confirmed(cf, confirms, close.columns)
+    if ok is not None:
+        for n, side in ((n, RULES[n][0]) for n in today):
+            if side == "買進":
+                today[n] = today[n] & ok.iloc[-1]
     out["rules"] = [
         [n for n, hit in today.items() if bool(hit.get(sid, False))]
         for sid in close.columns[valid]
     ]
     return out
+
+
+def _confirmed(cf, confirms, columns):
+    """所有選取的確認條件都成立的布林寬表；沒選條件時回傳 None。缺資料的條件視為不成立。"""
+    if not confirms:
+        return None
+    ok = None
+    for name in confirms:
+        h = cf["hits"].get(name)
+        h = h.reindex(columns=columns).fillna(False) if h is not None else False
+        ok = h if ok is None else ok & h
+    if isinstance(ok, bool):  # 選的條件全都沒有資料
+        return pd.DataFrame(False, index=cf["values"]["macd_hist"].index, columns=columns)
+    return ok
 
 
 # =====================================================================
@@ -127,7 +196,7 @@ SELL_TAX = 0.003            # 證交稅（賣出時收）
 
 
 def simulate_trades(prices, buy_rules, sell_rules, hold_days=20, stop_loss_pct=None,
-                    min_volume=500, start_date=None, **rule_params):
+                    min_volume=500, start_date=None, ins=None, confirms=(), **rule_params):
     """
     依葛蘭碧法則模擬買賣，每檔股票同一時間最多持有一筆。
 
@@ -138,6 +207,7 @@ def simulate_trades(prices, buy_rules, sell_rules, hold_days=20, stop_loss_pct=N
       - 持有滿 hold_days 個交易日 → 當天收盤價賣出
     開盤價缺漏時改用收盤價。資料最後一天還沒出場的，用最後收盤價計算未實現報酬。
     報酬已扣手續費（買賣各 0.1425%）與證交稅（0.3%）。
+    confirms：買進還要同時符合的確認條件（CONFIRMS 的 key），外資條件需要傳入 ins。
 
     回傳 (trades, benchmark)：
       trades：每筆交易一列；benchmark：同期間全部股票等權平均的累積指數（日期 → 指數），
@@ -155,6 +225,10 @@ def simulate_trades(prices, buy_rules, sell_rules, hold_days=20, stop_loss_pct=N
     for n in buy_rules:
         buy |= hits[n]
     buy &= avg_vol >= min_volume
+    foreign = _pivot(ins, "foreign_net_shares") if ins is not None and not ins.empty else None
+    ok = _confirmed(confirm_frames(close, vol, foreign), confirms, close.columns)
+    if ok is not None:
+        buy &= ok
     sell = empty.copy()
     for n in sell_rules:
         sell |= hits[n]
