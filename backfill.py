@@ -48,10 +48,7 @@ DATASETS = {
         "融資融券",
         lambda d, v: f.fetch_twse_margin(d, v),
         lambda d, v: f.fetch_tpex_margin(d, v),
-        lambda records: [
-            ("margin_utilization", records),
-            ("margin_trading", f.to_margin_trading(records)),
-        ],
+        lambda records: [("margin_utilization", records)],
     ),
 }
 

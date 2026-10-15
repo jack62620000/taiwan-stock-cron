@@ -163,11 +163,12 @@ def get_latest_ins():
     return _latest_snapshot("stock_ins_daily")
 
 # ===== 融資融券 =====
+# 融資、融券餘額改讀 margin_utilization（與原 margin_trading 的餘額完全相同，省去重複的表）
 def get_margin(stock_id, limit=60):
-    return _latest_rows("margin_trading", stock_id, ["date"], limit)
+    return _latest_rows("margin_utilization", stock_id, ["date"], limit)
 
 def get_latest_margin():
-    return _latest_snapshot("margin_trading")
+    return _latest_snapshot("margin_utilization")
 
 # ===== 融資融券使用率 =====
 def get_margin_utilization(stock_id, limit=60):

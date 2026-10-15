@@ -6,7 +6,7 @@
   [A] 產業別對照表改為官方代碼（上市、上櫃共用）
   [B] 上櫃三大法人：日期改用 YYYY%2FMM%2FDD，投信改讀 row[13]，並核對回應日期
   [C] 融資融券：上市、上櫃統一為「張」；上櫃改用 /margin/balance（含融資、限額、使用率）
-      功能 4 一次寫入 margin_trading 與 margin_utilization，可用區間模式回補；功能 10 併入功能 4
+      功能 4 寫入 margin_utilization（含融資、融券餘額），可用區間模式回補；功能 10 併入功能 4
   [D] 所有櫃買中心帶日期的請求都核對回應日期，不符就不寫入
   [E] 假日清單改用民國日期解析，並排除「開始交易日／最後交易日」
   [F] save_data_batches：過濾主鍵為空與重複的資料，並如實回報成功／失敗筆數
@@ -47,7 +47,6 @@ MARKET_MAP = {"listed": "上市", "otc": "上櫃"}
 TABLE_KEYS = {
     "daily_prices":          ("stock_id", "date"),
     "stock_ins_daily":       ("stock_id", "date"),
-    "margin_trading":        ("stock_id", "date"),
     "margin_utilization":    ("stock_id", "date"),
     "holder_distribution":   ("stock_id", "week_date"),
     "monthly_revenue":       ("stock_id", "year_month"),
@@ -454,19 +453,6 @@ def fetch_tpex_margin(today_str, valid_stocks):
         return records
     except Exception as e:
         print(f"抓取上櫃融資融券失敗: {e}"); return []
-
-
-def to_margin_trading(records):
-    """從完整的融資融券資料取出 margin_trading 需要的欄位"""
-    return [
-        {
-            "stock_id":       r["stock_id"],
-            "date":           r["date"],
-            "margin_balance": r["margin_balance"],
-            "short_balance":  r["short_balance"],
-        }
-        for r in records
-    ]
 
 
 # ==================== 5. 大戶持股比例抓取 ====================
@@ -1117,7 +1103,6 @@ if __name__ == "__main__":
                 time.sleep(SLEEP_BETWEEN_API)
                 all_margin.extend(fetch_tpex_margin(today, valid_stocks))
                 save_data_batches("margin_utilization", all_margin)
-                save_data_batches("margin_trading", to_margin_trading(all_margin))
 
             if i < total:
                 time.sleep(SLEEP_BETWEEN_DAYS)
