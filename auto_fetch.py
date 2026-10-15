@@ -82,7 +82,6 @@ def main():
         ("daily_prices",       twse_prices + tpex_prices),
         ("stock_ins_daily",    twse_ins + tpex_ins),
         ("margin_utilization", all_margin),
-        ("margin_trading",     f.to_margin_trading(all_margin)),
     ]:
         _, failed = f.save_data_batches(table, records)
         if failed:
