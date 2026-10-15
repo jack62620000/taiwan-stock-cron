@@ -196,7 +196,9 @@ def _confirmed(cf, confirms, columns):
 # =====================================================================
 WATCH_DAYS = 20             # 起點後幾個交易日內要出現法則 2，超過視為過期
 HOLD_HINT = (5, 8)          # 法則 2 出現後的建議持有交易日數
-WATCH_STATUS = ["已出現法則2", "等待法則2", "已過期"]
+# 回測是「法則 2 出現隔天開盤買進」，所以只有當天出現的才是買點
+WATCH_STATUS = ["今天出現法則2", "等待法則2", "已錯過買點", "已過期"]
+LATE_STATUS = ["已錯過買點", "已過期"]  # 預設收起來，不跟可操作的股票混在一起
 
 
 def rule1_watchlist(prices, ins=None, min_volume=500, watch_days=WATCH_DAYS,
@@ -209,7 +211,8 @@ def rule1_watchlist(prices, ins=None, min_volume=500, watch_days=WATCH_DAYS,
 
     每檔股票只看最近一次起點。狀態：
       等待法則2：起點後還沒出現法則 2，且未超過 watch_days 個交易日
-      已出現法則2：記錄出現日期、起點後第幾天，以及到今天已經過幾個交易日
+      今天出現法則2：明天開盤就是回測的買點
+      已錯過買點：法則 2 在之前的交易日出現（只列出還在建議持有天數內的）
       已過期：起點後 watch_days 個交易日內都沒出現法則 2（只列出過期 show_expired_days 個交易日內的）
     """
     if prices.empty:
@@ -254,7 +257,11 @@ def rule1_watchlist(prices, ins=None, min_volume=500, watch_days=WATCH_DAYS,
         for i, part in enumerate(parts, 1):
             row[f"r2_c{i}"] = "符合" if bool(part[sid].iloc[k]) else "觀察"
         if len(found):
-            row.update(status="已出現法則2", rule2_date=dates[k], rule2_day=k - s, held_days=last - k)
+            held = last - k
+            if held > HOLD_HINT[1]:
+                continue  # 已超過建議持有天數，不再列出
+            row.update(status="今天出現法則2" if held == 0 else "已錯過買點",
+                       rule2_date=dates[k], rule2_day=k - s, held_days=held)
         elif last - s >= watch_days:
             if last - s > watch_days + show_expired_days:
                 continue
@@ -275,9 +282,7 @@ def watch_note(row):
     held = int(row["held_days"])
     if held == 0:
         return f"今天出現法則 2：可考慮明天開盤買進，建議持有 {lo}～{hi} 個交易日"
-    if held <= hi:
-        return f"法則 2 後第 {held} 個交易日（建議持有 {lo}～{hi} 天，以隔天開盤買進起算）"
-    return f"法則 2 後已過 {held} 個交易日，超過建議持有天數"
+    return f"法則 2 後第 {held} 個交易日，已過買點；若當時有買進，建議持有到第 {lo}～{hi} 天"
 
 
 # =====================================================================
