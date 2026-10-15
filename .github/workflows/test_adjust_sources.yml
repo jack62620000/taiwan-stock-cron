@@ -1,0 +1,23 @@
+name: 還原權值資料來源測試
+# 只抓資料、印出結果，不寫入資料庫
+on:
+  push:
+    branches: [claude/project-thread-3bhtks]
+    paths: [test_adjust_sources.py, .github/workflows/test_adjust_sources.yml]
+  workflow_dispatch:
+
+jobs:
+  test-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install requests
+      - name: Test data sources
+        run: python test_adjust_sources.py
