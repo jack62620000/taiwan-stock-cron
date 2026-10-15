@@ -23,6 +23,8 @@
   大戶持股：週資料於隔天公布，只用 week_date 早於評分日的資料。
 - 分數只用固定規則計算，同一天重跑結果一定一樣，才能回頭檢驗規則準不準。
 - 風險提醒（過熱、融資暴增）只提示、不扣分，讓你自己判斷。
+- 技術面用還原權值後的股價計算（price_adjustments），除權息、減資、變更面額不會造成假漲跌；
+  寫進資料表的 close_price 仍是原始收盤價。
 """
 import argparse
 import os
@@ -122,6 +124,11 @@ def load_inputs(sb, start=None, end=None):
         "stocks": pd.DataFrame(_fetch_all(
             lambda: sb.table("stock_info").select("stock_id").order("stock_id", desc=False))),
         "prices": load_daily(sb, "daily_prices", "stock_id, date, close_price, volume", dates),
+        # 還原權值事件：只取評分區間內、不晚於最後評分日的事件，不會用到未來的資料
+        "adjust": pd.DataFrame(_fetch_all(
+            lambda: sb.table("price_adjustments").select("stock_id, date, event_type, factor")
+                .gt("date", dates[0]).lte("date", targets[-1])
+                .order("date", desc=False).order("stock_id", desc=False).order("event_type", desc=False))),
         "ins": load_daily(sb, "stock_ins_daily", "stock_id, date, foreign_net_shares, sitca_net_shares", dates),
         "margin": load_daily(sb, "margin_utilization",
                              "stock_id, date, margin_balance, short_balance, margin_rate", dates),
@@ -136,6 +143,34 @@ def load_inputs(sb, start=None, end=None):
     for name, df in data.items():
         print(f"  {name}: {len(df):,} 筆")
     return targets, data
+
+
+# =====================================================================
+# 還原權值
+# =====================================================================
+VOLUME_EVENTS = ("變更面額",)  # 股數等比例變動的事件，成交量也要還原
+
+
+def apply_adjustments(prices, events):
+    """
+    與 app/utils/db.py 的 apply_adjustments 相同：事件日之前的股價乘上之後所有事件的
+    factor（參考價 ÷ 事件前收盤價），讓均線、漲幅、RSI 不會被除權息、減資、變更面額的假跳空扭曲。
+    """
+    if events is None or events.empty or prices.empty:
+        return prices
+    df = prices.copy()
+    ev = events[["stock_id", "date", "event_type", "factor"]].copy()
+    ev["factor"] = pd.to_numeric(ev["factor"], errors="coerce")
+    ev = ev[ev["factor"] > 0]
+    rows = df[["stock_id", "date"]].rename_axis("_row").reset_index().merge(ev, on="stock_id", suffixes=("", "_ev"))
+    rows = rows[pd.to_datetime(rows["date"]) < pd.to_datetime(rows["date_ev"])]
+    price_mult = rows.groupby("_row")["factor"].prod().reindex(df.index, fill_value=1.0)
+    vol_rows = rows[rows["event_type"].isin(VOLUME_EVENTS)]
+    vol_mult = (1 / vol_rows.groupby("_row")["factor"].prod()).reindex(df.index, fill_value=1.0)
+    df["close_price"] = pd.to_numeric(df["close_price"], errors="coerce") * price_mult
+    if "volume" in df.columns:
+        df["volume"] = pd.to_numeric(df["volume"], errors="coerce") * vol_mult
+    return df
 
 
 # =====================================================================
@@ -173,7 +208,9 @@ def _revenue_available_from(year_month):
 
 class Features:
     def __init__(self, data):
-        p = data["prices"]
+        raw = data["prices"]
+        self.close_raw = _pivot(raw, "close_price")  # 寫進資料表的收盤價維持原始價格
+        p = apply_adjustments(raw, data.get("adjust"))
         self.close = _pivot(p, "close_price")
         vol = _pivot(p, "volume")
         self.close_ff = self.close.ffill(limit=5)
@@ -373,6 +410,7 @@ def score_day(feat, d):
     if d not in feat.close.index:
         return []
     close_today = feat.close.loc[d]
+    close_raw = feat.close_raw.loc[d]
     traded = close_today.dropna().index
     holder, holder_diff = feat.holder_asof(d)
     rev = feat.revenue_asof(d)
@@ -422,7 +460,7 @@ def score_day(feat, d):
             "tech_score": tech,
             "reasons": reasons,
             "warnings": warnings,
-            "close_price": float(x["close"]),
+            "close_price": float(close_raw[sid]),
             "change_5d": round(float(x["chg5"]) * 100, 2) if _num(x["chg5"]) else None,
             "change_20d": round(float(x["chg20"]) * 100, 2) if _num(x["chg20"]) else None,
             "avg_volume_20": int(round(lots20)),
