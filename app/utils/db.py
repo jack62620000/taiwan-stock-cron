@@ -268,3 +268,11 @@ def get_signal_performance(top_n=20, horizon=5):
             if attempt == 1:
                 raise
             time.sleep(1)
+
+def get_paper_trades():
+    """葛蘭碧紙上交易紀錄（paper_trade.py 每日寫入）"""
+    return pd.DataFrame(_fetch_all(
+        lambda: supabase.table("granville_paper_trades").select("*")
+            .order("signal_date", desc=True)
+            .order("stock_id", desc=False)
+    ))
