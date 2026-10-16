@@ -2,7 +2,7 @@ name: 暫時測試
 on:
   push:
     branches: [claude/project-thread-3bhtks]
-    paths: [tmp_check.py, .github/workflows/tmp_check.yml]
+    paths: [tmp_check.py, .github/workflows/tmp_check.yml, fetch_holder_history.py, backfill.py]
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -11,5 +11,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install requests
-      - run: python tmp_check.py
+      - run: pip install -r requirements.txt
+      - run: python -u tmp_check.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
