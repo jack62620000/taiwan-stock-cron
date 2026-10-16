@@ -1,0 +1,15 @@
+name: 暫時測試
+on:
+  push:
+    branches: [claude/project-thread-3bhtks]
+    paths: [tmp_check.py, .github/workflows/tmp_check.yml]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - run: python tmp_check.py
