@@ -11,6 +11,7 @@
                 ins    = 三大法人
                 margin = 融資融券（餘額＋限額＋使用率）
                 adjust = 還原權值事件（除權息、減資、變更面額；整段區間一次抓）
+                holder = 千張大戶（集保網頁只查得到最近約一年，逐檔逐週查詢，每週約 20 分鐘）
 
 有缺漏、寫入失敗或疑似被來源封鎖時，會以錯誤碼結束，GitHub 會把這次執行標成失敗。
 """
@@ -20,10 +21,16 @@ import time
 from datetime import datetime, timezone
 
 import fetch_adjustments as adj
+import fetch_holder_history as holder
 import fetch_stock_info as f
 
 ADJUST_KEY = "adjust"
 ADJUST_LABEL = "還原權值事件"
+HOLDER_KEY = "holder"
+HOLDER_LABEL = "千張大戶"
+# 千張大戶回補在這麼多分鐘後停下來（workflow 上限 300 分鐘），沒做完的週次重跑同一區間接續
+HOLDER_MAX_MINUTES = 270
+WHOLE_RANGE = {ADJUST_KEY: ADJUST_LABEL, HOLDER_KEY: HOLDER_LABEL}
 
 SLEEP_BETWEEN_API    = 2
 SLEEP_BETWEEN_DAYS   = 5
@@ -73,7 +80,7 @@ def read_config():
         errors.append("開始日期不能晚於結束日期")
     if not keys:
         errors.append("DATASETS 沒有指定要回補的資料")
-    allowed = list(DATASETS) + [ADJUST_KEY]
+    allowed = list(DATASETS) + list(WHOLE_RANGE)
     unknown = [k for k in keys if k not in allowed]
     if unknown:
         errors.append(f"DATASETS 有無法辨識的項目：{', '.join(unknown)}（可用：{', '.join(allowed)}）")
@@ -95,8 +102,9 @@ def main():
             print(f"❌ {e}")
         return 1
 
-    names = "、".join(DATASETS[k][0] if k in DATASETS else ADJUST_LABEL for k in keys)
-    day_keys = [k for k in keys if k in DATASETS]  # 逐日抓的資料；還原權值事件整段區間一次抓
+    started = time.time()
+    names = "、".join(DATASETS[k][0] if k in DATASETS else WHOLE_RANGE[k] for k in keys)
+    day_keys = [k for k in keys if k in DATASETS]  # 逐日抓的資料；還原權值事件、千張大戶整段區間處理
     print(f"========== 區間回補：{start} ～ {end}｜{names} ==========")
 
     days = f.get_trading_days(start, end)
@@ -125,6 +133,18 @@ def main():
             _, failed = f.save_data_batches(adj.TABLE, events)
             if failed:
                 problems.append(f"{adj.TABLE}：{failed} 筆寫入失敗")
+
+    holder_left = None
+    if HOLDER_KEY in keys:
+        print(f"\n--- {HOLDER_LABEL} ---")
+        try:
+            _, holder_problems, unfinished = holder.fetch_range(
+                start, end, valid_stocks, deadline=started + HOLDER_MAX_MINUTES * 60)
+            problems.extend(holder_problems)
+            if unfinished:
+                holder_left = f"{HOLDER_LABEL}還有 {len(unfinished)} 週沒補（{unfinished[0]} 起），請用同一區間再執行一次接續"
+        except Exception as e:
+            problems.append(f"{HOLDER_LABEL}：無法連上集保查詢網頁（{type(e).__name__}）")
 
     for i, day in enumerate(days if day_keys else [], 1):
         print(f"\n========== [{i}/{len(days)}] {day} ==========")
@@ -188,12 +208,14 @@ def main():
     if aborted:
         resume = days[max(0, i - max(twse_only_fails, consecutive_empty))]
         summary.append(f"- ⛔ 提早停止：{aborted}。請過一段時間後，從 {resume} 重新開始。")
-    if not problems and not aborted:
+    if holder_left:
+        summary.append(f"- ⏸️ {holder_left}")
+    if not problems and not aborted and not holder_left:
         summary.append("- ✅ 全部完成")
 
     print("\n" + "\n".join(summary))
     write_summary(summary)
-    return 1 if (problems or aborted) else 0
+    return 1 if (problems or aborted or holder_left) else 0
 
 
 if __name__ == "__main__":
