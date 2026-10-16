@@ -45,7 +45,7 @@ def load_day(date):
     df = get_signals(date)
     if df.empty:
         return df
-    info = get_stock_list()[["stock_id", "stock_name", "industry", "market"]]
+    info = get_stock_list(include_delisted=True)[["stock_id", "stock_name", "industry", "market"]]
     return df.merge(info, on="stock_id", how="left")
 
 @st.cache_data(ttl=3600)

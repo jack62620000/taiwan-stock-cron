@@ -92,13 +92,17 @@ def _latest_snapshot(table, date_col="date", columns="*"):
 _STOCK_LIST_TTL = 3600  # 股票清單快取一小時，產業別、新上市櫃更新後不必重啟程式
 _stock_list_cache = {"time": 0.0, "data": None}
 
-def get_stock_list():
+def get_stock_list(include_delisted=False):
+    """股票清單。預設只回傳仍在交易的股票；要對照歷史資料的名稱時傳 include_delisted=True"""
     now = time.time()
     if _stock_list_cache["data"] is not None and now - _stock_list_cache["time"] < _STOCK_LIST_TTL:
-        return _stock_list_cache["data"]
-    df = _load_stock_list()
-    _stock_list_cache.update(time=now, data=df)
-    return df
+        df = _stock_list_cache["data"]
+    else:
+        df = _load_stock_list()
+        _stock_list_cache.update(time=now, data=df)
+    if include_delisted or df.empty or "delisted_date" not in df.columns:
+        return df
+    return df[df["delisted_date"].isna()].reset_index(drop=True)
 
 def _clear_stock_list_cache():
     _stock_list_cache.update(time=0.0, data=None)

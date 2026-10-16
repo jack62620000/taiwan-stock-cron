@@ -208,13 +208,42 @@ def save_to_supabase(records):
     print(f"Done! {len(records)} records saved to stock_info.")
 
 def refresh_stock_info():
-    """[G] 更新個股基本資訊。任一來源失敗時，沿用資料庫現有清單。"""
+    """
+    [G] 更新個股基本資訊。任一來源失敗時，沿用資料庫現有清單。
+    兩邊都取得時，官方名單裡沒有的股票標上下市日（今天），重新出現的會清除標示。
+    """
     listed = fetch_listed()
     otc = fetch_otc()
     if not listed or not otc:
         print("⚠️ 個股基本資訊未能完整取得，缺少的部分沿用資料庫現有清單")
+    for r in listed + otc:
+        r["delisted_date"] = None
     save_to_supabase(listed)
     save_to_supabase(otc)
+    if listed and otc:
+        mark_delisted({r["stock_id"] for r in listed + otc})
+
+def mark_delisted(current_ids):
+    """股票清單中不在官方現有名單、且還沒標示的股票，下市日記為今天"""
+    try:
+        active, start = set(), 0
+        while True:
+            res = supabase.table("stock_info").select("stock_id").is_("delisted_date", "null") \
+                .order("stock_id").range(start, start + 999).execute()
+            active |= {r["stock_id"] for r in res.data}
+            if len(res.data) < 1000:
+                break
+            start += 1000
+        gone = sorted(active - current_ids)
+        if len(gone) > 30:
+            # 一天不會下市這麼多檔，多半是官方名單暫時不完整，先不標示
+            print(f"⚠️ 有 {len(gone)} 檔不在官方名單，疑似名單不完整，略過下市標示")
+        elif gone:
+            supabase.table("stock_info").update({"delisted_date": date.today().isoformat()}) \
+                .in_("stock_id", gone).execute()
+            print(f"標示下市 {len(gone)} 檔：{', '.join(gone)}")
+    except Exception as e:
+        print(f"標示下市股票失敗: {e}")
 
 def get_valid_stock_ids():
     valid_stocks = set()
