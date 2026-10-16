@@ -88,10 +88,8 @@ def _record(stock_id, day, event_type, prev_close, ref_price, source):
 
 # ==================== 證交所（上市）====================
 # (網址代號, 事件類型, 日期欄, 代號欄, 前收盤欄, 參考價欄)
-# 除權息用「減除股利參考價」（空白時退回除權息參考價）：只扣掉股利與無償配股，不含現金增資認購。
-# 單純現金增資的除權，證交所仍以前收盤價為開盤基準，若用「除權息參考價」會把股價錯誤調低。
 TWSE_REPORTS = [
-    ("exRight/TWT49U",   "除權息",  0, 1, 3, 10),
+    ("exRight/TWT49U",   "除權息",   0, 1, 3, 4),
     ("reducation/TWTAUU", "減資",    0, 1, 3, 4),
     ("change/TWTB8U",    "變更面額", 0, 1, 3, 4),
 ]
@@ -109,7 +107,7 @@ def fetch_twse(s, e):
             continue
         for row in data.get("data", []):
             rec = _record(row[i_id], _roc_date(row[i_date]), event,
-                          _num(row[i_prev]), _num(row[i_ref]) or _num(row[4]), "證交所")
+                          _num(row[i_prev]), _num(row[i_ref]), "證交所")
             # 變更面額報表可能不照查詢區間回傳，超出區間的不收
             if rec and s.isoformat() <= rec["date"] <= e.isoformat():
                 out.append(rec)
@@ -119,7 +117,7 @@ def fetch_twse(s, e):
 
 # ==================== 櫃買中心（上櫃）====================
 TPEX_REPORTS = [
-    ("exDailyQ", "除權息", 0, 1, 3, 12),  # 減除股利參考價，理由同上
+    ("exDailyQ", "除權息", 0, 1, 3, 4),
     ("revivt",   "減資",   0, 1, 3, 4),
 ]
 
@@ -133,7 +131,7 @@ def fetch_tpex(s, e):
         for table in data.get("tables", []):
             for row in table.get("data", []):
                 rec = _record(row[i_id], _roc_date(row[i_date]), event,
-                              _num(row[i_prev]), _num(row[i_ref]) or _num(row[4]), "櫃買中心")
+                              _num(row[i_prev]), _num(row[i_ref]), "櫃買中心")
                 if rec and s.isoformat() <= rec["date"] <= e.isoformat():
                     out.append(rec)
         time.sleep(SLEEP_BETWEEN_API)
