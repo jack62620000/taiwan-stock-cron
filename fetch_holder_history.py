@@ -5,13 +5,12 @@
 但一次只能查一檔股票的一週，所以回補很慢：每週約 2,000 檔，約 20 分鐘。
 
 大戶持股比例 = 持股分級 12～15（400 張以上）的「占集保庫存數比例%」加總，與每週排程相同。
-已經有資料的股票和週次會跳過，中途停止後用同一個區間重跑即可接續。
+當時還沒上市的股票查無資料會略過；已經有資料的股票和週次會跳過，中途停止後用同一個區間重跑即可接續。
 
 backfill.py 用 DATASETS=holder 回補指定區間。
 """
 import re
 import time
-from datetime import datetime, timedelta
 
 import requests
 import urllib3
@@ -75,23 +74,25 @@ class TdccQuery:
 def _select_all(build):
     rows, start = [], 0
     while True:
-        res = build().range(start, start + 999).execute()
+        for attempt in range(3):
+            try:
+                res = build().range(start, start + 999).execute()
+                break
+            except Exception:
+                if attempt == 2:
+                    raise
+                time.sleep(5)
         rows += res.data
         if len(res.data) < 1000:
             return rows
         start += 1000
 
 
-def stocks_traded_near(week):
-    """該週資料日當天或之前最近一個交易日有成交資料的股票（排除那時還沒上市或已下市的）"""
-    since = (datetime.strptime(week, "%Y-%m-%d").date() - timedelta(days=10)).isoformat()
-    res = f.supabase.table("daily_prices").select("date").gte("date", since).lte("date", week) \
-        .order("date", desc=True).limit(1).execute()
-    if not res.data:
-        return set()
-    day = res.data[0]["date"]
-    rows = _select_all(lambda: f.supabase.table("daily_prices").select("stock_id").eq("date", day).order("stock_id"))
-    return {r["stock_id"] for r in rows}
+def delisted_dates():
+    """已下市股票的下市日（下市日之後的週次不查）"""
+    rows = _select_all(lambda: f.supabase.table("stock_info").select("stock_id, delisted_date")
+                       .not_.is_("delisted_date", "null").order("stock_id"))
+    return {r["stock_id"]: r["delisted_date"] for r in rows}
 
 
 def stocks_already_saved(week):
@@ -108,6 +109,7 @@ def fetch_range(start, end, valid_stocks, deadline=None):
     q = TdccQuery()
     q.open()
     weeks = [w for w in q.weeks if start <= w <= end]
+    delisted = delisted_dates()
     print(f"集保網頁可查 {len(q.weeks)} 週（{q.weeks[0]} ～ {q.weeks[-1]}），本次區間內 {len(weeks)} 週")
     if q.weeks and start < q.weeks[0]:
         print(f"⚠️ {start} ～ {q.weeks[0]} 之前的週次集保網頁已不提供，無法回補")
@@ -118,7 +120,8 @@ def fetch_range(start, end, valid_stocks, deadline=None):
             print(f"⏸️ 已到本次執行時間上限，剩下 {len(weeks) - i} 週，請用同一區間再執行一次接續")
             return saved_total, problems, weeks[i:]
 
-        todo = sorted((stocks_traded_near(week) & valid_stocks) - stocks_already_saved(week))
+        todo = sorted(sid for sid in valid_stocks - stocks_already_saved(week)
+                      if delisted.get(sid, "9999") > week)
         print(f"\n[{i + 1}/{len(weeks)}] {week}：需補 {len(todo)} 檔")
         if not todo:
             continue

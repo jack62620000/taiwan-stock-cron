@@ -144,7 +144,7 @@ def main():
             if unfinished:
                 holder_left = f"{HOLDER_LABEL}還有 {len(unfinished)} 週沒補（{unfinished[0]} 起），請用同一區間再執行一次接續"
         except Exception as e:
-            problems.append(f"{HOLDER_LABEL}：無法連上集保查詢網頁（{type(e).__name__}）")
+            problems.append(f"{HOLDER_LABEL}：執行中斷（{type(e).__name__}：{e}），重跑同一區間會接續")
 
     for i, day in enumerate(days if day_keys else [], 1):
         print(f"\n========== [{i}/{len(days)}] {day} ==========")
