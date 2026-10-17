@@ -26,8 +26,9 @@ PAGES = [("sii", "0"), ("sii", "1"), ("otc", "0"), ("otc", "1")]
 SLEEP_BETWEEN_PAGE = 3
 RETRIES = 3
 
-_ROW = re.compile(r"<tr[^>]*>\s*<td[^>]*>\s*(\d{4,6})\s*</td>(.*?)</tr>", re.S)
-_CELL = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
+# 表格標籤大小寫不一（例如「去年同月增減」欄位是 <Td>），一律不分大小寫
+_ROW = re.compile(r"<tr[^>]*>\s*<td[^>]*>\s*(\d{4,6})\s*</td>(.*?)</tr>", re.S | re.I)
+_CELL = re.compile(r"<td[^>]*>(.*?)</td>", re.S | re.I)
 _TAG = re.compile(r"<[^>]+>|&nbsp;")
 
 
@@ -72,19 +73,19 @@ def parse_page(html, year_month, valid_stocks):
     """
     彙總表每列：公司代號、名稱、當月營收、上月營收、去年當月營收、上月比較%、去年同月%、
     當月累計、去年累計、前期比較%、備註。成長率一律用金額自己算，不依賴表上的百分比欄位。
+    觀測站的歷史表是更正後的數字；與每日開放資料比對（2026-08），1,976 檔中只有 2 檔不同，
+    都是排除停業單位營收的公司。
     """
     records = []
     for sid, rest in _ROW.findall(html):
         if sid not in valid_stocks:
             continue
         cells = [_TAG.sub("", c).strip() for c in _CELL.findall(rest)]
-        if len(cells) < 8:
+        if len(cells) != 10:
             continue
-        note = cells[-1].strip("-").strip() or None
-        nums = cells[1:-1]
-        # 金額欄位：當月、上月、去年當月固定在前三格；累計兩格在百分比欄位之後
-        revenue, prev, last_year = (_int(x) for x in nums[:3])
-        cum, last_cum = _int(nums[-3]), _int(nums[-2])
+        _, revenue, prev, last_year, _, _, cum, last_cum, _, note = cells
+        revenue, prev, last_year, cum, last_cum = (_int(x) for x in (revenue, prev, last_year, cum, last_cum))
+        note = note.strip("-").strip() or None
         records.append({
             "stock_id": sid,
             "year_month": year_month,

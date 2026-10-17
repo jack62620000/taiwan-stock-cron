@@ -12,6 +12,7 @@
                 margin = 融資融券（餘額＋限額＋使用率）
                 adjust = 還原權值事件（除權息、減資、變更面額；整段區間一次抓）
                 holder = 千張大戶（集保網頁只查得到最近約一年，逐檔逐週查詢，每週約 20 分鐘）
+                revenue = 月營收（公開資訊觀測站每月彙總表，以月份為單位，已有的資料不覆蓋）
 
 有缺漏、寫入失敗或疑似被來源封鎖時，會以錯誤碼結束，GitHub 會把這次執行標成失敗。
 """
@@ -22,6 +23,7 @@ from datetime import datetime, timezone
 
 import fetch_adjustments as adj
 import fetch_holder_history as holder
+import fetch_revenue_history as revenue
 import fetch_stock_info as f
 
 ADJUST_KEY = "adjust"
@@ -30,7 +32,9 @@ HOLDER_KEY = "holder"
 HOLDER_LABEL = "千張大戶"
 # 千張大戶回補在這麼多分鐘後停下來（workflow 上限 300 分鐘），沒做完的週次重跑同一區間接續
 HOLDER_MAX_MINUTES = 270
-WHOLE_RANGE = {ADJUST_KEY: ADJUST_LABEL, HOLDER_KEY: HOLDER_LABEL}
+REVENUE_KEY = "revenue"
+REVENUE_LABEL = "月營收"
+WHOLE_RANGE = {ADJUST_KEY: ADJUST_LABEL, HOLDER_KEY: HOLDER_LABEL, REVENUE_KEY: REVENUE_LABEL}
 
 SLEEP_BETWEEN_API    = 2
 SLEEP_BETWEEN_DAYS   = 5
@@ -104,7 +108,7 @@ def main():
 
     started = time.time()
     names = "、".join(DATASETS[k][0] if k in DATASETS else WHOLE_RANGE[k] for k in keys)
-    day_keys = [k for k in keys if k in DATASETS]  # 逐日抓的資料；還原權值事件、千張大戶整段區間處理
+    day_keys = [k for k in keys if k in DATASETS]  # 逐日抓的資料；還原權值事件、千張大戶、月營收整段區間處理
     print(f"========== 區間回補：{start} ～ {end}｜{names} ==========")
 
     days = f.get_trading_days(start, end)
@@ -133,6 +137,14 @@ def main():
             _, failed = f.save_data_batches(adj.TABLE, events)
             if failed:
                 problems.append(f"{adj.TABLE}：{failed} 筆寫入失敗")
+
+    if REVENUE_KEY in keys:
+        print(f"\n--- {REVENUE_LABEL} ---")
+        try:
+            _, revenue_problems = revenue.fetch_range(start, end, valid_stocks)
+            problems.extend(revenue_problems)
+        except Exception as e:
+            problems.append(f"{REVENUE_LABEL}：執行中斷（{type(e).__name__}：{e}），重跑同一區間會接續")
 
     holder_left = None
     if HOLDER_KEY in keys:
