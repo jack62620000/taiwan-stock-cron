@@ -2,7 +2,7 @@
 每日選股訊號評分 - 給 GitHub Actions 排程使用，也可以手動回補
 
 每個交易日幫全市場股票打分數，寫進 Supabase 的 daily_signals 表。
-總分 100 = 籌碼 25 + 資金 25 + 基本面 35 + 技術面 15，評分規則見下方 score_stock()。
+總分 100 = 籌碼 32 + 資金 8 + 基本面 35 + 技術面 25，評分規則見下方 score_stock()。
 
 規則版本（RULE_VERSION）：
   v1（2026-10-14）：四面向各 25 分。
@@ -10,6 +10,10 @@
       - 拿掉「站上季線」「均線多頭排列」「量增價漲」：這三項在兩段期間都讓之後的報酬變差
       - 營收連 3 月年增、營收創新高加重（兩段期間都有正向效果），基本面改為 35 分
       - 「近 20 日已大漲」不扣分：資料顯示大漲股之後並沒有比較差，只保留風險提醒
+  v3（2026-10-17）：法人、融資、月營收補到 2025 年後，用 2025-02～2026-09（約 400 個交易日）重新驗證：
+      - 拿掉「融資使用率低」「資減價漲」（含沒有資料時的中性分）：沒有效果，最近一年甚至是反效果
+      - 空出的 17 分加到兩段期間都有效的因子：投信 5 日買超 +3、投信連買 +4、站上月線 +4、近 20 日上漲 +6
+      - 每天總分前 20 名之後 20 日的超額報酬：v2 +4.26%，v3 +4.90%
 
 用法：
     python signals.py                                   # 評分資料庫裡最新的交易日
@@ -38,7 +42,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-RULE_VERSION = 2
+RULE_VERSION = 3
 LOOKBACK_DAYS = 30          # 評分日之前要多載入的交易日數（MA20、RSI、20 日漲幅需要）
 LIQUID_MIN_LOTS = 500       # 20 日均量至少 500 張才列入排名
 ANCHOR_STOCKS = ["2330", "2317", "2454"]  # 用權值股找交易日，走主鍵索引比較快
@@ -309,7 +313,7 @@ def score_stock(x):
     """
     reasons, warnings = [], []
 
-    # ---------- 籌碼面（25）----------
+    # ---------- 籌碼面（32）----------
     chip = 0
     f5, s5 = x["f5"], x["s5"]
     if f5 > 0:
@@ -323,33 +327,20 @@ def score_stock(x):
         chip += 3
         reasons.append(f"外資連買 {int(x['f_streak'])} 天")
     if s5 > 0:
-        chip += 4
+        chip += 7
         reasons.append(f"投信5日買超 {_lots(s5):,.0f} 張")
     if x["s_streak"] >= 3:
-        chip += 4
+        chip += 8
         reasons.append(f"投信連買 {int(x['s_streak'])} 天")
     hd = x["holder_diff"]
     if _num(hd) and hd > 0:
         chip += 7 if hd >= 0.5 else 4
         reasons.append(f"大戶持股週增 {hd:.2f} 個百分點")
 
-    # ---------- 資金面（25）----------
+    # ---------- 資金面（8）----------
+    # v3 拿掉「融資使用率低」「資減價漲」：回測沒有效果，只留券資比
     margin = 0
     rate, mb, mb_chg5 = x["rate"], x["mb"], x["mb_chg5"]
-    if not _num(rate):
-        margin += 4                                   # 無融資資料，給中性分
-    elif rate < 10:
-        margin += 8
-        reasons.append(f"融資使用率低（{rate:.1f}%）")
-    elif rate < 20:
-        margin += 4
-    if not _num(mb_chg5):
-        margin += 4                                   # 無融資資料，給中性分
-    elif mb_chg5 < 0 and x["chg5"] > 0:
-        margin += 9
-        reasons.append(f"資減價漲（融資5日 {mb_chg5:+.1%}、股價 {x['chg5']:+.1%}）")
-    elif mb_chg5 <= 0.05:
-        margin += 4
     if _num(mb) and mb > 0 and _num(x["sb"]):
         ratio = x["sb"] / mb
         if ratio >= 0.10:
@@ -375,19 +366,19 @@ def score_stock(x):
         fund += 13
         reasons.append(f"營收創近{int(x['n_months'])}月新高")
 
-    # ---------- 技術面（15）----------
+    # ---------- 技術面（25）----------
     # v1 的「站上季線」「均線多頭排列」「量增價漲」回測都是負效果，已拿掉
     tech = 0
     close, ma20 = x["close"], x["ma20"]
     if _num(ma20) and close > ma20:
-        tech += 6
+        tech += 10
         reasons.append("站上月線")
     rsi = x["rsi"]
     if _num(rsi) and 50 <= rsi <= 75:
         tech += 4
         reasons.append(f"RSI 強勢區（{rsi:.0f}）")
     if _num(x["chg20"]) and x["chg20"] > 0:
-        tech += 5
+        tech += 11
         reasons.append(f"近20日上漲 {x['chg20']:.1%}")
 
     # ---------- 風險提醒（不扣分）----------
