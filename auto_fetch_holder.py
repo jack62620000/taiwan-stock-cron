@@ -1,6 +1,13 @@
 """
 週六專用 - 只同步大戶持股比例
+
+先抓集保開放資料（最新一週，一次全部）；開放資料失敗或有缺漏時，改用集保查詢網頁逐檔補最近幾週。
+最後檢查最新一週的筆數，明顯不足時以錯誤碼結束，讓 GitHub 把這次排程標成失敗。
 """
+import sys
+import time
+from datetime import date, timedelta
+
 import requests
 from supabase import create_client
 from dotenv import load_dotenv
@@ -28,11 +35,25 @@ def get_valid_stock_ids():
 def save_data_batches(table_name, records):
     if not records: return
     batch_size = 500
+    failed = 0
     for i in range(0, len(records), batch_size):
         batch = records[i:i + batch_size]
         try: supabase.table(table_name).upsert(batch).execute()
-        except Exception as e: print(f"儲存 {table_name} 錯誤 (Index {i}): {e}")
-    print(f"成功儲存/更新共 {len(records)} 筆資料至 {table_name}！")
+        except Exception as e:
+            failed += len(batch)
+            print(f"儲存 {table_name} 錯誤 (Index {i}): {e}")
+    print(f"{table_name}：寫入 {len(records) - failed} 筆，失敗 {failed} 筆")
+    return failed
+
+OPENDATA_RETRIES = 3
+# 開放資料之外，用查詢網頁檢查並補齊最近幾週的缺漏
+RECENT_DAYS = 35
+FILL_MAX_MINUTES = 60
+# 最新一週寫入的檔數低於仍在交易股票數的這個比例，視為失敗
+MIN_COVERAGE = 0.95
+# 最新一週的資料日距今超過這麼多天，視為這週沒抓到（正常是週五資料、週六抓）
+STALE_DAYS = 8
+
 
 def fetch_holder_distribution(valid_stocks):
     import urllib3
@@ -43,7 +64,17 @@ def fetch_holder_distribution(valid_stocks):
     try:
         import pandas as pd
         from io import StringIO
-        r = requests.get(url, headers=headers, timeout=30, verify=False)
+        r = None
+        for attempt in range(OPENDATA_RETRIES):
+            try:
+                r = requests.get(url, headers=headers, timeout=60, verify=False)
+                r.raise_for_status()
+                break
+            except Exception as e:
+                print(f"  第 {attempt + 1} 次下載失敗：{e}")
+                if attempt == OPENDATA_RETRIES - 1:
+                    raise
+                time.sleep(30 * (attempt + 1))
         r.encoding = "utf-8"
         df = pd.read_csv(StringIO(r.text))
 
@@ -74,12 +105,61 @@ def fetch_holder_distribution(valid_stocks):
         print(f"抓取大戶持股失敗: {e}")
         return []
 
+def fill_recent_weeks(valid_stocks):
+    """用集保查詢網頁補最近幾週沒有寫入的股票，回傳 (最新一週, 問題清單)"""
+    import fetch_holder_history as history
+    today = date.today()
+    start = (today - timedelta(days=RECENT_DAYS)).isoformat()
+    _, problems, unfinished = history.fetch_range(
+        start, today.isoformat(), valid_stocks, deadline=time.time() + FILL_MAX_MINUTES * 60)
+    if unfinished:
+        problems.append(f"還有 {len(unfinished)} 週沒補完（{unfinished[0]} 起），請執行區間回補 holder")
+    return problems
+
+
+def check_latest_week(valid_stocks):
+    """最新一週的筆數是否足夠，回傳問題說明；足夠時回傳 None"""
+    import fetch_holder_history as history
+    res = supabase.table("holder_distribution").select("week_date").order("week_date", desc=True).limit(1).execute()
+    if not res.data:
+        return "資料表沒有任何大戶持股資料"
+    week = res.data[0]["week_date"]
+    delisted = history.delisted_dates()
+    active = [sid for sid in valid_stocks if delisted.get(sid, "9999") > week]
+    saved = len(history.stocks_already_saved(week))
+    print(f"最新一週 {week}：已寫入 {saved} 檔，仍在交易 {len(active)} 檔")
+    if (date.today() - date.fromisoformat(week)).days > STALE_DAYS:
+        return f"最新一週是 {week}，已超過 {STALE_DAYS} 天沒有新資料"
+    if saved < len(active) * MIN_COVERAGE:
+        return f"最新一週 {week} 只有 {saved} 檔，少於仍在交易股票的 {MIN_COVERAGE:.0%}"
+    return None
+
+
 if __name__ == "__main__":
     print("========== 週六排程：同步大戶持股比例 ==========")
     valid_stocks = get_valid_stock_ids()
     print(f"資料庫內現有 {len(valid_stocks)} 檔股票可供對應。")
+    if not valid_stocks:
+        print("❌ 無法取得股票清單，中止執行。")
+        sys.exit(1)
 
+    problems = []
     holder_data = fetch_holder_distribution(valid_stocks)
-    save_data_batches("holder_distribution", holder_data)
+    if not holder_data:
+        problems.append("集保開放資料沒有取得資料，改用查詢網頁補抓")
+    elif save_data_batches("holder_distribution", holder_data):
+        problems.append("開放資料有部分寫入失敗")
 
+    print("\n--- 用集保查詢網頁檢查並補齊最近幾週 ---")
+    try:
+        fill_problems = fill_recent_weeks(valid_stocks)
+    except Exception as e:
+        fill_problems = [f"查詢網頁補抓中斷：{type(e).__name__}：{e}"]
+
+    latest_problem = check_latest_week(valid_stocks)
+    for p in problems + fill_problems:
+        print(f"⚠️ {p}")
+    if latest_problem or fill_problems:
+        print(f"❌ 大戶持股同步未完成：{latest_problem or '最近幾週仍有缺漏'}")
+        sys.exit(1)
     print("\n✅ 大戶持股同步完成！")
