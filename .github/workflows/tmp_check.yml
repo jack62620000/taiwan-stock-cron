@@ -1,0 +1,18 @@
+name: 暫時測試
+on:
+  push:
+    branches: [claude/project-thread-3bhtks]
+    paths: [.github/workflows/tmp_check.yml]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python -c "import fetch_stock_info, fetch_holder_history, signals; print('匯入成功')"
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
