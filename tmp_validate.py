@@ -46,7 +46,7 @@ for comp in ("chip", "margin", "fund", "tech", "total"):
         lambda v: pd.qcut(v.rank(method="first"), 4, labels=False))
     t = df.groupby(["period", "q"])["ex"].mean().unstack() * 100
     t.loc["全部"] = df.groupby("q")["ex"].mean() * 100
-    ic = df.groupby("date").apply(lambda g: g[comp].corr(g["ret"], method="spearman"))
+    ic = df.groupby("date").apply(lambda g: g[comp].rank().corr(g["ret"].rank()))
     print(f"\n[{comp}] 每日排名相關 IC 平均 {ic.mean():+.3f}（IC>0 的天數 {(ic > 0).mean():.0%}）")
     print(t.round(2).to_string())
 
