@@ -343,6 +343,39 @@ def get_signal_performance(top_n=20, horizon=5):
             time.sleep(1)
 
 
+# ===== 資料更新狀態 =====
+# (顯示名稱, 資料表, 日期欄位, 頻率)；有 stock_id 的表用權值股查最新日期，其餘直接排序（表都很小）
+DATA_TABLES = [
+    ("股價", "daily_prices", "date", "日"),
+    ("三大法人買賣超", "stock_ins_daily", "date", "日"),
+    ("融資融券", "margin_utilization", "date", "日"),
+    ("大盤指數", "market_index", "date", "日"),
+    ("期貨三大法人", "futures_institutional", "date", "日"),
+    ("每日選股評分", "daily_signals", "date", "日"),
+    ("大戶持股", "holder_distribution", "week_date", "週"),
+    ("月營收", "monthly_revenue", "year_month", "月"),
+    ("季報", "quarterly_report", None, "季"),
+]
+_NO_STOCK_ID = {"market_index", "futures_institutional"}
+
+def _table_latest(table, date_col):
+    if table == "quarterly_report":
+        res = supabase.table(table).select("year, quarter") \
+            .order("year", desc=True).order("quarter", desc=True).limit(1).execute()
+        return f"{res.data[0]['year']}Q{res.data[0]['quarter']}" if res.data else None
+    if table in _NO_STOCK_ID:
+        res = supabase.table(table).select(date_col).order(date_col, desc=True).limit(1).execute()
+        return res.data[0][date_col] if res.data else None
+    return get_latest_date(table, date_col)
+
+def get_data_status():
+    """各資料表最新一筆資料的日期（月營收是年月、季報是 2026Q2 這種格式），依 DATA_TABLES 順序"""
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        latest = list(pool.map(lambda t: _table_latest(t[1], t[2]), DATA_TABLES))
+    return [{"name": name, "table": table, "freq": freq, "latest": d}
+            for (name, table, _, freq), d in zip(DATA_TABLES, latest)]
+
+
 # ===== 自選股 =====
 def get_watchlist():
     """自選股清單（依加入時間由舊到新），不快取，新增或移除後馬上看得到"""
