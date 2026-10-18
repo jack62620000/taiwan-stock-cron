@@ -1,0 +1,33 @@
+name: 暫時檢查
+on:
+  push:
+    branches: [claude/project-thread-3bhtks]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 查觀測站歷史季報格式
+        run: |
+          python3 - <<'PY'
+          import re, time, urllib.request, urllib.parse
+          def get(rpt, typek, y, s):
+              data = urllib.parse.urlencode({"encodeURIComponent":1,"step":1,"firstin":1,"off":1,"isQuery":"Y","TYPEK":typek,"year":y,"season":s}).encode()
+              req = urllib.request.Request(f"https://mopsov.twse.com.tw/mops/web/ajax_{rpt}", data=data, headers={"User-Agent":"Mozilla/5.0"})
+              return urllib.request.urlopen(req, timeout=60).read().decode("utf-8","replace")
+          tag = re.compile(r"<[^>]+>|&nbsp;")
+          for rpt in ("t163sb04","t163sb05"):
+              for typek in ("sii","otc"):
+                  html = get(rpt, typek, "113", "01")
+                  tables = re.findall(r"<table[^>]*>(.*?)</table>", html, re.S|re.I)
+                  print(f"===== {rpt} {typek} 長度 {len(html)} 表格 {len(tables)}")
+                  print(html[:300].replace("\n"," "))
+                  for t in tables:
+                      rows = re.findall(r"<tr[^>]*>(.*?)</tr>", t, re.S|re.I)
+                      if len(rows) < 3: continue
+                      cells = lambda r: [tag.sub("",c).strip() for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", r, re.S|re.I)]
+                      print("  列數", len(rows), "表頭", cells(rows[0]))
+                      print("  例", cells(rows[1]))
+                  time.sleep(4)
+          html = get("t163sb04","sii","114","04")
+          print("===== 114Q4 sii 長度", len(html), "含2330" , "2330" in html)
+          PY
