@@ -3,6 +3,7 @@ import pandas as pd
 import altair as alt
 import sys
 import os
+import math
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import get_stock_list, get_recent_closes, get_recent_ins
@@ -104,37 +105,35 @@ if min_volume > 0:
 tab_today, tab_sim = st.tabs(["📋 今日訊號", "🧪 模擬交易"])
 
 # ===== 八大法則示意圖 =====
-# 畫布 160×80，y 越小越高。買進法則 1～4 自己畫，賣出／過熱法則 5～8 是 1～4 上下翻轉
-_DIAGRAMS = {
-    1: ([(0, 30), (50, 46), (95, 52), (130, 50), (160, 44)],             # 均線：下彎後走平、微揚
-        [(0, 42), (30, 58), (60, 66), (90, 62), (112, 54), (135, 40), (160, 30)],  # 股價：由下往上突破
-        (120, 50)),
-    2: ([(0, 66), (160, 26)],
-        [(0, 56), (40, 40), (70, 52), (90, 58), (110, 42), (130, 28), (160, 18)],
-        (113, 38)),
-    3: ([(0, 66), (160, 26)],
-        [(0, 46), (40, 30), (65, 34), (90, 36), (115, 26), (160, 10)],
-        (90, 36)),
-    4: ([(0, 22), (160, 50)],
-        [(0, 28), (50, 38), (85, 58), (110, 72), (130, 64), (160, 56)],
-        (110, 72)),
-}
+# 一張圖標出八個法則的位置。畫布 420×260，y 越小越高。
+# 均線是一個完整的起伏（左邊谷底→中間高點→右邊下彎），股價繞著均線走。
+def _ma_y(x):
+    return 140 + 60 * math.cos(2 * math.pi * (x - 40) / 360)
+
+_PRICE = [(0, 215), (25, 228), (55, 198), (80, 165), (100, 158), (118, 180), (135, 135), (148, 92),
+          (168, 98), (185, 60), (200, 30), (220, 55), (250, 88), (268, 125), (290, 100), (310, 140),
+          (322, 190), (342, 180), (360, 215), (378, 240), (400, 222), (420, 212)]
+# 法則編號 → 圓點位置
+_RULE_POINTS = {1: (55, 198), 2: (135, 135), 3: (168, 98), 8: (200, 30),
+                5: (250, 88), 6: (310, 140), 7: (342, 180), 4: (378, 240)}
 
 
-def rule_diagram(n):
-    """法則 n 的示意圖（SVG 字串）"""
-    flip = n > 4
-    ma, price, dot = _DIAGRAMS[n - 4 if flip else n]
-    fy = (lambda y: 80 - y) if flip else (lambda y: y)
-    pts = lambda line: " ".join(f"{x},{fy(y)}" for x, y in line)
-    color = {"買進": UP_COLOR, "賣出": DOWN_COLOR}.get(RULES[n][0], WARN_COLOR)
+def granville_diagram():
+    """八大法則位置示意圖（SVG 字串）"""
+    ma = " ".join(f"{x},{_ma_y(x):.1f}" for x in range(0, 421, 5))
+    price = " ".join(f"{x},{y}" for x, y in _PRICE)
+    dots = ""
+    for n, (x, y) in _RULE_POINTS.items():
+        color = {"買進": UP_COLOR, "賣出": DOWN_COLOR}.get(RULES[n][0], WARN_COLOR)
+        dots += (f'<circle cx="{x}" cy="{y}" r="10" fill="{color}" stroke="#0a0a0a" stroke-width="2"/>'
+                 f'<text x="{x}" y="{y + 4}" text-anchor="middle" font-size="12" font-weight="700" '
+                 f'fill="#ffffff" font-family="IBM Plex Mono, monospace">{n}</text>')
     return (
-        f'<svg viewBox="0 0 160 80" width="160" height="80" role="img" aria-label="法則{n}示意圖" '
-        f'style="background:#111111;border:1px solid #2a2a2a;border-radius:2px;display:block">'
-        f'<polyline points="{pts(ma)}" fill="none" stroke="{MUTED}" stroke-width="2" stroke-dasharray="5 4"/>'
-        f'<polyline points="{pts(price)}" fill="none" stroke="{ACCENT}" stroke-width="2.5" stroke-linejoin="round"/>'
-        f'<circle cx="{dot[0]}" cy="{fy(dot[1])}" r="5" fill="{color}" stroke="#0a0a0a" stroke-width="1.5"/>'
-        f'</svg>'
+        f'<svg viewBox="0 0 420 260" width="100%" role="img" aria-label="葛蘭碧八大法則位置示意圖" '
+        f'style="max-width:520px;background:#111111;border:1px solid #2a2a2a;border-radius:2px;display:block">'
+        f'<polyline points="{ma}" fill="none" stroke="{MUTED}" stroke-width="2" stroke-dasharray="6 5"/>'
+        f'<polyline points="{price}" fill="none" stroke="{ACCENT}" stroke-width="2.5" stroke-linejoin="round"/>'
+        f'{dots}</svg>'
     )
 
 
@@ -142,11 +141,10 @@ with tab_today:
     st.caption(f"資料日期：{latest_date}　·　依 {ma_days} 日均線判斷，共 {len(df):,} 檔有足夠資料")
 
     with st.expander("📖 八大法則說明與判斷方式"):
-        st.caption("示意圖：橘線＝股價，灰色虛線＝均線，圓點＝訊號出現的位置（紅＝買進、綠＝賣出、橘＝過熱）")
-        for n, (side, desc, level) in RULES.items():
-            text_col, pic_col = st.columns([4, 1], vertical_alignment="center")
-            text_col.markdown(f"**法則{n}（{side}·{level}）**：{desc}")
-            pic_col.markdown(rule_diagram(n), unsafe_allow_html=True)
+        text_col, pic_col = st.columns([3, 2], vertical_alignment="center")
+        text_col.markdown("\n".join(f"- **法則{n}（{side}·{level}）**：{desc}" for n, (side, desc, level) in RULES.items()))
+        pic_col.markdown(granville_diagram(), unsafe_allow_html=True)
+        pic_col.caption("橘線＝股價，灰色虛線＝均線；圓點數字是法則編號（紅＝買進、綠＝賣出、橘＝過熱）")
         st.markdown(f"""
 **程式怎麼判斷（以最新一個交易日為準，參數可在左側調整）**
 - 均線上揚／下彎：今天的均線比 {slope_days} 天前高／低。
