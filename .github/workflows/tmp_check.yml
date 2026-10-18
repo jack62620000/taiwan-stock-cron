@@ -5,29 +5,35 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
     steps:
-      - name: 查觀測站歷史季報格式
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: 每日季報程式改寫後結果不變（只讀，不寫入）
         run: |
-          python3 - <<'PY'
-          import re, time, urllib.request, urllib.parse
-          def get(rpt, typek, y, s):
-              data = urllib.parse.urlencode({"encodeURIComponent":1,"step":1,"firstin":1,"off":1,"isQuery":"Y","TYPEK":typek,"year":y,"season":s}).encode()
-              req = urllib.request.Request(f"https://mopsov.twse.com.tw/mops/web/ajax_{rpt}", data=data, headers={"User-Agent":"Mozilla/5.0"})
-              return urllib.request.urlopen(req, timeout=60).read().decode("utf-8","replace")
-          tag = re.compile(r"<[^>]+>|&nbsp;")
-          for rpt in ("t163sb04","t163sb05"):
-              for typek in ("sii","otc"):
-                  html = get(rpt, typek, "113", "01")
-                  tables = re.findall(r"<table[^>]*>(.*?)</table>", html, re.S|re.I)
-                  print(f"===== {rpt} {typek} 長度 {len(html)} 表格 {len(tables)}")
-                  print(html[:300].replace("\n"," "))
-                  for t in tables:
-                      rows = re.findall(r"<tr[^>]*>(.*?)</tr>", t, re.S|re.I)
-                      if len(rows) < 3: continue
-                      cells = lambda r: [tag.sub("",c).strip() for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", r, re.S|re.I)]
-                      print("  列數", len(rows), "表頭", cells(rows[0]))
-                      print("  例", cells(rows[1]))
-                  time.sleep(4)
-          html = get("t163sb04","sii","114","04")
-          print("===== 114Q4 sii 長度", len(html), "含2330" , "2330" in html)
+          python - <<'PY'
+          import fetch_stock_info as f
+          recs = f.fetch_quarterly_report(f.get_valid_stock_ids())
+          print("筆數", len(recs))
+          db = {r["stock_id"]: r for r in f.supabase.table("quarterly_report").select("*").eq("year", recs[0]["year"]).eq("quarter", recs[0]["quarter"]).execute().data}
+          diff = 0
+          for r in recs:
+              d = db.get(r["stock_id"])
+              if not d: continue
+              for k, v in r.items():
+                  if k in ("pb_ratio", "updated_at"): continue
+                  dv = d.get(k)
+                  if (v is None) != (dv is None) or (v is not None and abs(float(v) - float(dv)) > 0.01):
+                      diff += 1
+                      if diff < 5: print("不同", r["stock_id"], k, v, dv)
+          print("比對", len([r for r in recs if r["stock_id"] in db]), "筆，不同欄位", diff)
           PY
+      - name: 歷史季報試跑（不寫入）
+        run: |
+          DRY_RUN=1 START_DATE=2024-03-01 END_DATE=2024-03-31 python fetch_quarterly_history.py
+          DRY_RUN=1 START_DATE=2025-12-01 END_DATE=2025-12-31 python fetch_quarterly_history.py
