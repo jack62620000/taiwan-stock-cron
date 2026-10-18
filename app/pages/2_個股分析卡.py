@@ -9,7 +9,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import (
     get_stock_info, get_daily_prices, get_quarterly,
     get_revenue, get_stock_ins, get_margin, get_holder,
-    get_margin_utilization, get_stock_list, get_market_index
+    get_margin_utilization, get_stock_list, get_market_index,
+    get_watchlist, add_to_watchlist, remove_from_watchlist,
 )
 from utils.indicators import calc_all, get_latest_signals
 from utils.ui import require_login, UP_COLOR, DOWN_COLOR
@@ -38,6 +39,15 @@ if not selected:
     st.info("請選擇股票")
     st.stop()
 stock_id = selected.split(" ", 1)[0]
+
+# ===== 自選股 =====
+if stock_id in set(get_watchlist()["stock_id"]):
+    if st.button("★ 已在自選股（按一下移除）"):
+        remove_from_watchlist(stock_id)
+        st.rerun()
+elif st.button("⭐ 加入自選股"):
+    add_to_watchlist(stock_id)
+    st.rerun()
 
 # ===== 載入資料 =====
 @st.cache_data(ttl=3600)

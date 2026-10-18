@@ -341,3 +341,33 @@ def get_signal_performance(top_n=20, horizon=5):
             if attempt == 1:
                 raise
             time.sleep(1)
+
+
+# ===== 自選股 =====
+def get_watchlist():
+    """自選股清單（依加入時間由舊到新），不快取，新增或移除後馬上看得到"""
+    res = supabase.table("watchlist").select("*").order("added_at", desc=False).execute()
+    return pd.DataFrame(res.data, columns=["stock_id", "note", "added_at"])
+
+def add_to_watchlist(stock_id, note=""):
+    supabase.table("watchlist").upsert({"stock_id": stock_id, "note": note}).execute()
+
+def update_watchlist_note(stock_id, note):
+    supabase.table("watchlist").update({"note": note}).eq("stock_id", stock_id).execute()
+
+def remove_from_watchlist(stock_id):
+    supabase.table("watchlist").delete().eq("stock_id", stock_id).execute()
+
+def get_rows_for_stocks(table, stock_ids, date_col="date", since=None, columns="*"):
+    """
+    指定幾檔股票在 since 之後的資料（自選股頁用）。
+    主鍵是 (stock_id, 日期)，用股票清單＋日期範圍查很快。
+    """
+    if not stock_ids:
+        return pd.DataFrame()
+    def query():
+        q = supabase.table(table).select(columns).in_("stock_id", list(stock_ids))
+        if since:
+            q = q.gte(date_col, since)
+        return q.order(date_col, desc=False).order("stock_id", desc=False)
+    return pd.DataFrame(_fetch_all(query))
