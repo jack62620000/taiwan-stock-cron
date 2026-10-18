@@ -5,11 +5,14 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: pip install requests
-      - name: 外資持股來源檢查
-        run: python tmp/probe.py
+      - run: pip install -r requirements.txt
+      - name: 外資持股試跑（不寫入）
+        run: DRY_RUN=1 START_DATE=2025-01-02 END_DATE=2025-01-03 python fetch_foreign_holding.py

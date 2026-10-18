@@ -1,6 +1,6 @@
 """
 自動化版本 - 給 GitHub Actions 排程使用
-每次執行會同步一個交易日的股價、三大法人、融資融券（餘額＋限額＋使用率），
+每次執行會同步一個交易日的股價、三大法人（含外資持股）、融資融券（餘額＋限額＋使用率），
 以及最近兩週的還原權值事件、當月的大盤指數。
 
 抓取函式全部來自 fetch_stock_info.py，這裡不再複製一份，
@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import fetch_adjustments as adj
+import fetch_foreign_holding as foreign
 import fetch_market_index as market
 import fetch_stock_info as f
 
@@ -68,6 +69,11 @@ def main():
     tpex_ins = f.fetch_tpex_stock_ins(today, valid_stocks)
     time.sleep(SLEEP_BETWEEN_API)
 
+    print("\n--- 下載外資持股 ---")
+    holdings, holding_problems = foreign.fetch_day(today, valid_stocks)
+    if holdings:  # 整天都抓不到時不併入，避免把已存的持股蓋成空值
+        foreign.merge_into(twse_ins + tpex_ins, holdings)
+
     print("\n--- 下載融資融券 ---")
     twse_margin = f.fetch_twse_margin(today, valid_stocks)
     time.sleep(SLEEP_BETWEEN_API)
@@ -79,6 +85,7 @@ def main():
         "上市融資券": twse_margin, "上櫃融資券": tpex_margin,
     }
     problems = [f"{name}沒有抓到資料" for name, records in fetched.items() if not records]
+    problems.extend(holding_problems)
 
     print("\n--- 寫入資料庫 ---")
     all_margin = twse_margin + tpex_margin
