@@ -10,7 +10,7 @@ from utils.granville import (
     RULES, STABLE_RULES, CONFIRMS, HOLD_HINT, WATCH_DAYS, WATCH_STATUS, LATE_STATUS,
     granville_signals, rule1_watchlist, simulate_trades, watch_note,
 )
-from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR
+from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
 require_login()
 
 st.set_page_config(
@@ -103,11 +103,50 @@ if min_volume > 0:
 
 tab_today, tab_sim = st.tabs(["📋 今日訊號", "🧪 模擬交易"])
 
+# ===== 八大法則示意圖 =====
+# 畫布 160×80，y 越小越高。買進法則 1～4 自己畫，賣出／過熱法則 5～8 是 1～4 上下翻轉
+_DIAGRAMS = {
+    1: ([(0, 30), (50, 46), (95, 52), (130, 50), (160, 44)],             # 均線：下彎後走平、微揚
+        [(0, 42), (30, 58), (60, 66), (90, 62), (112, 54), (135, 40), (160, 30)],  # 股價：由下往上突破
+        (120, 50)),
+    2: ([(0, 66), (160, 26)],
+        [(0, 56), (40, 40), (70, 52), (90, 58), (110, 42), (130, 28), (160, 18)],
+        (113, 38)),
+    3: ([(0, 66), (160, 26)],
+        [(0, 46), (40, 30), (65, 34), (90, 36), (115, 26), (160, 10)],
+        (90, 36)),
+    4: ([(0, 22), (160, 50)],
+        [(0, 28), (50, 38), (85, 58), (110, 72), (130, 64), (160, 56)],
+        (110, 72)),
+}
+
+
+def rule_diagram(n):
+    """法則 n 的示意圖（SVG 字串）"""
+    flip = n > 4
+    ma, price, dot = _DIAGRAMS[n - 4 if flip else n]
+    fy = (lambda y: 80 - y) if flip else (lambda y: y)
+    pts = lambda line: " ".join(f"{x},{fy(y)}" for x, y in line)
+    color = {"買進": UP_COLOR, "賣出": DOWN_COLOR}.get(RULES[n][0], WARN_COLOR)
+    return (
+        f'<svg viewBox="0 0 160 80" width="160" height="80" role="img" aria-label="法則{n}示意圖" '
+        f'style="background:#111111;border:1px solid #2a2a2a;border-radius:2px;display:block">'
+        f'<polyline points="{pts(ma)}" fill="none" stroke="{MUTED}" stroke-width="2" stroke-dasharray="5 4"/>'
+        f'<polyline points="{pts(price)}" fill="none" stroke="{ACCENT}" stroke-width="2.5" stroke-linejoin="round"/>'
+        f'<circle cx="{dot[0]}" cy="{fy(dot[1])}" r="5" fill="{color}" stroke="#0a0a0a" stroke-width="1.5"/>'
+        f'</svg>'
+    )
+
+
 with tab_today:
     st.caption(f"資料日期：{latest_date}　·　依 {ma_days} 日均線判斷，共 {len(df):,} 檔有足夠資料")
 
     with st.expander("📖 八大法則說明與判斷方式"):
-        st.markdown("\n".join(f"- **法則{n}（{side}·{level}）**：{desc}" for n, (side, desc, level) in RULES.items()))
+        st.caption("示意圖：橘線＝股價，灰色虛線＝均線，圓點＝訊號出現的位置（紅＝買進、綠＝賣出、橘＝過熱）")
+        for n, (side, desc, level) in RULES.items():
+            text_col, pic_col = st.columns([4, 1], vertical_alignment="center")
+            text_col.markdown(f"**法則{n}（{side}·{level}）**：{desc}")
+            pic_col.markdown(rule_diagram(n), unsafe_allow_html=True)
         st.markdown(f"""
 **程式怎麼判斷（以最新一個交易日為準，參數可在左側調整）**
 - 均線上揚／下彎：今天的均線比 {slope_days} 天前高／低。
