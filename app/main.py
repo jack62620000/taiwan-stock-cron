@@ -1,5 +1,10 @@
 ﻿import streamlit as st
+import pandas as pd
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from utils.ui import apply_theme
+from utils.db import get_data_status
+from utils.freshness import evaluate
 
 apply_theme()
 
@@ -36,6 +41,33 @@ st.set_page_config(
 )
 
 st.title("📈 台股分析系統")
+
+
+# ===== 資料更新狀態 =====
+@st.cache_data(ttl=3600)
+def load_data_status():
+    return get_data_status()
+
+status = evaluate(load_data_status(), datetime.now(ZoneInfo("Asia/Taipei")))
+stale = [r for r in status if not r["ok"]]
+price_day = next((r["latest"] for r in status if r["table"] == "daily_prices"), None)
+if stale:
+    st.warning(f"⚠️ 有 {len(stale)} 項資料可能沒有更新："
+               + "、".join(f"{r['name']}（{r['note']}）" for r in stale)
+               + "。遇到國定假日會誤判，可以忽略。")
+else:
+    st.success(f"✅ 資料都是最新的，股價更新到 {price_day}")
+with st.expander("📅 資料更新狀態"):
+    st.dataframe(
+        pd.DataFrame([{"資料": r["name"], "更新頻率": "每" + r["freq"], "最新資料": r["latest"] or "—",
+                       "狀態": ("✅ " if r["ok"] else "⚠️ ") + r["note"]} for r in status]),
+        hide_index=True, width="stretch",
+    )
+    st.caption("每個交易日晚上 9 點後開始抓當天資料；大戶持股每週更新，月營收每月 10 日前公布，季報依法定期限公布。")
+    if st.button("🔄 強制重新整理資料"):
+        st.cache_data.clear()
+        st.rerun()
+
 st.markdown("---")
 
 st.success("### 🎯 每日選股訊號\n全市場四面向評分排行榜、個股分數走勢、規則回測")
