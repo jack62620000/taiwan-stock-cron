@@ -83,6 +83,12 @@ jobs:
           SIGNALS_START: ${{ github.event.inputs.target_date }}
           SIGNALS_END: ${{ github.event.inputs.target_date }}
         run: python signals.py
+      # 評分完再清除超過保留期限的舊資料（期限見 cleanup_old_data.py）
+      - name: Clean up expired data
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python cleanup_old_data.py
 
   update-holder-only:
     if: github.event.schedule == '06 1 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only == 'true')
