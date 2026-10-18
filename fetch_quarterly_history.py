@@ -85,15 +85,15 @@ def parse_page(html, valid_stocks):
 
 def _quarter_end_prices(y, q, stock_ids):
     """各股在季底前最後一次的收盤價（往前找 10 天內，停牌股用更早的價格）。
-    股價表的索引是（股票, 日期），只用日期查詢會全表掃描而逾時，所以一次查 200 檔股票。"""
+    股價表的索引是（股票, 日期），只用日期查詢會全表掃描而逾時，所以一次查 100 檔股票（約 700 筆，不超過每次最多回傳 1000 筆的限制）。"""
     m, d = QUARTER_END[q]
     end = date(y, m, d)
     stock_ids, prices = sorted(stock_ids), {}
-    for i in range(0, len(stock_ids), 200):
+    for i in range(0, len(stock_ids), 100):
         res = f.supabase.table("daily_prices").select("stock_id, date, close_price") \
-            .in_("stock_id", stock_ids[i:i + 200]) \
+            .in_("stock_id", stock_ids[i:i + 100]) \
             .gte("date", (end - timedelta(days=10)).isoformat()).lte("date", end.isoformat()) \
-            .order("stock_id").order("date", desc=True).limit(5000).execute()
+            .order("stock_id").order("date", desc=True).execute()
         for row in res.data:
             if row["close_price"] is not None:
                 prices.setdefault(row["stock_id"], row["close_price"])
