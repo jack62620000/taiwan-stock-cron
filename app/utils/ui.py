@@ -15,11 +15,16 @@ TEXT       = "#e5e5e5"
 MUTED      = "#a3a3a3"
 SERIES     = ["#f5a524", "#60a5fa", "#a78bfa", "#9ca3af"]  # 圖表多條線的顏色（避開紅綠，免得和漲跌混淆）
 
+# 全站字型會蓋掉 Streamlit 內建圖示（展開箭頭、側邊欄收合鈕），所以 stIconMaterial 要換回圖示字型，
+# 否則會顯示成 arrow_right、keyboard_double_arrow_left 之類的文字
 _THEME_CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap');
 html, body, [class*="st-"], .stMarkdown, .stButton button, input, textarea, select {
     font-family: 'IBM Plex Mono', 'Noto Sans TC', monospace !important;
+}
+[data-testid="stIconMaterial"], [class*="material-symbols"] {
+    font-family: 'Material Symbols Rounded' !important;
 }
 [data-testid="stHeader"] { background: #f5a524; height: 2.6rem; }
 [data-testid="stHeader"]::before {
