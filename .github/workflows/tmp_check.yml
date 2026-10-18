@@ -1,0 +1,23 @@
+name: 暫時檢查
+on:
+  push:
+    branches: [claude/project-thread-3bhtks]
+    paths: [cleanup_old_data.py, .github/workflows/tmp_check.yml]
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          DRY_RUN: '1'
+        run: |
+          python -u cleanup_old_data.py
+          CLEANUP_DATE=2027-02-01 python -u cleanup_old_data.py
+          CLEANUP_DATE=2027-12-31 python -u cleanup_old_data.py
