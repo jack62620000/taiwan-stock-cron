@@ -665,40 +665,44 @@ def fetch_income_statements(valid_stocks):
             if not stock_id or stock_id not in valid_stocks:
                 continue
 
-            net_income = None
-            for key in NET_INCOME_KEYS:
-                if row.get(key):
-                    net_income = parse_float(row[key])
-                    break
-
-            updated_at  = parse_roc_date(row.get("出表日期") or row.get("Date") or "")
-            year_str    = str(row.get("年度") or row.get("Year") or "").strip()
-            quarter_str = str(row.get("季別") or row.get("Season") or "0").strip()
-
-            # [J] 營收、毛利、營業利益（千元，年初累計）。只有一般業的損益表有這些欄位，
-            #     金控、保險、證券與少數公司沒有，會是 None
-            gross_profit = parse_float(row.get("營業毛利（毛損）淨額", ""))
-            if gross_profit is None:
-                gross_profit = parse_float(row.get("營業毛利（毛損）", ""))
-
-            result[stock_id] = {
-                "year":       parse_roc_year(year_str),
-                "quarter":    int(quarter_str) if quarter_str.isdigit() else 0,
-                "eps":        parse_float(row.get("基本每股盈餘（元）", "")),
-                "net_income": net_income,
-                "revenue":          parse_float(row.get("營業收入", "")),
-                "gross_profit":     gross_profit,
-                "operating_income": parse_float(row.get("營業利益（損失）", "")),
-                # [K] 其餘損益項目（千元，年初累計）
-                "operating_cost":       first_value(row, ["營業成本"]),
-                "operating_expense":    first_value(row, ["營業費用"]),
-                "non_operating_income": first_value(row, ["營業外收入及支出"]),
-                "pretax_income":        first_value(row, ["稅前淨利（淨損）", "繼續營業單位稅前淨利（淨損）", "繼續營業單位稅前損益"]),
-                "income_tax":           first_value(row, ["所得稅費用（利益）", "所得稅（費用）利益"]),
-                "net_income_parent":    first_value(row, ["淨利（淨損）歸屬於母公司業主", "淨利（損）歸屬於母公司業主"]),
-                "updated_at": updated_at,
-            }
+            result[stock_id] = parse_income_row(row)
     return result
+
+def parse_income_row(row):
+    """損益表一列 → 季報欄位。開放資料與觀測站歷史彙總表（fetch_quarterly_history.py）的欄位名稱相同，共用這段。"""
+    net_income = None
+    for key in NET_INCOME_KEYS:
+        if row.get(key):
+            net_income = parse_float(row[key])
+            break
+
+    updated_at  = parse_roc_date(row.get("出表日期") or row.get("Date") or "")
+    year_str    = str(row.get("年度") or row.get("Year") or "").strip()
+    quarter_str = str(row.get("季別") or row.get("Season") or "0").strip()
+
+    # [J] 營收、毛利、營業利益（千元，年初累計）。只有一般業的損益表有這些欄位，
+    #     金控、保險、證券與少數公司沒有，會是 None
+    gross_profit = parse_float(row.get("營業毛利（毛損）淨額", ""))
+    if gross_profit is None:
+        gross_profit = parse_float(row.get("營業毛利（毛損）", ""))
+
+    return {
+        "year":       parse_roc_year(year_str),
+        "quarter":    int(quarter_str) if quarter_str.isdigit() else 0,
+        "eps":        parse_float(row.get("基本每股盈餘（元）", "")),
+        "net_income": net_income,
+        "revenue":          parse_float(row.get("營業收入", "")),
+        "gross_profit":     gross_profit,
+        "operating_income": parse_float(row.get("營業利益（損失）", "")),
+        # [K] 其餘損益項目（千元，年初累計）
+        "operating_cost":       first_value(row, ["營業成本"]),
+        "operating_expense":    first_value(row, ["營業費用"]),
+        "non_operating_income": first_value(row, ["營業外收入及支出"]),
+        "pretax_income":        first_value(row, ["稅前淨利（淨損）", "繼續營業單位稅前淨利（淨損）", "繼續營業單位稅前損益"]),
+        "income_tax":           first_value(row, ["所得稅費用（利益）", "所得稅（費用）利益"]),
+        "net_income_parent":    first_value(row, ["淨利（淨損）歸屬於母公司業主", "淨利（損）歸屬於母公司業主"]),
+        "updated_at": updated_at,
+    }
 
 def fetch_balance_sheets(valid_stocks):
     result = {}
@@ -713,27 +717,31 @@ def fetch_balance_sheets(valid_stocks):
             if not stock_id or stock_id not in valid_stocks:
                 continue
 
-            equity_total = None
-            for key in EQUITY_KEYS:
-                if row.get(key):
-                    equity_total = parse_float(row[key])
-                    break
-
-            result[stock_id] = {
-                "equity_total": equity_total,
-                "book_value":   parse_float(row.get("每股參考淨值", "")),
-                # [K] 其餘資產負債項目（千元，期末餘額）。金控與保險沒有流動／非流動的區分
-                "current_assets":          first_value(row, ["流動資產"]),
-                "non_current_assets":      first_value(row, ["非流動資產"]),
-                "total_assets":            first_value(row, ["資產總計", "資產總額"]),
-                "current_liabilities":     first_value(row, ["流動負債"]),
-                "non_current_liabilities": first_value(row, ["非流動負債"]),
-                "total_liabilities":       first_value(row, ["負債總計", "負債總額"]),
-                "capital_stock":           first_value(row, ["股本"]),
-                "retained_earnings":       first_value(row, ["保留盈餘", "保留盈餘（或累積虧損）"]),
-                "equity_parent":           first_value(row, ["歸屬於母公司業主之權益合計", "歸屬於母公司業主權益合計", "歸屬於母公司業主之權益"]),
-            }
+            result[stock_id] = parse_balance_row(row)
     return result
+
+def parse_balance_row(row):
+    """資產負債表一列 → 季報欄位（與觀測站歷史彙總表共用）"""
+    equity_total = None
+    for key in EQUITY_KEYS:
+        if row.get(key):
+            equity_total = parse_float(row[key])
+            break
+
+    return {
+        "equity_total": equity_total,
+        "book_value":   parse_float(row.get("每股參考淨值", "")),
+        # [K] 其餘資產負債項目（千元，期末餘額）。金控與保險沒有流動／非流動的區分
+        "current_assets":          first_value(row, ["流動資產"]),
+        "non_current_assets":      first_value(row, ["非流動資產"]),
+        "total_assets":            first_value(row, ["資產總計", "資產總額"]),
+        "current_liabilities":     first_value(row, ["流動負債"]),
+        "non_current_liabilities": first_value(row, ["非流動負債"]),
+        "total_liabilities":       first_value(row, ["負債總計", "負債總額"]),
+        "capital_stock":           first_value(row, ["股本"]),
+        "retained_earnings":       first_value(row, ["保留盈餘", "保留盈餘（或累積虧損）"]),
+        "equity_parent":           first_value(row, ["歸屬於母公司業主之權益合計", "歸屬於母公司業主權益合計", "歸屬於母公司業主之權益"]),
+    }
 
 def fetch_quarterly_report(valid_stocks):
     print("正在下載損益表...")
@@ -786,63 +794,67 @@ def fetch_quarterly_report(valid_stocks):
             skipped += 1
             continue
 
-        net_income   = inc.get("net_income")
-        equity_total = bal.get("equity_total")
-        book_value   = bal.get("book_value")
-        close_price  = price_map.get(stock_id)
-
-        pb_ratio = None
-        if close_price and book_value and book_value > 0:
-            pb_ratio = round(close_price / book_value, 2)
-
-        roe = None
-        if net_income and equity_total and equity_total > 0:
-            roe = round(net_income / equity_total * 100, 2)
-
-        # [J] 毛利率、營業利益率（%，年初累計）
-        revenue          = inc.get("revenue")
-        gross_profit     = inc.get("gross_profit")
-        operating_income = inc.get("operating_income")
-        gross_margin = operating_margin = None
-        if revenue and revenue > 0:
-            if gross_profit is not None:
-                gross_margin = round(gross_profit / revenue * 100, 2)
-            if operating_income is not None:
-                operating_margin = round(operating_income / revenue * 100, 2)
-
-        # [K] 負債比＝負債÷資產；流動比率＝流動資產÷流動負債（皆為 %）
-        total_assets, total_liabilities = bal.get("total_assets"), bal.get("total_liabilities")
-        current_assets, current_liabilities = bal.get("current_assets"), bal.get("current_liabilities")
-        debt_ratio = current_ratio = None
-        if total_assets and total_assets > 0 and total_liabilities is not None:
-            debt_ratio = round(total_liabilities / total_assets * 100, 2)
-        if current_liabilities and current_liabilities > 0 and current_assets is not None:
-            current_ratio = round(current_assets / current_liabilities * 100, 2)
-
-        records.append({
-            "stock_id":     stock_id,
-            "year":         inc.get("year"),
-            "quarter":      inc.get("quarter"),
-            "eps":          inc.get("eps"),
-            "net_income":   net_income,
-            "equity_total": equity_total,
-            "book_value":   book_value,
-            "pb_ratio":     pb_ratio,
-            "roe":          roe,
-            "revenue":          revenue,
-            "gross_profit":     gross_profit,
-            "operating_income": operating_income,
-            "gross_margin":     gross_margin,
-            "operating_margin": operating_margin,
-            **{key: inc.get(key) for key in INCOME_EXTRA},
-            **{key: bal.get(key) for key in BALANCE_EXTRA},
-            "debt_ratio":       debt_ratio,
-            "current_ratio":    current_ratio,
-            "updated_at":   inc.get("updated_at"),
-        })
+        records.append(build_quarterly_record(stock_id, inc, bal, price_map.get(stock_id)))
     if skipped:
         print(f"  有 {skipped} 檔缺少損益表的年度或季別，已略過")
     return records
+
+
+def build_quarterly_record(stock_id, inc, bal, close_price):
+    """損益表＋資產負債表 → 一筆 quarterly_report。close_price 用來算 P/B，沒有就留空。"""
+    net_income   = inc.get("net_income")
+    equity_total = bal.get("equity_total")
+    book_value   = bal.get("book_value")
+
+    pb_ratio = None
+    if close_price and book_value and book_value > 0:
+        pb_ratio = round(close_price / book_value, 2)
+
+    roe = None
+    if net_income and equity_total and equity_total > 0:
+        roe = round(net_income / equity_total * 100, 2)
+
+    # [J] 毛利率、營業利益率（%，年初累計）
+    revenue          = inc.get("revenue")
+    gross_profit     = inc.get("gross_profit")
+    operating_income = inc.get("operating_income")
+    gross_margin = operating_margin = None
+    if revenue and revenue > 0:
+        if gross_profit is not None:
+            gross_margin = round(gross_profit / revenue * 100, 2)
+        if operating_income is not None:
+            operating_margin = round(operating_income / revenue * 100, 2)
+
+    # [K] 負債比＝負債÷資產；流動比率＝流動資產÷流動負債（皆為 %）
+    total_assets, total_liabilities = bal.get("total_assets"), bal.get("total_liabilities")
+    current_assets, current_liabilities = bal.get("current_assets"), bal.get("current_liabilities")
+    debt_ratio = current_ratio = None
+    if total_assets and total_assets > 0 and total_liabilities is not None:
+        debt_ratio = round(total_liabilities / total_assets * 100, 2)
+    if current_liabilities and current_liabilities > 0 and current_assets is not None:
+        current_ratio = round(current_assets / current_liabilities * 100, 2)
+
+    return {
+        "stock_id":     stock_id,
+        "year":         inc.get("year"),
+        "quarter":      inc.get("quarter"),
+        "eps":          inc.get("eps"),
+        "net_income":   net_income,
+        "equity_total": equity_total,
+        "book_value":   book_value,
+        "pb_ratio":     pb_ratio,
+        "roe":          roe,
+        "revenue":          revenue,
+        "gross_profit":     gross_profit,
+        "operating_income": operating_income,
+        "gross_margin":     gross_margin,
+        "operating_margin": operating_margin,
+        **{key: inc.get(key) for key in INCOME_EXTRA},
+        **{key: bal.get(key) for key in BALANCE_EXTRA},
+        "debt_ratio":       debt_ratio,
+        "current_ratio":    current_ratio,
+        "updated_at":   inc.get("updated_at"),
+    }
 
 
 # ==================== 9. 期貨三大法人未平倉 ====================
