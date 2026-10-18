@@ -7,7 +7,8 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import (
     get_stock_list, get_signal_dates, get_signals,
-    get_signal_history, get_signal_performance,
+    get_signal_history, get_signal_performance, get_top_picks,
+    get_rows_for_stocks, get_price_adjustments, apply_adjustments,
 )
 from utils.ui import require_login, render_metric_cards, UP_COLOR, DOWN_COLOR
 require_login()
@@ -55,6 +56,21 @@ def load_history(stock_id):
 @st.cache_data(ttl=3600)
 def load_performance(top_n, horizon):
     return get_signal_performance(top_n, horizon)
+
+@st.cache_data(ttl=3600)
+def load_pick_prices(top_n):
+    """每個評分日前 N 名的股票，以及這些股票評分期間的還原權值收盤價（寬表：日期 × 股票）"""
+    picks = get_top_picks(top_n)
+    if picks.empty:
+        return picks, pd.DataFrame()
+    prices = get_rows_for_stocks("daily_prices", sorted(picks["stock_id"].unique()),
+                                 since=picks["date"].min(), columns="stock_id, date, close_price")
+    if prices.empty:
+        return picks, pd.DataFrame()
+    prices = apply_adjustments(prices, get_price_adjustments(None, prices["date"].min()))
+    wide = prices.assign(close_price=pd.to_numeric(prices["close_price"], errors="coerce")) \
+        .pivot_table(index="date", columns="stock_id", values="close_price", aggfunc="last").sort_index()
+    return picks, wide
 
 
 dates = load_dates()
@@ -344,6 +360,41 @@ def simulate_account(perf, horizon, ret_col, cost):
     return pd.DataFrame(values).groupby("date", as_index=False).last()
 
 
+def apply_exits(perf, picks, wide, stop_loss, take_profit):
+    """
+    把每一輪前 N 名的報酬改成「有停損、停利」的版本：持有期間任何一天收盤報酬
+    跌到 -stop_loss% 或漲到 +take_profit% 就在當天收盤賣出，否則持有到期。0 表示不設。
+    提前賣出的資金放到這一輪結束才再投入（不另外找標的）。
+    回傳 (新的 perf, 停損次數, 停利次數, 總筆數)。
+    """
+    p = perf.copy()
+    n_stop = n_take = n_total = 0
+    for i, r in p.iterrows():
+        stocks = picks.loc[picks["date"] == r["date"], "stock_id"]
+        window = wide.loc[(wide.index >= r["date"]) & (wide.index <= r["fwd_date"])]
+        rets = []
+        for sid in stocks:
+            if sid not in window.columns:
+                continue
+            path = window[sid].dropna()
+            if len(path) < 2 or path.index[0] != r["date"]:
+                continue
+            ret = path.iloc[1:] / path.iloc[0] - 1
+            exit_ret = ret.iloc[-1]
+            for v in ret:
+                if stop_loss and v <= -stop_loss / 100:
+                    exit_ret, n_stop = v, n_stop + 1
+                    break
+                if take_profit and v >= take_profit / 100:
+                    exit_ret, n_take = v, n_take + 1
+                    break
+            rets.append(exit_ret)
+        n_total += len(rets)
+        if rets:
+            p.at[i, "top_return"] = round(sum(rets) / len(rets) * 100, 2)
+    return p, n_stop, n_take, n_total
+
+
 with tab_account:
     st.markdown(
         "假設真的照排行榜買賣：資金分成「持有天數」份，每個評分日用一份買進前 N 名（等權重），"
@@ -360,6 +411,13 @@ with tab_account:
         with_cost = st.checkbox("扣交易成本", value=True,
                                 help=f"每一輪買賣扣 {ROUND_TRIP_COST:.3f}%（手續費 0.1425% × 2、證交稅 0.3%，未打折）")
     cost = ROUND_TRIP_COST if with_cost else 0.0
+    b1, b2, _ = st.columns([1, 1, 2])
+    with b1:
+        stop_loss = st.number_input("停損（%，0 表示不設）", min_value=0.0, max_value=50.0, value=0.0, step=1.0,
+                                    help="持有期間任何一天收盤報酬跌到 -X% 就在當天收盤賣出")
+    with b2:
+        take_profit = st.number_input("停利（%，0 表示不設）", min_value=0.0, max_value=200.0, value=0.0, step=1.0,
+                                      help="持有期間任何一天收盤報酬漲到 +Y% 就在當天收盤賣出")
 
     try:
         perf = load_performance(ac_top, ac_h)
@@ -371,6 +429,12 @@ with tab_account:
     elif len(perf) < ac_h:
         st.info(f"評分資料還不夠長，持有 {ac_h} 日需要至少 {ac_h * 2} 個評分日才能模擬。")
     else:
+        exit_note = None
+        if stop_loss or take_profit:
+            picks, wide = load_pick_prices(ac_top)
+            perf, n_stop, n_take, n_total = apply_exits(perf, picks, wide, stop_loss, take_profit)
+            exit_note = (f"停損、停利：共 {n_total:,} 筆持股，{n_stop:,} 筆觸發停損、{n_take:,} 筆觸發停利，"
+                         "其餘持有到期。提前賣出的資金等這一輪結束才再投入。")
         mine = simulate_account(perf, ac_h, "top_return", cost)
         market = simulate_account(perf, ac_h, "market_return", cost)
         curve = mine.merge(market, on="date", suffixes=("", "_mkt"))
@@ -390,6 +454,9 @@ with tab_account:
             ("最大回落", f"{max_dd:.2f}%", "帳戶從前高往下掉最多的幅度", None),
             ("每輪獲利的比例", f"{win:.0%}", f"共 {len(perf)} 輪", None),
         ])
+
+        if exit_note:
+            st.caption(exit_note)
 
         long = curve.melt(id_vars="date", value_vars=["帳戶", "全市場平均"], var_name="組合", value_name="價值")
         long["date"] = pd.to_datetime(long["date"])
