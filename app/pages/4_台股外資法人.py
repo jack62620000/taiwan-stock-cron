@@ -39,7 +39,7 @@ if ins_data.empty:
     st.warning("無三大法人資料")
     st.stop()
 
-st.info(f"資料區間：{dates_found[-1]} ～ {dates_found[0]}（共 {len(dates_found)} 個交易日）")
+st.info(f"資料區間：{dates_found[-1]} ～ {dates_found[0]}（共 {len(dates_found)} 個交易日），單位：張")
 
 # ===== 搜尋篩選 =====
 col1, col2 = st.columns(2)
@@ -67,6 +67,8 @@ for d in dates_found:
     day_data = ins_data[ins_data["date"] == d][
         ["stock_id", "foreign_net_shares"]
     ].copy()
+    # 資料庫存的是股數，換算成張（1 張 = 1,000 股），和其他頁面一致
+    day_data["foreign_net_shares"] = pd.to_numeric(day_data["foreign_net_shares"], errors="coerce") / 1000
     day_data.columns = ["stock_id", f"外資_{d}"]
     base = base.merge(day_data, on="stock_id", how="left")
 
@@ -107,14 +109,17 @@ for _, row in filtered.iterrows():
         "公司名稱": row["stock_name"],
     }
     for d in dates_found:
-        record[f"外資\n{d}"] = color_value(row.get(f"外資_{d}"))
+        v = row.get(f"外資_{d}")
+        # 先四捨五入到整張再上色，不足半張的買賣超顯示 0、不上色
+        record[f"外資（張）\n{d}"] = color_value(round(v) if pd.notna(v) else v)
     html_rows.append(record)
 
 render_html_table(pd.DataFrame(html_rows), left_cols=2)
 
 # ===== 下載按鈕 =====
 st.markdown("---")
-csv = filtered.to_csv(index=False, encoding="utf-8-sig")
+csv = filtered.rename(columns=lambda c: c.replace("外資_", "外資買賣超（張）_")) \
+    .to_csv(index=False, encoding="utf-8-sig", float_format="%.3f")
 st.download_button(
     label="📥 下載資料 CSV",
     data=csv,
