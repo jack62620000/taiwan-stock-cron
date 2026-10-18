@@ -14,6 +14,7 @@
                 holder = 千張大戶（集保網頁只查得到最近約一年，逐檔逐週查詢，每週約 20 分鐘）
                 revenue = 月營收（公開資訊觀測站每月彙總表，以月份為單位，已有的資料不覆蓋）
                 quarterly = 季報（公開資訊觀測站每季彙總表，季底落在區間內的季別，已有的資料不覆蓋）
+                futures = 期貨三大法人（期交所下載，臺股期貨，整段區間一年一次查）
 
 有缺漏、寫入失敗或疑似被來源封鎖時，會以錯誤碼結束，GitHub 會把這次執行標成失敗。
 """
@@ -23,6 +24,7 @@ import time
 from datetime import datetime, timezone
 
 import fetch_adjustments as adj
+import fetch_futures_history as futures
 import fetch_holder_history as holder
 import fetch_quarterly_history as quarterly
 import fetch_revenue_history as revenue
@@ -38,8 +40,10 @@ REVENUE_KEY = "revenue"
 REVENUE_LABEL = "月營收"
 QUARTERLY_KEY = "quarterly"
 QUARTERLY_LABEL = "季報"
+FUTURES_KEY = "futures"
+FUTURES_LABEL = "期貨三大法人"
 WHOLE_RANGE = {ADJUST_KEY: ADJUST_LABEL, HOLDER_KEY: HOLDER_LABEL, REVENUE_KEY: REVENUE_LABEL,
-               QUARTERLY_KEY: QUARTERLY_LABEL}
+               QUARTERLY_KEY: QUARTERLY_LABEL, FUTURES_KEY: FUTURES_LABEL}
 
 SLEEP_BETWEEN_API    = 2
 SLEEP_BETWEEN_DAYS   = 5
@@ -113,7 +117,7 @@ def main():
 
     started = time.time()
     names = "、".join(DATASETS[k][0] if k in DATASETS else WHOLE_RANGE[k] for k in keys)
-    day_keys = [k for k in keys if k in DATASETS]  # 逐日抓的資料；還原權值事件、千張大戶、月營收、季報整段區間處理
+    day_keys = [k for k in keys if k in DATASETS]  # 逐日抓的資料；還原權值事件、千張大戶、月營收、季報、期貨整段區間處理
     print(f"========== 區間回補：{start} ～ {end}｜{names} ==========")
 
     days = f.get_trading_days(start, end)
@@ -158,6 +162,11 @@ def main():
             problems.extend(quarterly_problems)
         except Exception as e:
             problems.append(f"{QUARTERLY_LABEL}：執行中斷（{type(e).__name__}：{e}），重跑同一區間會接續")
+
+    if FUTURES_KEY in keys:
+        print(f"\n--- {FUTURES_LABEL} ---")
+        _, futures_problems = futures.fetch_range(start, end)
+        problems.extend(futures_problems)
 
     holder_left = None
     if HOLDER_KEY in keys:
