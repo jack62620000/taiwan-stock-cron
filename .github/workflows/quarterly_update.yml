@@ -1,0 +1,36 @@
+name: 季報自動更新
+on:
+  schedule:
+    # 每週六台灣時間早上10:06（UTC 02:06），在大戶持股之後
+    - cron: '06 2 * * 6'
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: '以這天為基準，補抓季底在前 200 天內的季別（YYYY-MM-DD，留空為今天）'
+        type: string
+        default: ''
+
+# 和區間回補共用同一組，避免同時對公開資訊觀測站送請求
+concurrency:
+  group: backfill
+  cancel-in-progress: false
+
+jobs:
+  update-quarterly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run quarterly fetch script
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TARGET_DATE: ${{ github.event.inputs.target_date }}
+        run: python -u auto_fetch_quarterly.py
