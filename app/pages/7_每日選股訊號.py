@@ -351,7 +351,7 @@ with tab_account:
     )
     a1, a2, a3, a4 = st.columns(4)
     with a1:
-        ac_top = st.selectbox("前幾名", [10, 20, 30, 50], index=1, key="ac_top")
+        ac_top = st.selectbox("前幾名", [1, 5, 10, 20, 30, 50], index=3, key="ac_top")
     with a2:
         ac_h = st.selectbox("持有幾個交易日", [5, 10, 20], index=2, key="ac_h")
     with a3:
