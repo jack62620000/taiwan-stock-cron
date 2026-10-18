@@ -53,6 +53,7 @@ TABLE_KEYS = {
     "quarterly_report":      ("stock_id", "year", "quarter"),
     "futures_institutional": ("date", "contract_code", "item"),
     "price_adjustments":     ("stock_id", "date", "event_type"),
+    "market_index":          ("index_code", "date"),
 }
 
 
