@@ -5,7 +5,7 @@ import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import get_stock_list, get_recent_dates, get_snapshots
-from utils.ui import require_login, color_value, render_html_table
+from utils.ui import require_login, style_sign
 require_login()
 
 st.set_page_config(
@@ -101,20 +101,20 @@ filtered = filtered.sort_values("stock_id").reset_index(drop=True)
 st.metric("顯示股票數", f"{len(filtered):,} 檔")
 st.markdown("---")
 
-# ===== 建立 HTML 表格 =====
-html_rows = []
-for _, row in filtered.iterrows():
-    record = {
-        "股票代號": row["stock_id"],
-        "公司名稱": row["stock_name"],
-    }
-    for d in dates_found:
-        v = row.get(f"外資_{d}")
-        # 先四捨五入到整張再上色，不足半張的買賣超顯示 0、不上色
-        record[f"外資（張）\n{d}"] = color_value(round(v) if pd.notna(v) else v)
-    html_rows.append(record)
-
-render_html_table(pd.DataFrame(html_rows), left_cols=2)
+# ===== 表格（可點欄位標題排序）=====
+day_cols = {f"外資_{d}": f"外資 {d[5:]}" for d in dates_found}
+# 四捨五入到整張再上色，不足半張的買賣超顯示 0、不上色
+table = filtered[["stock_id", "stock_name", *day_cols]].rename(
+    columns={"stock_id": "股票代號", "stock_name": "公司名稱", **day_cols})
+table[list(day_cols.values())] = table[list(day_cols.values())].round(0)
+st.dataframe(
+    table.style.format("{:,.0f}", subset=list(day_cols.values()), na_rep="")
+         .map(style_sign, subset=list(day_cols.values())),
+    hide_index=True, width="stretch", height=600,
+    column_config={"股票代號": st.column_config.TextColumn(pinned=True),
+                   "公司名稱": st.column_config.TextColumn(pinned=True)},
+)
+st.caption("點欄位標題可以排序；欄位標題的日期是月-日。")
 
 # ===== 下載按鈕 =====
 st.markdown("---")

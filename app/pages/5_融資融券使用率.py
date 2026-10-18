@@ -5,7 +5,7 @@ import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import get_stock_list, get_recent_dates, get_snapshots
-from utils.ui import require_login, color_rate, fmt_number, render_html_table
+from utils.ui import require_login, style_rate
 require_login()
 
 st.set_page_config(
@@ -110,21 +110,27 @@ filtered = filtered.reset_index(drop=True)
 st.metric("顯示股票數", f"{len(filtered):,} 檔")
 st.markdown("---")
 
-# ===== 建立 HTML 表格 =====
-html_rows = []
-for _, row in filtered.iterrows():
-    record = {
-        "股票代號": row["stock_id"],
-        "公司名稱": row["stock_name"],
-        "市場":     row.get("market", ""),
-        "融資限額": fmt_number(row.get("融資限額"), blank_zero=True),
-    }
-    for d in dates_found:
-        record[f"融資餘額\n{d}"]  = fmt_number(row.get(f"餘額_{d}"), blank_zero=True)
-        record[f"融資使用率\n{d}"] = color_rate(row.get(f"使用率_{d}"))
-    html_rows.append(record)
-
-render_html_table(pd.DataFrame(html_rows), left_cols=3)
+# ===== 表格（可點欄位標題排序）=====
+bal_cols = {f"餘額_{d}": f"融資餘額 {d[5:]}" for d in dates_found}
+rate_cols = {f"使用率_{d}": f"使用率% {d[5:]}" for d in dates_found}
+order = ["stock_id", "stock_name", "market", "融資限額"]
+for d in dates_found:
+    order += [f"餘額_{d}", f"使用率_{d}"]
+table = filtered[order].rename(columns={"stock_id": "股票代號", "stock_name": "公司名稱", "market": "市場",
+                                        **bal_cols, **rate_cols})
+num_cols = ["融資限額", *bal_cols.values()]
+# 限額、餘額沒資料或是 0 的（不能融資或沒有餘額）顯示空白，排序時當作 0
+table[num_cols] = table[num_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
+table[list(rate_cols.values())] = table[list(rate_cols.values())].apply(pd.to_numeric, errors="coerce")
+st.dataframe(
+    table.style.format(lambda v: f"{v:,.0f}" if v else "", subset=num_cols)
+         .format("{:.2f}", subset=list(rate_cols.values()), na_rep="")
+         .map(style_rate, subset=list(rate_cols.values())),
+    hide_index=True, width="stretch", height=600,
+    column_config={"股票代號": st.column_config.TextColumn(pinned=True),
+                   "公司名稱": st.column_config.TextColumn(pinned=True)},
+)
+st.caption("點欄位標題可以排序；欄位標題的日期是月-日。使用率 20% 以上紅色、10% 以上橘色。")
 
 # ===== 下載按鈕 =====
 st.markdown("---")

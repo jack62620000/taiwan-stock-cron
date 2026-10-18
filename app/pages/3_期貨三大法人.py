@@ -5,7 +5,7 @@ import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import get_futures_ins
-from utils.ui import require_login, color_value, render_html_table
+from utils.ui import require_login, style_sign
 require_login()
 
 st.set_page_config(
@@ -57,19 +57,18 @@ for tab, item in zip(tabs, available_items):
         item_df = filtered[filtered["item"] == item].copy()
         item_df = item_df.sort_values("date", ascending=False)
 
-        html_rows = []
-        for _, row in item_df.iterrows():
-            html_rows.append({
-                "日期": row["date"],
-                "多方未平倉口數": f"{row['long_oi']:,.0f}" if pd.notna(row.get("long_oi")) else "",
-                "多方契約金額(千)": f"{row['long_oi_value']:,.0f}" if pd.notna(row.get("long_oi_value")) else "",
-                "空方未平倉口數": f"{row['short_oi']:,.0f}" if pd.notna(row.get("short_oi")) else "",
-                "空方契約金額(千)": f"{row['short_oi_value']:,.0f}" if pd.notna(row.get("short_oi_value")) else "",
-                "淨未平倉口數": color_value(row.get("net_oi")),
-                "淨契約金額(千)": color_value(row.get("net_oi_value")),
-            })
-
-        render_html_table(pd.DataFrame(html_rows), left_cols=1, font_size=13)
+        cols = {"date": "日期", "long_oi": "多方未平倉口數", "long_oi_value": "多方契約金額(千)",
+                "short_oi": "空方未平倉口數", "short_oi_value": "空方契約金額(千)",
+                "net_oi": "淨未平倉口數", "net_oi_value": "淨契約金額(千)"}
+        table = item_df[list(cols)].rename(columns=cols)
+        nums = list(cols.values())[1:]
+        table[nums] = table[nums].apply(pd.to_numeric, errors="coerce")
+        st.dataframe(
+            table.style.format("{:,.0f}", subset=nums, na_rep="")
+                 .map(style_sign, subset=["淨未平倉口數", "淨契約金額(千)"]),
+            hide_index=True, width="stretch", height=min(600, 38 + 35 * len(table)),
+            column_config={"日期": st.column_config.TextColumn(pinned=True)},
+        )
 
         # 下載按鈕
         csv = item_df[["date", "long_oi", "long_oi_value", "short_oi", "short_oi_value", "net_oi", "net_oi_value"]] \
