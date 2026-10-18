@@ -9,7 +9,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import (
     get_stock_info, get_daily_prices, get_quarterly,
     get_revenue, get_stock_ins, get_margin, get_holder,
-    get_margin_utilization, get_stock_list
+    get_margin_utilization, get_stock_list, get_market_index
 )
 from utils.indicators import calc_all, get_latest_signals
 from utils.ui import require_login, UP_COLOR, DOWN_COLOR
@@ -46,13 +46,16 @@ def load_card_data(stock_id):
     prices      = get_daily_prices(stock_id, limit=250)
     quarterly   = get_quarterly(stock_id, limit=8)
     revenue     = get_revenue(stock_id, limit=12)
-    ins         = get_stock_ins(stock_id, limit=60)  # 圖表用 60 日，卡片取最後 10 日
+    ins         = get_stock_ins(stock_id, limit=250)  # 買賣超圖用 60 日、外資持股走勢最多 250 日，卡片取最後 10 日
     margin      = get_margin(stock_id, limit=1)
     holder      = get_holder(stock_id, limit=1)
     utilization = get_margin_utilization(stock_id, limit=60)  # ✅ 新增
-    return info, prices, quarterly, revenue, ins, margin, holder, utilization
+    # 上櫃股票和櫃買指數比，其餘和加權指數比
+    index_code  = "TPEX" if (info or {}).get("market") == "上櫃" else "TAIEX"
+    index_df    = get_market_index(index_code, limit=250)
+    return info, prices, quarterly, revenue, ins, margin, holder, utilization, index_df
 
-info, prices, quarterly, revenue, ins, margin, holder, utilization = load_card_data(stock_id)
+info, prices, quarterly, revenue, ins, margin, holder, utilization, index_df = load_card_data(stock_id)
 
 if not info:
     st.error(f"找不到股票代號：{stock_id}")
@@ -89,6 +92,20 @@ ins_10d      = ins.tail(10)
 foreign_10d  = ins_10d["foreign_net_shares"].sum() if not ins.empty else 0
 sitca_10d    = ins_10d["sitca_net_shares"].sum() if not ins.empty else 0
 dealers_10d  = ins_10d["dealers_net_shares"].sum() if not ins.empty else 0
+
+# 外資持股比率：最新值與近 20 個交易日的變化（百分點）
+hold_ratio = pd.to_numeric(ins["foreign_hold_ratio"], errors="coerce").dropna() \
+    if "foreign_hold_ratio" in ins.columns else pd.Series(dtype=float)
+hold_latest = hold_ratio.iloc[-1] if not hold_ratio.empty else None
+hold_chg_20 = hold_latest - hold_ratio.iloc[-21] if len(hold_ratio) > 20 else None
+
+# 現金流量（千元，年初累計）→ 億元
+def to_yi(v):
+    return v / 1e5 if v is not None and pd.notna(v) else None
+
+op_cf   = to_yi(latest_q.get("operating_cf"))
+inv_cf  = to_yi(latest_q.get("investing_cf"))
+free_cf = to_yi(latest_q.get("free_cf"))
 
 # ===== 計算本益比 =====
 # 季報的 EPS 是「年初至該季」的累計值，不是單季數字：
@@ -251,6 +268,11 @@ body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp)
     <div class="kb"><div class="kl">P/B（股價淨值比）</div><div class="kv kv-or">{fmt(pb_now)}</div><div class="kn">倍</div></div>
     <div class="kb"><div class="kl">每股淨值</div><div class="kv">{fmt(latest_q.get('book_value'))}</div><div class="kn">元</div></div>
   </div>
+  <div class="kg" style="grid-template-columns:repeat(3,1fr);margin-top:10px;">
+    <div class="kb"><div class="kl">營業現金流（年初累計）</div><div class="kv {'kv-rd' if (op_cf or 0)>0 else 'kv-gn'}">{fmt(op_cf,'',1)}</div><div class="kn">億元</div></div>
+    <div class="kb"><div class="kl">投資現金流（年初累計）</div><div class="kv">{fmt(inv_cf,'',1)}</div><div class="kn">億元（負值代表投入）</div></div>
+    <div class="kb"><div class="kl">自由現金流（營業＋投資）</div><div class="kv {'kv-rd' if (free_cf or 0)>0 else 'kv-gn'}">{fmt(free_cf,'',1)}</div><div class="kn">億元</div></div>
+  </div>
 </div>
 
 <div class="sec">
@@ -265,11 +287,12 @@ body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp)
 
 <div class="sec">
   <div class="st"><span class="sn">④</span> 籌碼面（近10日累計＋最新）</div>
-  <div class="kg">
+  <div class="kg5">
     <div class="kb"><div class="kl">外資買賣超</div><div class="kv {'kv-rd' if foreign_10d>0 else 'kv-gn'}">{foreign_10d:,.0f}</div><div class="kn">股</div></div>
     <div class="kb"><div class="kl">投信買賣超</div><div class="kv {'kv-rd' if sitca_10d>0 else 'kv-gn'}">{sitca_10d:,.0f}</div><div class="kn">股</div></div>
     <div class="kb"><div class="kl">自營商買賣超</div><div class="kv {'kv-rd' if dealers_10d>0 else 'kv-gn'}">{dealers_10d:,.0f}</div><div class="kn">股</div></div>
     <div class="kb"><div class="kl">大戶持股比例</div><div class="kv kv-or">{fmt(latest_holder.get('big_holder_ratio'))}</div><div class="kn">%</div></div>
+    <div class="kb"><div class="kl">外資持股比率</div><div class="kv kv-or">{fmt(hold_latest)}</div><div class="kn">%・近20日 <span style="color:{'#dc2626' if (hold_chg_20 or 0)>0 else '#16a34a'};font-weight:700;">{f"{hold_chg_20:+.2f}" if hold_chg_20 is not None else 'N/A'}</span> 百分點</div></div>
   </div>
 </div>
 
@@ -319,7 +342,7 @@ body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp)
 </html>
 """
 
-st.components.v1.html(html, height=1500, scrolling=True)
+st.components.v1.html(html, height=1650, scrolling=True)
 
 # ===== 圖表 =====
 st.markdown("---")
@@ -400,11 +423,49 @@ volume_chart = base.mark_bar(size=max(2, int(600 / len(chart_df)))).encode(
 st.altair_chart(price_chart, width="stretch")
 st.altair_chart(volume_chart, width="stretch")
 
+# ===== 相對大盤強弱 =====
+index_name = "櫃買指數" if info.get("market") == "上櫃" else "加權指數"
+st.subheader(f"📊 相對大盤強弱（與{index_name}比較，近 {range_days} 個交易日）")
+if index_df.empty:
+    st.info("無大盤指數資料")
+else:
+    rel = chart_df[["date", "close_price"]].merge(
+        index_df.assign(date=index_df["date"].astype(str))[["date", "close"]], on="date", how="inner")
+    rel = rel.dropna()
+    if len(rel) < 2:
+        st.info("可比較的交易日不足")
+    else:
+        rel["個股"] = rel["close_price"] / rel["close_price"].iloc[0] * 100
+        rel[index_name] = pd.to_numeric(rel["close"]) / float(rel["close"].iloc[0]) * 100
+        stock_ret = rel["個股"].iloc[-1] - 100
+        index_ret = rel[index_name].iloc[-1] - 100
+        excess = stock_ret - index_ret
+        color = UP_COLOR if excess >= 0 else DOWN_COLOR
+        st.markdown(
+            f"區間漲跌：個股 **{stock_ret:+.2f}%**、{index_name} **{index_ret:+.2f}%**，"
+            f"相對大盤 <span style='color:{color};font-weight:700;'>{excess:+.2f} 個百分點</span>"
+            f"（{'強於' if excess >= 0 else '弱於'}大盤）",
+            unsafe_allow_html=True,
+        )
+        rel_long = rel[["date", "個股", index_name]].melt("date", var_name="對象", value_name="指數化")
+        rel_step = max(1, len(rel) // 6)
+        rel_chart = alt.Chart(rel_long).mark_line(strokeWidth=2).encode(
+            x=alt.X("date:O", title=None,
+                    axis=alt.Axis(values=rel["date"].iloc[::rel_step].tolist(), labelAngle=0)),
+            y=alt.Y("指數化:Q", title="起點＝100", scale=alt.Scale(zero=False)),
+            color=alt.Color("對象:N", scale=alt.Scale(domain=["個股", index_name], range=["#2a78d6", "#9ca3af"]),
+                            legend=alt.Legend(orient="top", title=None)),
+            tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("對象:N"),
+                     alt.Tooltip("指數化:Q", title="起點＝100", format=",.2f")],
+        ).properties(height=240)
+        st.altair_chart(rel_chart, width="stretch")
+        st.caption("兩條線都以區間第一天為 100，個股用還原權值後的股價。藍線在灰線上方代表這段期間漲得比大盤多。")
+
 st.subheader("🏦 三大法人買賣超（近 60 個交易日）")
 if ins.empty:
     st.info("無法人買賣超資料")
 else:
-    ins_df = ins[["date", "foreign_net_shares", "sitca_net_shares", "dealers_net_shares"]].copy()
+    ins_df = ins.tail(60)[["date", "foreign_net_shares", "sitca_net_shares", "dealers_net_shares"]].copy()
     ins_df["date"] = ins_df["date"].astype(str)
     ins_df = ins_df.rename(columns={
         "foreign_net_shares": "外資", "sitca_net_shares": "投信", "dealers_net_shares": "自營商",
@@ -425,3 +486,23 @@ else:
                  alt.Tooltip("買賣超:Q", title="買賣超（股）", format=",")],
     ).properties(height=260)
     st.altair_chart(ins_chart, width="stretch")
+
+st.subheader(f"🌐 外資持股比率（近 {range_days} 個交易日）")
+if hold_ratio.empty:
+    st.info("無外資持股資料")
+else:
+    hold_df = ins[["date", "foreign_hold_ratio"]].dropna().tail(range_days).copy()
+    hold_df["date"] = hold_df["date"].astype(str)
+    hold_df["foreign_hold_ratio"] = pd.to_numeric(hold_df["foreign_hold_ratio"], errors="coerce")
+    hold_step = max(1, len(hold_df) // 6)
+    hold_chart = alt.Chart(hold_df).mark_line(strokeWidth=2, color="#2a78d6").encode(
+        x=alt.X("date:O", title=None,
+                axis=alt.Axis(values=hold_df["date"].iloc[::hold_step].tolist(), labelAngle=0)),
+        y=alt.Y("foreign_hold_ratio:Q", title="外資持股比率（%）", scale=alt.Scale(zero=False)),
+        tooltip=[alt.Tooltip("date:N", title="日期"),
+                 alt.Tooltip("foreign_hold_ratio:Q", title="外資持股比率（%）", format=".2f")],
+    ).properties(height=220)
+    st.altair_chart(hold_chart, width="stretch")
+    first, last = hold_df["foreign_hold_ratio"].iloc[0], hold_df["foreign_hold_ratio"].iloc[-1]
+    st.caption(f"區間內由 {first:.2f}% 變成 {last:.2f}%（{last - first:+.2f} 個百分點）。"
+               "外資持股是外資及陸資實際持有的股數占發行股數的比率，和每天的買賣超不同，看的是長期累積。")
