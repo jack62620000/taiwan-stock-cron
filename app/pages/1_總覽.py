@@ -3,13 +3,17 @@ import pandas as pd
 import numpy as np
 import sys
 import os
+import altair as alt
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from utils.ui import require_login, style_sign, style_rate, DOWN_COLOR
+from utils.ui import (
+    require_login, style_sign, style_rate, render_metric_cards, UP_COLOR, DOWN_COLOR
+)
 from utils.db import (
     get_stock_list, get_latest_prices, get_latest_ins,
     get_latest_margin, get_latest_holder, get_latest_revenue,
-    get_latest_quarterly, get_latest_margin_utilization, get_recent_closes
+    get_latest_quarterly, get_latest_margin_utilization, get_recent_closes,
+    get_market_index, get_futures_ins
 )
 require_login()
 
@@ -27,14 +31,14 @@ if st.button("🔄 強制重新整理資料"):
     st.rerun()
 
 # ===== 載入資料 =====
-def load_latest_rsi(period=14):
+def load_latest_rsi(closes, period=14):
     """
     用近期收盤價算每檔股票最新的 RSI(14)，算法與個股分析卡（indicators.calc_rsi）相同，
     但一次對全部股票做 groupby 計算，不逐檔迴圈。
     """
-    closes = get_recent_closes()
     if closes.empty:
         return pd.DataFrame(columns=["stock_id", "RSI"])
+    closes = closes.copy()
     closes["close_price"] = pd.to_numeric(closes["close_price"], errors="coerce")
     closes = closes.sort_values(["stock_id", "date"]).reset_index(drop=True)
     # 停牌或沒有成交的日子收盤價是空值，視為股價不變（與 indicators.fill_no_trade 相同）
@@ -69,12 +73,120 @@ def load_overview_data():
         get_latest_holder,
         get_latest_revenue,
         get_latest_quarterly,
-        load_latest_rsi,
+        get_recent_closes,
     ]
     with st.spinner("正在載入資料..."):
-        return tuple(f() for f in loaders)
+        data = [f() for f in loaders]
+    data.append(load_latest_rsi(data[-1]))
+    return tuple(data)
 
-stock_list, prices, ins, margin, margin_util, holder, revenue, quarterly, rsi = load_overview_data()
+stock_list, prices, ins, margin, margin_util, holder, revenue, quarterly, closes, rsi = load_overview_data()
+
+# ===== 大盤儀表板 =====
+@st.cache_data(ttl=3600)
+def load_market_data():
+    """加權、櫃買指數近 120 個交易日，以及臺股期貨三大法人未平倉"""
+    return get_market_index("TAIEX", 120), get_market_index("TPEX", 120), get_futures_ins()
+
+def market_breadth(closes):
+    """每個交易日的上漲、下跌家數（和前一個交易日的還原收盤價比較，沒有成交的不算）"""
+    if closes.empty:
+        return pd.DataFrame(columns=["date", "上漲", "下跌"])
+    c = closes.assign(close_price=pd.to_numeric(closes["close_price"], errors="coerce"))
+    wide = c.pivot_table(index="date", columns="stock_id", values="close_price", aggfunc="last").sort_index()
+    diff = wide.diff().iloc[1:]
+    return pd.DataFrame({
+        "date": diff.index.astype(str),
+        "上漲": (diff > 0).sum(axis=1).values,
+        "下跌": (diff < 0).sum(axis=1).values,
+    })
+
+def index_card(label, df):
+    if df.empty:
+        return (label, "—", "無資料", 0)
+    last = df.iloc[-1]
+    close, chg = float(last["close"]), float(last["change"])
+    pct = chg / (close - chg) * 100 if close != chg else 0
+    return (label, f"{close:,.2f}", f"{'▲' if chg > 0 else '▼' if chg < 0 else ''} {abs(chg):,.2f}（{pct:+.2f}%）", chg)
+
+taiex, tpex, futures = load_market_data()
+breadth = market_breadth(closes)
+
+st.subheader("📈 大盤儀表板")
+cards = [index_card("加權指數", taiex), index_card("櫃買指數", tpex)]
+
+# 上市＋上櫃成交值（億元），和前一個交易日比較
+value = pd.concat([taiex, tpex])[["date", "trade_value"]] if not taiex.empty else pd.DataFrame()
+if not value.empty:
+    value = value.groupby("date")["trade_value"].sum().sort_index() / 1e8
+    v_now = value.iloc[-1]
+    v_chg = (v_now / value.iloc[-2] - 1) * 100 if len(value) > 1 and value.iloc[-2] > 0 else 0
+    cards.append(("上市櫃成交值", f"{v_now:,.0f} 億", f"較前一日 {v_chg:+.1f}%", v_chg))
+
+if not breadth.empty:
+    up, down = int(breadth["上漲"].iloc[-1]), int(breadth["下跌"].iloc[-1])
+    cards.append(("上漲／下跌家數", f"{up:,} / {down:,}",
+                  f"上漲佔 {up / (up + down) * 100:.0f}%" if up + down else "", up - down))
+
+foreign_fut = futures[futures["item"] == "外資及陸資"].sort_values("date") if not futures.empty else futures
+if not foreign_fut.empty:
+    oi = foreign_fut["net_oi"].astype(float)
+    oi_chg = oi.iloc[-1] - oi.iloc[-2] if len(oi) > 1 else 0
+    cards.append(("外資台指期淨未平倉", f"{oi.iloc[-1]:,.0f} 口",
+                  f"較前一日 {oi_chg:+,.0f} 口", oi_chg))
+render_metric_cards(cards)
+
+chart_left, chart_right = st.columns(2)
+with chart_left:
+    index_pick = st.radio("指數", ["加權指數", "櫃買指數"], horizontal=True, label_visibility="collapsed")
+    idx = (taiex if index_pick == "加權指數" else tpex).copy()
+    if idx.empty:
+        st.info("無大盤指數資料")
+    else:
+        idx["date"] = idx["date"].astype(str)
+        idx["收盤"] = pd.to_numeric(idx["close"], errors="coerce")
+        idx["20 日均線"] = idx["收盤"].rolling(20).mean()
+        idx_long = idx[["date", "收盤", "20 日均線"]].melt("date", var_name="線", value_name="點數").dropna()
+        step = max(1, len(idx) // 6)
+        st.altair_chart(alt.Chart(idx_long).mark_line(strokeWidth=2).encode(
+            x=alt.X("date:O", title=None, axis=alt.Axis(values=idx["date"].iloc[::step].tolist(), labelAngle=0)),
+            y=alt.Y("點數:Q", title=f"{index_pick}（近 {len(idx)} 個交易日）", scale=alt.Scale(zero=False)),
+            color=alt.Color("線:N", scale=alt.Scale(domain=["收盤", "20 日均線"], range=["#2a78d6", "#9ca3af"]),
+                            legend=alt.Legend(orient="top", title=None)),
+            tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("線:N"),
+                     alt.Tooltip("點數:Q", format=",.2f")],
+        ).properties(height=260), width="stretch")
+
+with chart_right:
+    st.markdown("**外資台指期淨未平倉（近 60 個交易日）**")
+    if foreign_fut.empty:
+        st.info("無期貨資料")
+    else:
+        fut = foreign_fut.tail(60)[["date", "net_oi"]].copy()
+        fut["date"] = fut["date"].astype(str)
+        fut["net_oi"] = fut["net_oi"].astype(float)
+        step = max(1, len(fut) // 6)
+        st.altair_chart(alt.Chart(fut).mark_bar().encode(
+            x=alt.X("date:O", title=None, axis=alt.Axis(values=fut["date"].iloc[::step].tolist(), labelAngle=0)),
+            y=alt.Y("net_oi:Q", title="淨未平倉（口）", axis=alt.Axis(format="~s")),
+            color=alt.condition(alt.datum.net_oi >= 0, alt.value(UP_COLOR), alt.value(DOWN_COLOR)),
+            tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("net_oi:Q", title="淨未平倉（口）", format=",")],
+        ).properties(height=260), width="stretch")
+
+if not breadth.empty:
+    st.markdown(f"**每日漲跌家數（近 {len(breadth)} 個交易日）**")
+    b_long = breadth.assign(下跌=-breadth["下跌"]).melt("date", var_name="漲跌", value_name="家數")
+    st.altair_chart(alt.Chart(b_long).mark_bar().encode(
+        x=alt.X("date:O", title=None, axis=alt.Axis(labelAngle=0)),
+        y=alt.Y("家數:Q", title="家數（下跌畫在零軸下方）"),
+        color=alt.Color("漲跌:N", scale=alt.Scale(domain=["上漲", "下跌"], range=[UP_COLOR, DOWN_COLOR]),
+                        legend=alt.Legend(orient="top", title=None)),
+        tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("漲跌:N"),
+                 alt.Tooltip("家數:Q", title="家數")],
+    ).properties(height=200), width="stretch")
+    st.caption("漲跌家數用還原權值後的收盤價和前一個交易日比較；上漲家數持續多於下跌家數，代表大部分股票一起走強，不是只有權值股撐盤。")
+
+st.markdown("---")
 
 # ===== 合併資料 =====
 df = stock_list.copy()

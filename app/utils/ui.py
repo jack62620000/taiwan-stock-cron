@@ -111,3 +111,40 @@ def render_html_table(df, left_cols=1, font_size=12):
     table_html = display.to_html(escape=False, index=False, classes="data-table")
     st.markdown(_TABLE_CSS.format(font_size=font_size, left_rules=left_rules), unsafe_allow_html=True)
     st.markdown(f'<div class="table-container">{table_html}</div>', unsafe_allow_html=True)
+
+
+# ===== 指標卡片 =====
+_METRIC_CSS = """
+<style>
+.metric-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px;
+    margin-bottom: 8px;
+}
+.metric-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: #ffffff;
+}
+.metric-card .label { font-size: 13px; color: #4b5563; }
+.metric-card .value { font-size: 24px; font-weight: 700; color: #111827; margin: 2px 0; }
+.metric-card .delta { font-size: 13px; font-weight: 600; color: #4b5563; }
+</style>
+"""
+
+def render_metric_cards(cards):
+    """
+    一排指標卡片（台股配色：漲紅跌綠）。
+    cards 是 [(標題, 數值文字, 變化文字, 正負號), ...]；正負號 >0 紅色、<0 綠色、0 或 None 灰色。
+    """
+    html = []
+    for label, value, delta, sign in cards:
+        color = UP_COLOR if sign and sign > 0 else DOWN_COLOR if sign and sign < 0 else "#4b5563"
+        html.append(
+            f'<div class="metric-card"><div class="label">{label}</div>'
+            f'<div class="value">{value}</div>'
+            f'<div class="delta" style="color:{color};">{delta or "&nbsp;"}</div></div>'
+        )
+    st.markdown(_METRIC_CSS + f'<div class="metric-row">{"".join(html)}</div>', unsafe_allow_html=True)
