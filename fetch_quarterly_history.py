@@ -84,20 +84,23 @@ def parse_page(html, valid_stocks):
 
 
 def _quarter_end_prices(y, q):
-    """該季最後一個交易日（往前找 10 天內）的收盤價"""
+    """各股在季底前最後一次的收盤價（往前找 10 天內，停牌股用更早的價格）。
+    股價表的索引是（股票, 日期），用日期區間查詢會全表掃描而逾時，所以逐日用「日期等於」查。"""
     m, d = QUARTER_END[q]
     end = date(y, m, d)
-    prices, start = {}, 0
-    while True:
-        res = f.supabase.table("daily_prices").select("stock_id, date, close_price") \
-            .gte("date", (end - timedelta(days=10)).isoformat()).lte("date", end.isoformat()) \
-            .order("date", desc=True).order("stock_id").range(start, start + 999).execute()
-        for row in res.data:
-            if row["close_price"] is not None and row["stock_id"] not in prices:
-                prices[row["stock_id"]] = row["close_price"]
-        if len(res.data) < 1000:
-            return prices
-        start += 1000
+    prices = {}
+    for back in range(11):
+        day, start = (end - timedelta(days=back)).isoformat(), 0
+        while True:
+            res = f.supabase.table("daily_prices").select("stock_id, close_price").eq("date", day) \
+                .order("stock_id").range(start, start + 999).execute()
+            for row in res.data:
+                if row["close_price"] is not None:
+                    prices.setdefault(row["stock_id"], row["close_price"])
+            if len(res.data) < 1000:
+                break
+            start += 1000
+    return prices
 
 
 def _already_saved(y, q):

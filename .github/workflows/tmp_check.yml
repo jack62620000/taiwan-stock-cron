@@ -14,25 +14,6 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt
-      - name: 每日季報程式改寫後結果不變（只讀，不寫入）
-        run: |
-          python - <<'PY'
-          import fetch_stock_info as f
-          recs = f.fetch_quarterly_report(f.get_valid_stock_ids())
-          print("筆數", len(recs))
-          db = {r["stock_id"]: r for r in f.supabase.table("quarterly_report").select("*").eq("year", recs[0]["year"]).eq("quarter", recs[0]["quarter"]).execute().data}
-          diff = 0
-          for r in recs:
-              d = db.get(r["stock_id"])
-              if not d: continue
-              for k, v in r.items():
-                  if k in ("pb_ratio", "updated_at"): continue
-                  dv = d.get(k)
-                  if (v is None) != (dv is None) or (v is not None and abs(float(v) - float(dv)) > 0.01):
-                      diff += 1
-                      if diff < 5: print("不同", r["stock_id"], k, v, dv)
-          print("比對", len([r for r in recs if r["stock_id"] in db]), "筆，不同欄位", diff)
-          PY
       - name: 歷史季報試跑（不寫入）
         run: |
           DRY_RUN=1 START_DATE=2024-03-01 END_DATE=2024-03-31 python fetch_quarterly_history.py
