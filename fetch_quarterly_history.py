@@ -83,23 +83,20 @@ def parse_page(html, valid_stocks):
     return rows_by_stock
 
 
-def _quarter_end_prices(y, q):
+def _quarter_end_prices(y, q, stock_ids):
     """各股在季底前最後一次的收盤價（往前找 10 天內，停牌股用更早的價格）。
-    股價表的索引是（股票, 日期），用日期區間查詢會全表掃描而逾時，所以逐日用「日期等於」查。"""
+    股價表的索引是（股票, 日期），只用日期查詢會全表掃描而逾時，所以一次查 200 檔股票。"""
     m, d = QUARTER_END[q]
     end = date(y, m, d)
-    prices = {}
-    for back in range(11):
-        day, start = (end - timedelta(days=back)).isoformat(), 0
-        while True:
-            res = f.supabase.table("daily_prices").select("stock_id, close_price").eq("date", day) \
-                .order("stock_id").range(start, start + 999).execute()
-            for row in res.data:
-                if row["close_price"] is not None:
-                    prices.setdefault(row["stock_id"], row["close_price"])
-            if len(res.data) < 1000:
-                break
-            start += 1000
+    stock_ids, prices = sorted(stock_ids), {}
+    for i in range(0, len(stock_ids), 200):
+        res = f.supabase.table("daily_prices").select("stock_id, date, close_price") \
+            .in_("stock_id", stock_ids[i:i + 200]) \
+            .gte("date", (end - timedelta(days=10)).isoformat()).lte("date", end.isoformat()) \
+            .order("stock_id").order("date", desc=True).limit(5000).execute()
+        for row in res.data:
+            if row["close_price"] is not None:
+                prices.setdefault(row["stock_id"], row["close_price"])
     return prices
 
 
@@ -152,7 +149,7 @@ def fetch_range(start, end, valid_stocks, dry_run=False):
         if not parts:
             print(f"  {label}：沒有資料")
             continue
-        prices = _quarter_end_prices(y, q)
+        prices = _quarter_end_prices(y, q, [sid for sid, _, _ in parts])
         records = [f.build_quarterly_record(sid, inc, bal, prices.get(sid)) for sid, inc, bal in parts]
         if dry_run:
             print(f"  {label}：抓到 {len(records)} 筆（含資產負債表 {sum(bool(b) for _, _, b in parts)} 筆），"
