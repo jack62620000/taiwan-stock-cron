@@ -1,0 +1,15 @@
+name: 暫時檢查
+on:
+  push:
+    branches: [claude/project-thread-3bhtks]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: 外資持股來源檢查
+        run: python tmp/probe.py
