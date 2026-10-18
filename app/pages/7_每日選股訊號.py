@@ -304,7 +304,7 @@ with tab_backtest:
         chart = alt.Chart(long).mark_line().encode(
             x=alt.X("date:T", title="評分日", axis=alt.Axis(format="%m/%d")),
             y=alt.Y("報酬%:Q", title=f"持有 {bt_h} 日報酬（%）"),
-            color=alt.Color("組合:N", scale=alt.Scale(range=[UP_COLOR, "#64748b"])),
+            color=alt.Color("組合:N", scale=alt.Scale(range=[UP_COLOR, "#a3a3a3"])),
             tooltip=["date:T", "組合:N", "報酬%:Q"],
         ).properties(height=320)
         st.altair_chart(chart, width="stretch")
@@ -396,7 +396,7 @@ with tab_account:
         st.altair_chart(alt.Chart(long).mark_line(strokeWidth=2).encode(
             x=alt.X("date:T", title=None, axis=alt.Axis(format="%m/%d")),
             y=alt.Y("價值:Q", title="帳戶價值（元）", scale=alt.Scale(zero=False), axis=alt.Axis(format=",.0f")),
-            color=alt.Color("組合:N", scale=alt.Scale(domain=["帳戶", "全市場平均"], range=["#2a78d6", "#9ca3af"]),
+            color=alt.Color("組合:N", scale=alt.Scale(domain=["帳戶", "全市場平均"], range=["#f5a524", "#9ca3af"]),
                             legend=alt.Legend(orient="top", title=None)),
             tooltip=[alt.Tooltip("date:T", title="日期"), alt.Tooltip("組合:N"),
                      alt.Tooltip("價值:Q", format=",.0f")],

@@ -178,30 +178,30 @@ html = f"""
 <head>
 <meta charset="UTF-8">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;600;700&display=swap');
 :root{{
-  --bg:#fef6f0;--card:#fff;--inn:#fffaf5;
-  --bdr:#fce4d0;--bdr2:#fbc99e;
-  --th:#451a03;--tp:#6b2e0c;--ts:#8a5430;--td:#c89668;
-  --gn:#16a34a;--gbg:#dcfce7;--gbr:#bbf7d0;--gdk:#14532d;
-  --or:#ea580c;--obg:#ffedd5;--obr:#fed7aa;--odk:#7c2d12;
-  --rd:#dc2626;--rbg:#fee2e2;--rbr:#fecaca;--rdk:#7f1d1d;
-  --am:#b45309;--ambg:#fef3c7;--ambr:#fde68a;
-  --sh:0 6px 30px rgba(69,26,3,.1),0 1px 5px rgba(69,26,3,.05);
+  --bg:#0a0a0a;--card:#141414;--inn:#1a1a1a;
+  --bdr:#2a2a2a;--bdr2:#3a3a3a;
+  --th:#f5f5f5;--tp:#e5e5e5;--ts:#a3a3a3;--td:#8a8a8a;
+  --gn:#16a34a;--gbg:rgba(22,163,74,.15);--gbr:rgba(22,163,74,.45);--gdk:#86efac;
+  --or:#f5a524;--obg:rgba(245,165,36,.12);--obr:rgba(245,165,36,.45);--odk:#fcd34d;
+  --rd:#dc2626;--rbg:rgba(220,38,38,.15);--rbr:rgba(220,38,38,.45);--rdk:#fca5a5;
+  --am:#f5a524;--ambg:rgba(245,165,36,.12);--ambr:rgba(245,165,36,.45);
+  --sh:none;
 }}
 *{{margin:0;padding:0;box-sizing:border-box;}}
-body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp);}}
+body{{background:var(--bg);font-family:"IBM Plex Mono","Noto Sans TC",monospace;color:var(--tp);}}
 .wrap{{max-width:920px;margin:0 auto;padding:16px;}}
-.card{{background:var(--card);border-radius:20px;box-shadow:var(--sh);border:1px solid var(--bdr);overflow:hidden;}}
-.stripe{{height:4px;background:linear-gradient(90deg,#ea580c,#dc2626,#b45309,#7c2d12);}}
+.card{{background:var(--card);border-radius:2px;box-shadow:var(--sh);border:1px solid var(--bdr);overflow:hidden;}}
+.stripe{{height:4px;background:#f5a524;}}
 .ch{{padding:24px 28px 18px;border-bottom:2px solid var(--bdr);}}
 .hrow{{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;}}
-.stag{{font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:700;letter-spacing:2px;color:var(--or);background:var(--obg);border:1px solid var(--obr);padding:3px 9px;border-radius:4px;display:inline-block;margin-bottom:6px;}}
+.stag{{font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:700;letter-spacing:2px;color:var(--or);background:var(--obg);border:1px solid var(--obr);padding:3px 9px;border-radius:4px;display:inline-block;margin-bottom:6px;}}
 .sname{{font-size:32px;font-weight:900;color:var(--th);line-height:1;}}
 .sectag{{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ts);background:var(--inn);border:1px solid var(--bdr);border-radius:20px;padding:4px 12px;margin-top:8px;}}
 .prow{{display:flex;align-items:baseline;gap:12px;margin-top:16px;flex-wrap:wrap;}}
-.pnum{{font-family:"JetBrains Mono",monospace;font-size:44px;font-weight:700;color:var(--th);line-height:1;}}
-.pt{{font-family:"JetBrains Mono",monospace;font-size:14px;font-weight:700;padding:3px 9px;border-radius:6px;color:{up_color};background:{('#fee2e2' if change >= 0 else '#dcfce7')};}}
+.pnum{{font-family:"IBM Plex Mono",monospace;font-size:44px;font-weight:700;color:var(--th);line-height:1;}}
+.pt{{font-family:"IBM Plex Mono",monospace;font-size:14px;font-weight:700;padding:3px 9px;border-radius:6px;color:{up_color};background:{('rgba(220,38,38,.15)' if change >= 0 else 'rgba(22,163,74,.15)')};}}
 .pdt{{font-size:11px;color:var(--td);align-self:flex-end;padding-bottom:5px;}}
 .cb{{padding:0 28px;}}
 .sec{{padding:20px 0;border-bottom:1px solid var(--bdr);}}
@@ -209,29 +209,29 @@ body{{background:var(--bg);font-family:"Noto Sans TC",sans-serif;color:var(--tp)
 .st{{font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--td);margin-bottom:13px;display:flex;align-items:center;gap:8px;}}
 .st::after{{content:"";flex:1;height:1px;background:var(--bdr);}}
 .sn{{color:var(--or);}}
-.rl2{{display:flex;justify-content:space-between;font-family:"JetBrains Mono",monospace;font-size:11px;margin-bottom:7px;}}
+.rl2{{display:flex;justify-content:space-between;font-family:"IBM Plex Mono",monospace;font-size:11px;margin-bottom:7px;}}
 .lo{{color:var(--gn);font-weight:700;}} .mi{{color:var(--ts);}} .hi{{color:var(--rd);font-weight:700;}}
-.rt{{position:relative;height:10px;background:linear-gradient(90deg,#dcfce7 0%,#fef3c7 50%,#fee2e2 100%);border-radius:5px;border:1px solid var(--bdr2);}}
-.rth{{position:absolute;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:#fff;border-radius:50%;box-shadow:0 0 0 2px #fff,0 0 0 4px var(--or);left:{position_pct}%;}}
+.rt{{position:relative;height:10px;background:linear-gradient(90deg,rgba(22,163,74,.35) 0%,rgba(245,165,36,.25) 50%,rgba(220,38,38,.35) 100%);border-radius:2px;border:1px solid var(--bdr2);}}
+.rth{{position:absolute;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:#f5a524;border-radius:50%;box-shadow:0 0 0 2px #0a0a0a,0 0 0 4px var(--or);left:{position_pct}%;}}
 .rm2{{display:flex;justify-content:space-between;margin-top:7px;font-size:11px;color:var(--ts);}}
 .kg{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}}
 .kg5{{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;}}
 .kg6{{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;}}
 @media(max-width:700px){{.kg5,.kg6{{grid-template-columns:repeat(2,1fr);}}}}
-.kb{{background:var(--inn);border:1px solid var(--bdr);border-radius:10px;padding:12px 14px;}}
+.kb{{background:var(--inn);border:1px solid var(--bdr);border-radius:2px;padding:12px 14px;}}
 .kl{{font-size:9.5px;letter-spacing:0.5px;color:var(--td);margin-bottom:5px;}}
-.kv{{font-family:"JetBrains Mono",monospace;font-size:22px;font-weight:700;line-height:1;}}
+.kv{{font-family:"IBM Plex Mono",monospace;font-size:22px;font-weight:700;line-height:1;}}
 .kv-gn{{color:var(--gn);}} .kv-or{{color:var(--or);}} .kv-rd{{color:var(--rd);}}
 .kn{{font-size:10px;color:var(--td);margin-top:3px;}}
 .tg4{{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}}
-.tb{{background:var(--inn);border:1px solid var(--bdr);border-radius:8px;padding:10px 12px;text-align:center;}}
+.tb{{background:var(--inn);border:1px solid var(--bdr);border-radius:2px;padding:10px 12px;text-align:center;}}
 .tlb{{font-size:9.5px;color:var(--td);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;}}
 .tbdg{{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;white-space:nowrap;}}
 .bull{{background:var(--rbg);color:var(--rd);border:1px solid var(--rbr);}}
 .neu{{background:var(--obg);color:var(--or);border:1px solid var(--obr);}}
 .bear{{background:var(--gbg);color:var(--gn);border:1px solid var(--gbr);}}
 .tdd{{font-size:10px;color:var(--td);margin-top:5px;line-height:1.4;}}
-.cf{{background:#fffaf5;border-top:1px solid var(--bdr);padding:12px 28px;font-size:10px;color:var(--td);line-height:1.6;}}
+.cf{{background:#111111;border-top:1px solid var(--bdr);padding:12px 28px;font-size:10px;color:var(--td);line-height:1.6;}}
 </style>
 </head>
 <body>
@@ -415,7 +415,7 @@ if ma_cols:
         y="值:Q",
         color=alt.Color(
             "均線:N",
-            scale=alt.Scale(domain=["MA5", "MA20", "MA60"], range=["#2a78d6", "#eda100", "#e87ba4"]),
+            scale=alt.Scale(domain=["MA5", "MA20", "MA60"], range=["#f5a524", "#60a5fa", "#a78bfa"]),
             legend=alt.Legend(orient="top", title=None),
         ),
         tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("均線:N"),
@@ -463,13 +463,13 @@ else:
             x=alt.X("date:O", title=None,
                     axis=alt.Axis(values=rel["date"].iloc[::rel_step].tolist(), labelAngle=0)),
             y=alt.Y("指數化:Q", title="起點＝100", scale=alt.Scale(zero=False)),
-            color=alt.Color("對象:N", scale=alt.Scale(domain=["個股", index_name], range=["#2a78d6", "#9ca3af"]),
+            color=alt.Color("對象:N", scale=alt.Scale(domain=["個股", index_name], range=["#f5a524", "#9ca3af"]),
                             legend=alt.Legend(orient="top", title=None)),
             tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("對象:N"),
                      alt.Tooltip("指數化:Q", title="起點＝100", format=",.2f")],
         ).properties(height=240)
         st.altair_chart(rel_chart, width="stretch")
-        st.caption("兩條線都以區間第一天為 100，個股用還原權值後的股價。藍線在灰線上方代表這段期間漲得比大盤多。")
+        st.caption("兩條線都以區間第一天為 100，個股用還原權值後的股價。橘線在灰線上方代表這段期間漲得比大盤多。")
 
 st.subheader("🏦 三大法人買賣超（近 60 個交易日）")
 if ins.empty:
@@ -489,7 +489,7 @@ else:
         y=alt.Y("買賣超:Q", title="買賣超（股）", axis=alt.Axis(format="~s")),
         color=alt.Color(
             "法人:N",
-            scale=alt.Scale(domain=["外資", "投信", "自營商"], range=["#2a78d6", "#eb6834", "#1baf7a"]),
+            scale=alt.Scale(domain=["外資", "投信", "自營商"], range=["#f5a524", "#60a5fa", "#a78bfa"]),
             legend=alt.Legend(orient="top", title=None),
         ),
         tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("法人:N"),
@@ -505,7 +505,7 @@ else:
     hold_df["date"] = hold_df["date"].astype(str)
     hold_df["foreign_hold_ratio"] = pd.to_numeric(hold_df["foreign_hold_ratio"], errors="coerce")
     hold_step = max(1, len(hold_df) // 6)
-    hold_chart = alt.Chart(hold_df).mark_line(strokeWidth=2, color="#2a78d6").encode(
+    hold_chart = alt.Chart(hold_df).mark_line(strokeWidth=2, color="#f5a524").encode(
         x=alt.X("date:O", title=None,
                 axis=alt.Axis(values=hold_df["date"].iloc[::hold_step].tolist(), labelAngle=0)),
         y=alt.Y("foreign_hold_ratio:Q", title="外資持股比率（%）", scale=alt.Scale(zero=False)),
