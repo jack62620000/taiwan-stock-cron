@@ -9,7 +9,7 @@ from utils.db import (
     get_stock_list, get_signal_dates, get_signals,
     get_signal_history, get_signal_performance,
 )
-from utils.ui import require_login, UP_COLOR, DOWN_COLOR
+from utils.ui import require_login, render_metric_cards, UP_COLOR, DOWN_COLOR
 require_login()
 
 st.set_page_config(page_title="每日選股訊號", page_icon="🎯", layout="wide")
@@ -62,7 +62,8 @@ if not dates:
     st.warning("還沒有評分資料。請到 GitHub Actions 執行「訊號評分回補」，或等今晚的每日排程跑完。")
     st.stop()
 
-tab_rank, tab_stock, tab_backtest = st.tabs(["📋 今日排行榜", "📈 個股分數走勢", "🧪 規則回測"])
+tab_rank, tab_stock, tab_backtest, tab_account = st.tabs(
+    ["📋 今日排行榜", "📈 個股分數走勢", "🧪 規則回測", "💼 模擬帳戶"])
 
 # =====================================================================
 # 排行榜
@@ -319,6 +320,91 @@ with tab_backtest:
         st.caption(
             "⚠️ 回測限制：報酬已用還原權值計算（除權息、減資、分割不會算成虧損），但未扣交易成本與稅；"
             "評分資料從 2026 年 6 月開始，樣本期短，結果只能當參考，不代表未來表現。"
+        )
+
+# =====================================================================
+# 模擬帳戶
+# =====================================================================
+ROUND_TRIP_COST = 0.1425 * 2 + 0.3  # 買賣手續費各 0.1425% ＋ 證交稅 0.3%（%）
+
+
+def simulate_account(perf, horizon, ret_col, cost):
+    """
+    分批滾動持有：資金平均分成 horizon 份，每個評分日用其中一份買進當天前 N 名（等權重），
+    持有 horizon 個交易日賣出後，連本帶利再投入同一份。帳戶價值＝各份最近一次賣出後的價值平均，
+    還沒賣出的那一輪以成本計（不算未實現損益）。回傳每個賣出日的帳戶價值（起始＝1）。
+    """
+    p = perf.sort_values("date").reset_index(drop=True)
+    tranche = [1.0] * horizon
+    values = []
+    for i, r in p.iterrows():
+        k = i % horizon
+        tranche[k] *= 1 + (r[ret_col] - cost) / 100
+        values.append({"date": r["fwd_date"], "value": sum(tranche) / horizon})
+    return pd.DataFrame(values).groupby("date", as_index=False).last()
+
+
+with tab_account:
+    st.markdown(
+        "假設真的照排行榜買賣：資金分成「持有天數」份，每個評分日用一份買進前 N 名（等權重），"
+        "持有期滿賣出再投入，和「每天買進所有列入排名股票」的全市場平均比較。"
+    )
+    a1, a2, a3, a4 = st.columns(4)
+    with a1:
+        ac_top = st.selectbox("前幾名", [10, 20, 30, 50], index=1, key="ac_top")
+    with a2:
+        ac_h = st.selectbox("持有幾個交易日", [5, 10, 20], index=2, key="ac_h")
+    with a3:
+        capital = st.number_input("初始資金（元）", min_value=10_000, value=1_000_000, step=100_000)
+    with a4:
+        with_cost = st.checkbox("扣交易成本", value=True,
+                                help=f"每一輪買賣扣 {ROUND_TRIP_COST:.3f}%（手續費 0.1425% × 2、證交稅 0.3%，未打折）")
+    cost = ROUND_TRIP_COST if with_cost else 0.0
+
+    try:
+        perf = load_performance(ac_top, ac_h)
+    except Exception:
+        perf = None
+        st.warning("回測資料暫時讀取失敗（資料庫查詢逾時），請稍後按「強制重新整理」或重新選一次條件。")
+    if perf is None:
+        pass
+    elif len(perf) < ac_h:
+        st.info(f"評分資料還不夠長，持有 {ac_h} 日需要至少 {ac_h * 2} 個評分日才能模擬。")
+    else:
+        mine = simulate_account(perf, ac_h, "top_return", cost)
+        market = simulate_account(perf, ac_h, "market_return", cost)
+        curve = mine.merge(market, on="date", suffixes=("", "_mkt"))
+        curve["帳戶"] = curve["value"] * capital
+        curve["全市場平均"] = curve["value_mkt"] * capital
+        last = curve.iloc[-1]
+        peak = curve["帳戶"].cummax()
+        max_dd = ((curve["帳戶"] / peak - 1) * 100).min()
+        mine_ret = (last["value"] - 1) * 100
+        mkt_ret = (last["value_mkt"] - 1) * 100
+        win = ((perf["top_return"] - cost) > 0).mean()
+
+        render_metric_cards([
+            ("帳戶價值", f"{last['帳戶']:,.0f} 元", f"{mine_ret:+.2f}%", mine_ret),
+            ("全市場平均", f"{last['全市場平均']:,.0f} 元", f"{mkt_ret:+.2f}%", mkt_ret),
+            ("超額報酬", f"{mine_ret - mkt_ret:+.2f} 個百分點", "帳戶減全市場平均", mine_ret - mkt_ret),
+            ("最大回落", f"{max_dd:.2f}%", "帳戶從前高往下掉最多的幅度", None),
+            ("每輪獲利的比例", f"{win:.0%}", f"共 {len(perf)} 輪", None),
+        ])
+
+        long = curve.melt(id_vars="date", value_vars=["帳戶", "全市場平均"], var_name="組合", value_name="價值")
+        long["date"] = pd.to_datetime(long["date"])
+        st.altair_chart(alt.Chart(long).mark_line(strokeWidth=2).encode(
+            x=alt.X("date:T", title=None, axis=alt.Axis(format="%m/%d")),
+            y=alt.Y("價值:Q", title="帳戶價值（元）", scale=alt.Scale(zero=False), axis=alt.Axis(format=",.0f")),
+            color=alt.Color("組合:N", scale=alt.Scale(domain=["帳戶", "全市場平均"], range=["#2a78d6", "#9ca3af"]),
+                            legend=alt.Legend(orient="top", title=None)),
+            tooltip=[alt.Tooltip("date:T", title="日期"), alt.Tooltip("組合:N"),
+                     alt.Tooltip("價值:Q", format=",.0f")],
+        ).properties(height=340), width="stretch")
+        st.caption(
+            f"從 {perf['date'].min()} 開始模擬到 {curve['date'].iloc[-1]}。帳戶價值在每輪賣出時更新，"
+            "持有中的部位以成本計；報酬用還原權值計算。"
+            "評分資料只保留一年，樣本期短，只能當參考，不代表未來表現。"
         )
 
 st.markdown("---")
