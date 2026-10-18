@@ -352,7 +352,8 @@ body{{background:var(--bg);font-family:"IBM Plex Mono","Noto Sans TC",monospace;
 </html>
 """
 
-st.components.v1.html(html, height=1650, scrolling=True)
+# st.components.v1.html 已被 Streamlit 標為淘汰，改用 st.iframe；高度跟著內容自動調整，不必另外捲動
+st.iframe(html, height="content")
 
 # ===== 圖表 =====
 st.markdown("---")
