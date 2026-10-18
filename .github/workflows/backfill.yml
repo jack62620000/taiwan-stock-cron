@@ -12,7 +12,7 @@ on:
         type: string
         default: ''
       datasets:
-        description: '要回補的資料（prices=股價、ins=三大法人、margin=融資融券、adjust=還原權值事件、holder=千張大戶、revenue=月營收、quarterly=季報、futures=期貨三大法人、index=大盤指數）'
+        description: '要回補的資料（prices=股價、ins=三大法人、margin=融資融券、adjust=還原權值事件、holder=千張大戶、revenue=月營收、quarterly=季報、futures=期貨三大法人、index=大盤指數、foreign=外資持股）'
         required: true
         type: choice
         default: 'ins,margin'
@@ -28,6 +28,7 @@ on:
           - 'quarterly'
           - 'futures'
           - 'index'
+          - 'foreign'
 
 # 同一時間只允許一個回補在跑，避免請求頻率加倍
 concurrency:
