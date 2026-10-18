@@ -151,7 +151,7 @@ with chart_left:
         st.altair_chart(alt.Chart(idx_long).mark_line(strokeWidth=2).encode(
             x=alt.X("date:O", title=None, axis=alt.Axis(values=idx["date"].iloc[::step].tolist(), labelAngle=0)),
             y=alt.Y("點數:Q", title=f"{index_pick}（近 {len(idx)} 個交易日）", scale=alt.Scale(zero=False)),
-            color=alt.Color("線:N", scale=alt.Scale(domain=["收盤", "20 日均線"], range=["#2a78d6", "#9ca3af"]),
+            color=alt.Color("線:N", scale=alt.Scale(domain=["收盤", "20 日均線"], range=["#f5a524", "#9ca3af"]),
                             legend=alt.Legend(orient="top", title=None)),
             tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("線:N"),
                      alt.Tooltip("點數:Q", format=",.2f")],

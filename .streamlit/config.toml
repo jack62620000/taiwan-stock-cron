@@ -1,0 +1,8 @@
+# 網頁配色：金融終端風格（黑底、琥珀色重點、等寬字體），漲紅跌綠另外在程式裡指定
+[theme]
+base = "dark"
+primaryColor = "#f5a524"
+backgroundColor = "#0a0a0a"
+secondaryBackgroundColor = "#141414"
+textColor = "#e5e5e5"
+font = "monospace"
