@@ -1,7 +1,7 @@
 """
 自動化版本 - 給 GitHub Actions 排程使用
 每次執行會同步一個交易日的股價、三大法人、融資融券（餘額＋限額＋使用率），
-以及最近兩週的還原權值事件。
+以及最近兩週的還原權值事件、當月的大盤指數。
 
 抓取函式全部來自 fetch_stock_info.py，這裡不再複製一份，
 之後只要改 fetch_stock_info.py，排程就會跟著更新。
@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import fetch_adjustments as adj
+import fetch_market_index as market
 import fetch_stock_info as f
 
 SLEEP_BETWEEN_API = 2
@@ -98,6 +99,10 @@ def main():
         _, failed = f.save_data_batches(adj.TABLE, events)
         if failed:
             problems.append(f"{adj.TABLE} 有 {failed} 筆寫入失敗")
+
+    print("\n--- 大盤指數（重抓當月）---")
+    _, index_problems = market.fetch_range(today[:8] + "01", today)
+    problems.extend(index_problems)
 
     if problems:
         print(f"\n❌ {today} 的同步不完整：")

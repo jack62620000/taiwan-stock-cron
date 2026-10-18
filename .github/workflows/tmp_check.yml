@@ -5,19 +5,16 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
     steps:
-      - name: 查大盤指數歷史來源
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: 大盤指數試跑（不寫入）
         run: |
-          UA="Mozilla/5.0"
-          for u in \
-            "https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST?date=20240101&response=json" \
-            "https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date=20240101&response=json" \
-            "https://www.tpex.org.tw/www/zh-tw/indexInfo/inxh?date=2024/01/01&response=json" \
-            "https://www.tpex.org.tw/www/zh-tw/indexInfo/inx?date=2024/01/01&response=json" \
-            "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingIndex?date=2024/01/01&response=json" \
-            "https://www.tpex.org.tw/www/zh-tw/afterTrading/marketStatistics?date=2024/01/01&response=json" \
-            "https://www.tpex.org.tw/www/zh-tw/indexInfo/sectinx?date=2024/01/02&response=json" ; do
-            echo "===== $u"
-            curl -sS -m 60 -A "$UA" "$u" | head -c 1500; echo
-            sleep 4
-          done
+          DRY_RUN=1 START_DATE=2024-01-01 END_DATE=2024-01-31 python fetch_market_index.py
+          DRY_RUN=1 START_DATE=2026-10-01 END_DATE=2026-10-18 python fetch_market_index.py
