@@ -34,7 +34,7 @@ if df.empty:
 # ===== 篩選天數 =====
 col1, col2 = st.columns([1, 3])
 with col1:
-    days = st.selectbox("顯示天數", [10, 20, 30, 60, 90], index=1)
+    days = st.selectbox("顯示天數", [10, 20, 30, 60, 90, 180, 365], index=1)
 
 all_dates = sorted(df["date"].unique(), reverse=True)[:days]
 filtered = df[df["date"].isin(all_dates)].copy()
