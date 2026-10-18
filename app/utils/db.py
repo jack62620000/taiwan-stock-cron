@@ -251,6 +251,16 @@ def get_latest_revenue():
 def get_quarterly(stock_id, limit=8):
     return _latest_rows("quarterly_report", stock_id, ["year", "quarter"], limit)
 
+# ===== 大盤指數 =====
+def get_market_index(index_code="TAIEX", limit=250):
+    """加權（TAIEX）或櫃買（TPEX）指數最近 limit 個交易日，由舊到新排列"""
+    res = supabase.table("market_index").select("*").eq("index_code", index_code) \
+        .order("date", desc=True).limit(limit).execute()
+    df = pd.DataFrame(res.data)
+    if df.empty:
+        return df
+    return df.sort_values("date").reset_index(drop=True)
+
 def get_latest_quarterly():
     """
     取得每檔股票最新一季的季報。
