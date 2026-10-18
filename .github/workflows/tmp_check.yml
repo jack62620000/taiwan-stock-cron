@@ -1,0 +1,23 @@
+name: 暫時檢查
+on:
+  push:
+    branches: [claude/project-thread-3bhtks]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 查大盤指數歷史來源
+        run: |
+          UA="Mozilla/5.0"
+          for u in \
+            "https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST?date=20240101&response=json" \
+            "https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date=20240101&response=json" \
+            "https://www.tpex.org.tw/www/zh-tw/indexInfo/inxh?date=2024/01/01&response=json" \
+            "https://www.tpex.org.tw/www/zh-tw/indexInfo/inx?date=2024/01/01&response=json" \
+            "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingIndex?date=2024/01/01&response=json" \
+            "https://www.tpex.org.tw/www/zh-tw/afterTrading/marketStatistics?date=2024/01/01&response=json" \
+            "https://www.tpex.org.tw/www/zh-tw/indexInfo/sectinx?date=2024/01/02&response=json" ; do
+            echo "===== $u"
+            curl -sS -m 60 -A "$UA" "$u" | head -c 1500; echo
+            sleep 4
+          done
