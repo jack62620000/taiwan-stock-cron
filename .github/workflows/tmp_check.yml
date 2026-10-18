@@ -1,0 +1,24 @@
+name: 暫時檢查
+on:
+  push:
+    branches: [claude/project-thread-3bhtks]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 查華冠 8101 減資參考價
+        run: |
+          UA="Mozilla/5.0"
+          echo "== FinMind 減資參考價 =="
+          curl -sS -m 60 "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockCapitalReductionReferencePrice&data_id=8101&start_date=2024-01-01&end_date=2025-01-31" | head -c 3000; echo
+          echo "== FinMind 股價 2024-08~11 =="
+          curl -sS -m 60 "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=8101&start_date=2024-08-15&end_date=2024-11-25" | head -c 4000; echo
+          for m in 202408 202409 202410 202411 202412; do
+            echo "== TWSE TWTAUU $m =="
+            curl -sS -m 60 -A "$UA" "https://www.twse.com.tw/rwd/zh/reducation/TWTAUU?startDate=${m}01&endDate=${m}28&response=json" | grep -o '.\{0,200\}8101.\{0,300\}' || echo none
+            sleep 3
+          done
+          echo "== TWSE STOCK_DAY 202411 =="
+          curl -sS -m 60 -A "$UA" "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=20241101&stockNo=8101&response=json" | head -c 2500; echo
+          echo "== TPEx revivt 2024-11 =="
+          curl -sS -m 60 -A "$UA" "https://www.tpex.org.tw/www/zh-tw/bulletin/revivt?startDate=2024/08/01&endDate=2024/12/31&response=json" | grep -o '.\{0,200\}8101.\{0,300\}' || echo none
