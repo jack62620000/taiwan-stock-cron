@@ -352,7 +352,6 @@ def fetch_twse_stock_ins(today_str, valid_stocks):
                 "foreign_net_shares": parse_volume(row[4]) + parse_volume(row[7]),
                 "sitca_net_shares":   parse_volume(row[10]),
                 "dealers_net_shares": parse_volume(row[11]),
-                "total_net_shares":   parse_volume(row[18]),
             })
         return records
     except Exception as e:
@@ -394,7 +393,6 @@ def fetch_tpex_stock_ins(today_str, valid_stocks):
                 "foreign_net_shares": parse_volume(row[10]),
                 "sitca_net_shares":   parse_volume(row[13]),
                 "dealers_net_shares": parse_volume(row[22]),
-                "total_net_shares":   parse_volume(row[23]),
             })
 
         if len(records) < 500:
@@ -439,7 +437,6 @@ def fetch_twse_margin(today_str, valid_stocks):
                 "margin_limit":   margin_limit,
                 "margin_rate":    calc_rate(margin_balance, margin_limit),
                 "short_balance":  short_balance,
-                "short_limit":    short_limit,
                 "short_rate":     calc_rate(short_balance, short_limit),
             })
         return records
@@ -477,7 +474,6 @@ def fetch_tpex_margin(today_str, valid_stocks):
                 "margin_limit":   parse_volume(row[9]),
                 "margin_rate":    parse_float(row[8]),
                 "short_balance":  parse_volume(row[14]),
-                "short_limit":    parse_volume(row[17]),
                 "short_rate":     parse_float(row[16]),
             })
         return records

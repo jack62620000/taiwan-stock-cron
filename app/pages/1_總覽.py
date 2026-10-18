@@ -97,9 +97,11 @@ if not ins.empty:
     latest_ins_date = ins["date"].max()
     ins_latest = ins[ins["date"] == latest_ins_date].copy()
     ins_latest = ins_latest.drop_duplicates(subset="stock_id", keep="first")
+    # 法人合計＝外資＋投信＋自營商（資料庫不另存合計，節省空間）
+    ins_cols = ["foreign_net_shares", "sitca_net_shares", "dealers_net_shares"]
+    ins_latest["total_net_shares"] = ins_latest[ins_cols].sum(axis=1, min_count=1)
     df = df.merge(
-        ins_latest[["stock_id", "foreign_net_shares", "sitca_net_shares",
-                    "dealers_net_shares", "total_net_shares"]],
+        ins_latest[["stock_id", *ins_cols, "total_net_shares"]],
         on="stock_id", how="left"
     )
 
