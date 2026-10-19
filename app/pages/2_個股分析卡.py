@@ -187,7 +187,7 @@ html = f"""
 :root{{
   --bg:#050b1a;--card:#0b1631;--inn:rgba(5,11,26,.55);
   --bdr:#1e3a6e;--bdr2:#2b4f8f;--glow:#38bdf8;
-  --th:#f8fafc;--tp:#e2e8f0;--ts:#94a3b8;--td:#7c8db0;
+  --th:#f8fafc;--tp:#e2e8f0;--ts:#94a3b8;--td:#8fa0c2;
   --gn:#16a34a;--gbg:rgba(22,163,74,.15);--gbr:rgba(22,163,74,.45);--gdk:#86efac;
   --or:#fbbf24;--obg:rgba(251,191,36,.12);--obr:rgba(251,191,36,.45);--odk:#fde68a;
   --rd:#dc2626;--rbg:rgba(220,38,38,.15);--rbr:rgba(220,38,38,.45);--rdk:#fca5a5;
@@ -208,36 +208,36 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 .prow{{display:flex;align-items:baseline;gap:12px;margin-top:16px;flex-wrap:wrap;}}
 .pnum{{font-family:"IBM Plex Mono",monospace;font-size:44px;font-weight:700;color:var(--th);line-height:1;}}
 .pt{{font-family:"IBM Plex Mono",monospace;font-size:14px;font-weight:700;padding:3px 9px;border-radius:6px;color:{up_color};background:{('rgba(220,38,38,.15)' if change >= 0 else 'rgba(22,163,74,.15)')};}}
-.pdt{{font-size:11px;color:var(--td);align-self:flex-end;padding-bottom:5px;}}
+.pdt{{font-size:12.5px;color:var(--td);align-self:flex-end;padding-bottom:5px;}}
 .cb{{padding:0;}}
 .sec{{margin-top:12px;padding:14px 16px 16px;border:1px solid var(--bdr);border-radius:8px;
       background:linear-gradient(180deg,#0d1b3a,#0a1530);box-shadow:var(--sh);}}
 .st{{font-size:14px;font-weight:700;letter-spacing:1px;color:var(--tp);margin-bottom:12px;display:flex;align-items:center;gap:8px;}}
 .st::after{{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--bdr),transparent);}}
 .sn{{color:var(--glow);font-size:17px;text-shadow:0 0 6px rgba(56,189,248,.8);}}
-.rl2{{display:flex;justify-content:space-between;font-family:"IBM Plex Mono",monospace;font-size:11px;margin-bottom:7px;}}
+.rl2{{display:flex;justify-content:space-between;font-family:"IBM Plex Mono",monospace;font-size:12.5px;margin-bottom:7px;}}
 .lo{{color:var(--gn);font-weight:700;}} .mi{{color:var(--ts);}} .hi{{color:var(--rd);font-weight:700;}}
 .rt{{position:relative;height:10px;background:linear-gradient(90deg,rgba(22,163,74,.45) 0%,rgba(251,191,36,.35) 50%,rgba(220,38,38,.5) 100%);border-radius:5px;border:1px solid var(--bdr2);}}
 .rth{{position:absolute;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:#fbbf24;border-radius:50%;box-shadow:0 0 0 2px #050b1a,0 0 10px var(--or);left:{position_pct}%;}}
-.rm2{{display:flex;justify-content:space-between;margin-top:7px;font-size:11px;color:var(--ts);}}
+.rm2{{display:flex;justify-content:space-between;margin-top:7px;font-size:12.5px;color:var(--ts);}}
 .kg{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}}
 .kg5{{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;}}
 .kg6{{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;}}
 @media(max-width:700px){{.kg5,.kg6{{grid-template-columns:repeat(2,1fr);}}}}
 .kb{{background:var(--inn);border:1px solid var(--bdr);border-radius:6px;padding:12px 14px;}}
-.kl{{font-size:9.5px;letter-spacing:0.5px;color:var(--td);margin-bottom:5px;}}
+.kl{{font-size:12px;letter-spacing:0.5px;color:var(--td);margin-bottom:5px;}}
 .kv{{font-family:"IBM Plex Mono",monospace;font-size:22px;font-weight:700;line-height:1;}}
 .kv-gn{{color:var(--gn);}} .kv-or{{color:var(--or);}} .kv-rd{{color:var(--rd);}}
-.kn{{font-size:10px;color:var(--td);margin-top:3px;}}
+.kn{{font-size:11.5px;color:var(--td);margin-top:3px;}}
 .tg4{{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}}
 .tb{{background:var(--inn);border:1px solid var(--bdr);border-radius:6px;padding:10px 12px;text-align:center;}}
-.tlb{{font-size:9.5px;color:var(--td);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;}}
+.tlb{{font-size:11.5px;color:var(--td);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;}}
 .tbdg{{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;white-space:nowrap;}}
 .bull{{background:var(--rbg);color:var(--rd);border:1px solid var(--rbr);}}
 .neu{{background:var(--obg);color:var(--or);border:1px solid var(--obr);}}
 .bear{{background:var(--gbg);color:var(--gn);border:1px solid var(--gbr);}}
-.tdd{{font-size:10px;color:var(--td);margin-top:5px;line-height:1.4;}}
-.cf{{margin-top:12px;padding:10px 4px;font-size:10.5px;color:var(--td);line-height:1.6;text-align:center;}}
+.tdd{{font-size:11.5px;color:var(--td);margin-top:5px;line-height:1.4;}}
+.cf{{margin-top:12px;padding:10px 4px;font-size:12px;color:var(--td);line-height:1.6;text-align:center;}}
 </style>
 </head>
 <body>
