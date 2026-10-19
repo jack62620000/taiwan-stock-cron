@@ -410,6 +410,25 @@ def next_day_triggers(prices, rules, side, stock_ids=None, steps=80, refine=14, 
     })
 
 
+# 盤整股：近 CHOP_DAYS 個交易日股價穿越均線（站上或跌破）的次數達 CHOP_CROSSES 次
+# 趨勢明確的股票從法則 1 到法則 2 通常只穿越 3～4 次（跌破 → 站上 → 回檔跌破 → 再站上）
+CHOP_DAYS = 40
+CHOP_CROSSES = 6
+
+
+def ma_cross_counts(prices, ma_days=20, days=CHOP_DAYS):
+    """每檔股票近 days 個交易日收盤價穿越 ma_days 日均線的次數（Series，index 為 stock_id）。"""
+    if prices.empty:
+        return pd.Series(dtype=int)
+    close = _pivot(prices, "close_price").ffill()
+    ma = close.rolling(ma_days, min_periods=ma_days).mean()
+    side = np.sign(close - ma).where(ma.notna())
+    side = side.replace(0, np.nan).ffill()  # 剛好等於均線的日子沿用前一天的位置
+    recent = side.iloc[-(days + 1):]
+    crosses = (recent != recent.shift(1)) & recent.notna() & recent.shift(1).notna()
+    return crosses.sum().astype(int)
+
+
 # =====================================================================
 # 模擬交易（歷史回測）
 # =====================================================================
