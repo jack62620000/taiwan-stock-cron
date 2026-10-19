@@ -18,9 +18,6 @@ from utils.momentum import BACKTEST_MD, RULES_MD, conditions
 from utils.indicators import calc_all, get_latest_signals
 from utils.groups import current_group
 from utils.ui import require_login, render_metric_cards, UP_COLOR, DOWN_COLOR, ACCENT, GLOW
-from utils.dashboard import (
-    DASH_CSS, LIGHTS, energy_blocks, gauge_svg, grade_of, level_color, panel, radar_svg, traffic_light_svg,
-)
 require_login()
 
 st.set_page_config(page_title="個股分析卡", page_icon="🗂️", layout="wide")
@@ -164,7 +161,207 @@ if book_value is not None and pd.notna(book_value) and book_value > 0 and close:
 else:
     pb_now = latest_q.get("pb_ratio")
 
-# ===== 葛蘭碧、每日評分、動能條件（儀表板與下方各區共用）=====
+up_color = UP_COLOR if change >= 0 else DOWN_COLOR
+up_arrow = "▲" if change >= 0 else "▼"
+
+rsi_val    = signals.get("RSI", {}).get("value")
+rsi_status = signals.get("RSI", {}).get("status", "N/A")
+kd_k       = signals.get("KD", {}).get("K")
+kd_d       = signals.get("KD", {}).get("D")
+kd_status  = signals.get("KD", {}).get("status", "N/A")
+macd_hist  = signals.get("MACD", {}).get("hist")
+
+def fmt(v, suffix="", decimals=2):
+    if v is None or pd.isna(v):
+        return "N/A"
+    return f"{v:.{decimals}f}{suffix}"
+
+# ===== 建立 HTML 卡片 =====
+html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;600;700&display=swap');
+:root{{
+  --bg:#050b1a;--card:#0b1631;--inn:rgba(5,11,26,.55);
+  --bdr:#1e3a6e;--bdr2:#2b4f8f;--glow:#38bdf8;
+  --th:#f8fafc;--tp:#e2e8f0;--ts:#94a3b8;--td:#7c8db0;
+  --gn:#16a34a;--gbg:rgba(22,163,74,.15);--gbr:rgba(22,163,74,.45);--gdk:#86efac;
+  --or:#fbbf24;--obg:rgba(251,191,36,.12);--obr:rgba(251,191,36,.45);--odk:#fde68a;
+  --rd:#dc2626;--rbg:rgba(220,38,38,.15);--rbr:rgba(220,38,38,.45);--rdk:#fca5a5;
+  --am:#fbbf24;--ambg:rgba(251,191,36,.12);--ambr:rgba(251,191,36,.45);
+  --sh:0 0 0 1px rgba(56,189,248,.08),0 0 14px rgba(56,189,248,.18) inset;
+}}
+*{{margin:0;padding:0;box-sizing:border-box;}}
+body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospace;color:var(--tp);}}
+.wrap{{max-width:1100px;margin:0 auto;padding:4px 2px 8px;}}
+.card{{background:transparent;}}
+.stripe{{display:none;}}
+.ch{{padding:18px 22px 16px;border:1px solid var(--bdr);border-radius:8px;
+     background:linear-gradient(90deg,#0d1b3a,#102a5c 60%,#0d1b3a);box-shadow:0 0 14px rgba(56,189,248,.22);}}
+.hrow{{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;}}
+.stag{{font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:700;letter-spacing:2px;color:var(--or);background:var(--obg);border:1px solid var(--obr);padding:3px 9px;border-radius:4px;display:inline-block;margin-bottom:6px;}}
+.sname{{font-size:32px;font-weight:900;color:var(--th);line-height:1;text-shadow:0 0 10px rgba(56,189,248,.35);}}
+.sectag{{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ts);background:var(--inn);border:1px solid var(--bdr);border-radius:20px;padding:4px 12px;margin-top:8px;}}
+.prow{{display:flex;align-items:baseline;gap:12px;margin-top:16px;flex-wrap:wrap;}}
+.pnum{{font-family:"IBM Plex Mono",monospace;font-size:44px;font-weight:700;color:var(--th);line-height:1;}}
+.pt{{font-family:"IBM Plex Mono",monospace;font-size:14px;font-weight:700;padding:3px 9px;border-radius:6px;color:{up_color};background:{('rgba(220,38,38,.15)' if change >= 0 else 'rgba(22,163,74,.15)')};}}
+.pdt{{font-size:11px;color:var(--td);align-self:flex-end;padding-bottom:5px;}}
+.cb{{padding:0;}}
+.sec{{margin-top:12px;padding:14px 16px 16px;border:1px solid var(--bdr);border-radius:8px;
+      background:linear-gradient(180deg,#0d1b3a,#0a1530);box-shadow:var(--sh);}}
+.st{{font-size:14px;font-weight:700;letter-spacing:1px;color:var(--tp);margin-bottom:12px;display:flex;align-items:center;gap:8px;}}
+.st::after{{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--bdr),transparent);}}
+.sn{{color:var(--glow);font-size:17px;text-shadow:0 0 6px rgba(56,189,248,.8);}}
+.rl2{{display:flex;justify-content:space-between;font-family:"IBM Plex Mono",monospace;font-size:11px;margin-bottom:7px;}}
+.lo{{color:var(--gn);font-weight:700;}} .mi{{color:var(--ts);}} .hi{{color:var(--rd);font-weight:700;}}
+.rt{{position:relative;height:10px;background:linear-gradient(90deg,rgba(22,163,74,.45) 0%,rgba(251,191,36,.35) 50%,rgba(220,38,38,.5) 100%);border-radius:5px;border:1px solid var(--bdr2);}}
+.rth{{position:absolute;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:#fbbf24;border-radius:50%;box-shadow:0 0 0 2px #050b1a,0 0 10px var(--or);left:{position_pct}%;}}
+.rm2{{display:flex;justify-content:space-between;margin-top:7px;font-size:11px;color:var(--ts);}}
+.kg{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}}
+.kg5{{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;}}
+.kg6{{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;}}
+@media(max-width:700px){{.kg5,.kg6{{grid-template-columns:repeat(2,1fr);}}}}
+.kb{{background:var(--inn);border:1px solid var(--bdr);border-radius:6px;padding:12px 14px;}}
+.kl{{font-size:9.5px;letter-spacing:0.5px;color:var(--td);margin-bottom:5px;}}
+.kv{{font-family:"IBM Plex Mono",monospace;font-size:22px;font-weight:700;line-height:1;}}
+.kv-gn{{color:var(--gn);}} .kv-or{{color:var(--or);}} .kv-rd{{color:var(--rd);}}
+.kn{{font-size:10px;color:var(--td);margin-top:3px;}}
+.tg4{{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}}
+.tb{{background:var(--inn);border:1px solid var(--bdr);border-radius:6px;padding:10px 12px;text-align:center;}}
+.tlb{{font-size:9.5px;color:var(--td);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;}}
+.tbdg{{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;white-space:nowrap;}}
+.bull{{background:var(--rbg);color:var(--rd);border:1px solid var(--rbr);}}
+.neu{{background:var(--obg);color:var(--or);border:1px solid var(--obr);}}
+.bear{{background:var(--gbg);color:var(--gn);border:1px solid var(--gbr);}}
+.tdd{{font-size:10px;color:var(--td);margin-top:5px;line-height:1.4;}}
+.cf{{margin-top:12px;padding:10px 4px;font-size:10.5px;color:var(--td);line-height:1.6;text-align:center;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="card">
+<div class="stripe"></div>
+
+<div class="ch">
+  <div class="hrow">
+    <div>
+      <div class="stag">{info.get('market','')}：{stock_id}</div>
+      <div class="sname">{info.get('stock_name','')}</div>
+      <div class="sectag">{info.get('industry','')}</div>
+    </div>
+  </div>
+  <div class="prow">
+    <div class="pnum">{fmt(close)}</div>
+    <div class="pt">{up_arrow} {fmt(change)} ({fmt(change_pct,'%')})</div>
+    <div class="pdt">{latest['date']} 收盤</div>
+  </div>
+</div>
+
+<div class="cb">
+
+<div class="sec">
+  <div class="st"><span class="sn">①</span> 52 週股價區間</div>
+  <div class="rl2">
+    <span class="lo">52W 低 ▾ {fmt(low_52w)}</span>
+    <span class="mi">目前 {fmt(close)}</span>
+    <span class="hi">52W 高 ▴ {fmt(high_52w)}</span>
+  </div>
+  <div class="rt"><div class="rth"></div></div>
+  <div class="rm2">
+    <span>位於年區間 <strong>{fmt(position_pct,'%',1)}</strong> 位置</span>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="st"><span class="sn">②</span> 基本面指標（{q_label or "最新季"}）</div>
+  <div class="kg5">
+    <div class="kb"><div class="kl">EPS（年初累計）</div><div class="kv {'kv-rd' if latest_q.get('eps',0) and latest_q.get('eps',0)>0 else 'kv-gn'}">{fmt(latest_q.get('eps'))}</div><div class="kn">元</div></div>
+    <div class="kb"><div class="kl">P/E（本益比・{pe_note}）</div><div class="kv kv-or">{fmt(pe_ratio) if pe_ratio else 'N/A'}</div><div class="kn">倍</div></div>
+    <div class="kb"><div class="kl">ROE（年初累計・未年化）</div><div class="kv kv-or">{fmt(latest_q.get('roe'))}</div><div class="kn">%</div></div>
+    <div class="kb"><div class="kl">P/B（股價淨值比）</div><div class="kv kv-or">{fmt(pb_now)}</div><div class="kn">倍</div></div>
+    <div class="kb"><div class="kl">每股淨值</div><div class="kv">{fmt(latest_q.get('book_value'))}</div><div class="kn">元</div></div>
+  </div>
+  <div class="kg" style="grid-template-columns:repeat(3,1fr);margin-top:10px;">
+    <div class="kb"><div class="kl">營業現金流（年初累計）</div><div class="kv {'kv-rd' if (op_cf or 0)>0 else 'kv-gn'}">{fmt(op_cf,'',1)}</div><div class="kn">億元</div></div>
+    <div class="kb"><div class="kl">投資現金流（年初累計）</div><div class="kv">{fmt(inv_cf,'',1)}</div><div class="kn">億元（負值代表投入）</div></div>
+    <div class="kb"><div class="kl">自由現金流（營業＋投資）</div><div class="kv {'kv-rd' if (free_cf or 0)>0 else 'kv-gn'}">{fmt(free_cf,'',1)}</div><div class="kn">億元</div></div>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="st"><span class="sn">③</span> 營收表現（最新月）</div>
+  <div class="kg">
+    <div class="kb"><div class="kl">營收年月</div><div class="kv">{latest_rev.get('year_month','N/A')}</div></div>
+    <div class="kb"><div class="kl">月營收</div><div class="kv">{fmt(latest_rev.get('revenue',0)/1000,'',1) if latest_rev.get('revenue') else 'N/A'}</div><div class="kn">百萬元</div></div>
+    <div class="kb"><div class="kl">年增率</div><div class="kv {'kv-rd' if (latest_rev.get('yoy_growth') or 0)>0 else 'kv-gn'}">{fmt(latest_rev.get('yoy_growth'),'%')}</div></div>
+    <div class="kb"><div class="kl">月增率</div><div class="kv {'kv-rd' if (latest_rev.get('mom_growth') or 0)>0 else 'kv-gn'}">{fmt(latest_rev.get('mom_growth'),'%')}</div></div>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="st"><span class="sn">④</span> 籌碼面（近10日累計＋最新）</div>
+  <div class="kg5">
+    <div class="kb"><div class="kl">外資買賣超</div><div class="kv {'kv-rd' if foreign_10d>0 else 'kv-gn'}">{foreign_10d:,.0f}</div><div class="kn">股</div></div>
+    <div class="kb"><div class="kl">投信買賣超</div><div class="kv {'kv-rd' if sitca_10d>0 else 'kv-gn'}">{sitca_10d:,.0f}</div><div class="kn">股</div></div>
+    <div class="kb"><div class="kl">自營商買賣超</div><div class="kv {'kv-rd' if dealers_10d>0 else 'kv-gn'}">{dealers_10d:,.0f}</div><div class="kn">股</div></div>
+    <div class="kb"><div class="kl">大戶持股比例</div><div class="kv kv-or">{fmt(latest_holder.get('big_holder_ratio'))}</div><div class="kn">%</div></div>
+    <div class="kb"><div class="kl">外資持股比率</div><div class="kv kv-or">{fmt(hold_latest)}</div><div class="kn">%・近20日 <span style="color:{'#dc2626' if (hold_chg_20 or 0)>0 else '#16a34a'};font-weight:700;">{f"{hold_chg_20:+.2f}" if hold_chg_20 is not None else 'N/A'}</span> 百分點</div></div>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="st"><span class="sn">⑤</span> 資金面（融資融券）</div>
+  <div class="kg">
+    <div class="kb"><div class="kl">融資餘額</div><div class="kv">{f"{latest_margin.get('margin_balance'):,.0f}" if latest_margin.get('margin_balance') else 'N/A'}</div><div class="kn">張</div></div>
+    <div class="kb"><div class="kl">融資使用率</div><div class="kv kv-or">{fmt(latest_util.get('margin_rate'),'%') if latest_util.get('margin_rate') is not None else 'N/A'}</div></div>
+    <div class="kb"><div class="kl">融券餘額</div><div class="kv">{f"{latest_margin.get('short_balance'):,.0f}" if latest_margin.get('short_balance') else 'N/A'}</div><div class="kn">張</div></div>
+    <div class="kb"><div class="kl">融券使用率</div><div class="kv kv-or">{fmt(latest_util.get('short_rate'),'%') if latest_util.get('short_rate') is not None else 'N/A'}</div></div>
+  </div>
+</div>
+
+<div class="sec">
+  <div class="st"><span class="sn">⑥</span> 技術面燈號</div>
+  <div class="tg4">
+    <div class="tb">
+      <div class="tlb">RSI</div>
+      <div class="tbdg {'bear' if rsi_status=='超買' else ('bull' if rsi_status=='超賣' else 'neu')}">{fmt(rsi_val)}</div>
+      <div class="tdd">{rsi_status}</div>
+    </div>
+    <div class="tb">
+      <div class="tlb">KD</div>
+      <div class="tbdg {'bear' if kd_status=='超買' else ('bull' if kd_status=='超賣' else 'neu')}">K:{fmt(kd_k,'',0)} D:{fmt(kd_d,'',0)}</div>
+      <div class="tdd">{kd_status}</div>
+    </div>
+    <div class="tb">
+      <div class="tlb">MACD</div>
+      <div class="tbdg {'bull' if (macd_hist or 0)>0 else 'bear'}">{fmt(macd_hist)}</div>
+      <div class="tdd">{'柱狀轉強' if (macd_hist or 0)>0 else '柱狀轉弱'}</div>
+    </div>
+    <div class="tb">
+      <div class="tlb">股價位階</div>
+      <div class="tbdg {'bear' if position_pct>70 else ('bull' if position_pct<30 else 'neu')}">{fmt(position_pct,'%',0)}</div>
+      <div class="tdd">{'年區間高位' if position_pct>70 else ('年區間低位' if position_pct<30 else '年區間中段')}</div>
+    </div>
+  </div>
+</div>
+
+</div>
+<div class="cf">
+  資料來源：證交所、櫃買中心、集保結算所、公開資訊觀測站｜資料截至 {latest['date']}｜本卡片僅呈現資料庫真實數據，不含目標價與主觀評等，僅供參考。
+</div>
+</div>
+</div>
+</body>
+</html>
+"""
+
+# st.components.v1.html 已被 Streamlit 標為淘汰，改用 st.iframe；高度跟著內容自動調整，不必另外捲動
+st.iframe(html, height="content")
+
+# ===== 葛蘭碧與每日選股分析（和自選股頁相同的判斷）=====
 @st.cache_data(ttl=3600)
 def load_granville(stock_id, prices, ins):
     cols = [c for c in ["stock_id", "date", "high_price", "low_price", "close_price", "volume"] if c in prices.columns]
@@ -177,336 +374,6 @@ def load_granville(stock_id, prices, ins):
 def load_score_history(stock_id):
     return get_signal_history(stock_id, limit=60)
 
-@st.cache_data(ttl=3600)
-def load_momentum_row(stock_id):
-    since = str(pd.Timestamp.today().date() - pd.Timedelta(days=20))
-    df = get_rows_for_stocks("momentum_signals", [stock_id], since=since)
-    return df.iloc[-1].to_dict() if not df.empty else None
-
-g_df  = load_granville(stock_id, prices, ins)
-g_now = g_df.iloc[0] if not g_df.empty else None
-hist  = load_score_history(stock_id)
-s_now = hist.iloc[-1] if not hist.empty else None
-mrow  = load_momentum_row(stock_id)
-
-def num(v):
-    v = pd.to_numeric(v, errors="coerce")
-    return None if v is None or pd.isna(v) else float(v)
-
-def fmt(v, suffix="", decimals=2):
-    if v is None or pd.isna(v):
-        return "N/A"
-    return f"{v:,.{decimals}f}{suffix}"
-
-def lots(v, signed=True):
-    """股數 → 張（四捨五入到整數，不顯示 -0）"""
-    n = round(v / 1000)
-    return f"{n:+,}" if signed and n else f"{n:,}"
-
-up_color = UP_COLOR if change >= 0 else DOWN_COLOR
-up_arrow = "▲" if change >= 0 else "▼"
-
-rsi_val   = num(signals.get("RSI", {}).get("value"))
-kd_k      = num(signals.get("KD", {}).get("K"))
-kd_d      = num(signals.get("KD", {}).get("D"))
-macd_hist = num(signals.get("MACD", {}).get("hist"))
-ma20, ma60 = num(latest.get("MA20")), num(latest.get("MA60"))
-ma20_prev = num(prices_ta["MA20"].iloc[-6]) if "MA20" in prices_ta.columns and len(prices_ta) > 5 else None
-ma60_prev = num(prices_ta["MA60"].iloc[-6]) if "MA60" in prices_ta.columns and len(prices_ta) > 5 else None
-bias20 = (close / ma20 - 1) * 100 if ma20 else None
-
-# 量能：今天成交量和前 20 日均量的比值
-vol = pd.to_numeric(prices_ta["volume"], errors="coerce")
-vol20 = vol.iloc[-21:-1].mean() if len(vol) > 20 else None
-vol_ratio = float(vol.iloc[-1] / vol20) if vol20 else None
-volume_lots = vol.iloc[-1] / 1000 if pd.notna(vol.iloc[-1]) else None
-
-# 波動：14 日 ATR 占股價的 %
-hi_p = pd.to_numeric(prices_ta["high_price"], errors="coerce")
-lo_p = pd.to_numeric(prices_ta["low_price"], errors="coerce")
-cl_p = pd.to_numeric(prices_ta["close_price"], errors="coerce")
-tr = pd.concat([hi_p - lo_p, (hi_p - cl_p.shift()).abs(), (lo_p - cl_p.shift()).abs()], axis=1).max(axis=1)
-atr_pct = float(tr.tail(14).mean() / close * 100) if len(tr) >= 15 and close else None
-
-# ---- ① 雷達圖：六個面向 0～10 分 ----
-def score10(v, full):
-    v = num(v)
-    return None if v is None else round(min(max(v / full * 10, 0), 10), 1)
-
-if mrow and num(mrow.get("trend_checks")) is not None and num(mrow.get("ma200")) is not None:
-    trend10 = score10(mrow.get("trend_checks"), 8)
-else:  # 動能資料不足一年時，改看收盤站上幾條均線
-    mas = [num(latest.get(f"MA{n}")) for n in (5, 20, 60, 120, 240)]
-    mas = [m for m in mas if m]
-    trend10 = round(sum(close > m for m in mas) / len(mas) * 10, 1) if mas else None
-rs10 = score10(mrow.get("rs_rating"), 100) if mrow else None
-axes = [
-    ("趨勢強度", trend10),
-    ("相對強度", rs10),
-    ("法人籌碼", score10(s_now["chip_score"], 32) if s_now is not None else None),
-    ("資金面", score10(s_now["margin_score"], 8) if s_now is not None else None),
-    ("基本面", score10(s_now["fund_score"], 35) if s_now is not None else None),
-    ("技術面", score10(s_now["tech_score"], 25) if s_now is not None else None),
-]
-have = [v for _, v in axes if v is not None]
-radar_avg = sum(have) / len(have) if len(have) >= 3 else None
-grade, grade_desc = grade_of(radar_avg)
-
-# 過熱風險：年區間位階、RSI、離 20 日線的乖離（10% 算滿分）平均
-risk_parts = [position_pct, rsi_val, min(100, max(0, bias20) * 10) if bias20 is not None else None]
-risk_parts = [p for p in risk_parts if p is not None]
-risk = round(sum(risk_parts) / len(risk_parts)) if risk_parts else None
-
-# ---- ② 紅綠燈 ----
-g_state = str(g_now["狀態"]) if g_now is not None else ""
-if g_state.startswith("⚠️"):
-    light, light_why = "red", f"葛蘭碧{g_now['今天法則']}賣出訊號"
-elif ma60 and ma60_prev and close < ma60 and ma60 < ma60_prev:
-    light, light_why = "red", "跌破 60 日線，而且 60 日線往下彎"
-elif rsi_val is not None and rsi_val > 75:
-    light, light_why = "yellow", f"RSI {rsi_val:.0f}，短線過熱"
-elif g_state.startswith("🔥"):
-    light, light_why = "yellow", f"離 20 日線 {bias20:+.1f}%（葛蘭碧法則 8）"
-elif position_pct > 90 and (bias20 or 0) > 10:
-    light, light_why = "yellow", "接近一年高點，而且離均線太遠"
-elif mrow and mrow.get("trend_template"):
-    light, light_why = "green", "符合趨勢模板 8 個條件"
-elif ma20 and ma60 and close > ma20 > ma60:
-    light, light_why = "green", "站上 20、60 日線，均線多頭排列"
-else:
-    light, light_why = "gray", "趨勢不明或偏弱"
-LIGHT_TEXT = {"red": "紅燈：出現賣出訊號", "yellow": "黃燈：過熱整理",
-              "green": "綠燈：多頭趨勢", "gray": "灰燈：弱勢盤整"}
-LIGHT_ADVICE = {"red": "留意風險，手上有的話考慮減碼或嚴守停損",
-                "yellow": "強勢但過熱，不宜追高，控管部位",
-                "green": "趨勢偏多，可搭配停損續抱",
-                "gray": "方向不明，先觀望"}
-
-# ---- ③ 多空能量 ----
-def side(cond_bull, cond_bear):
-    return 1 if cond_bull else -1 if cond_bear else 0
-
-factors = []
-if rsi_val is not None:
-    factors.append(("RSI(14)", f"{rsi_val:.1f}", side(rsi_val > 55, rsi_val < 45)))
-if macd_hist is not None:
-    factors.append(("MACD 柱狀", f"{macd_hist:+.2f}", side(macd_hist > 0, macd_hist < 0)))
-if kd_k is not None and kd_d is not None:
-    factors.append(("KD", f"{kd_k:.0f}/{kd_d:.0f}", side(kd_k > kd_d, kd_k < kd_d)))
-if ma20:
-    factors.append(("20 日線", f"{bias20:+.1f}%", side(close > ma20, close < ma20)))
-if ma20 and ma20_prev:
-    factors.append(("20 日線方向", "上揚" if ma20 > ma20_prev else "下彎", side(ma20 > ma20_prev, ma20 < ma20_prev)))
-if not ins.empty:
-    factors.append(("外資 10 日", f"{lots(foreign_10d)} 張", side(foreign_10d > 0, foreign_10d < 0)))
-    factors.append(("投信 10 日", f"{lots(sitca_10d)} 張", side(sitca_10d > 0, sitca_10d < 0)))
-if vol_ratio is not None:
-    pv = "價漲量增" if change > 0 and vol_ratio >= 1 else "價跌量增" if change < 0 and vol_ratio >= 1 else "量縮"
-    factors.append(("量價", pv, side(pv == "價漲量增", pv == "價跌量增")))
-n_bull = sum(1 for *_, s in factors if s > 0)
-n_bear = sum(1 for *_, s in factors if s < 0)
-bull_pct = round(n_bull / (n_bull + n_bear) * 100) if n_bull + n_bear else 50
-energy_note = "多方能量較強" if bull_pct >= 65 else "空方能量較強" if bull_pct <= 35 else "多空拉鋸"
-if light == "yellow" and bull_pct >= 65:
-    energy_note += "，但已有過熱跡象"
-
-# ---- ④ 健康儀表 ----
-def lv_text(v, hi="強", mid="中等", lo="弱"):
-    return "—" if v is None else hi if v >= 70 else mid if v >= 40 else lo
-
-trend100 = trend10 * 10 if trend10 is not None else None
-chip100 = axes[2][1] * 10 if axes[2][1] is not None else None
-vol100 = min(100, vol_ratio / 2 * 100) if vol_ratio is not None else None
-atr100 = min(100, atr_pct / 5 * 100) if atr_pct is not None else None
-gauges = [
-    ("趨勢健康度", trend100, lv_text(trend100)),
-    ("籌碼健康度", chip100, lv_text(chip100)),
-    ("量能", vol100, "—" if vol_ratio is None else
-        f"{'爆量' if vol_ratio >= 1.5 else '正常' if vol_ratio >= 0.8 else '量縮'} {vol_ratio:.1f} 倍"),
-    ("波動風險", atr100, "—" if atr_pct is None else f"{lv_text(atr100, '高', '中', '低')} {atr_pct:.1f}%"),
-    ("股價位階", position_pct, lv_text(position_pct, "高檔", "中段", "低檔")),
-]
-
-stop_m = None
-if mrow and num(mrow.get("atr14")) is not None:
-    stop_m = stop_price(float(close), num(mrow.get("atr14")))
-
-# ===== 組成儀表板 HTML =====
-def kb(label, value, cls="", note=""):
-    note_html = f'<div class="kn">{note}</div>' if note else ""
-    return f'<div class="kb"><div class="kl">{label}</div><div class="kv {cls}">{value}</div>{note_html}</div>'
-
-def sign_cls(v):
-    return "kv-rd" if (v or 0) > 0 else "kv-gn" if (v or 0) < 0 else ""
-
-p_radar = panel(1, "個股雷達圖", (
-    f'<div style="text-align:center">{radar_svg(axes)}</div>'
-    f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
-    f'<div class="gbox"><div class="gl">個股等級</div><div class="gbig">{grade}</div>'
-    f'<div class="gs" style="color:{ACCENT}">{grade_desc}</div></div>'
-    f'<div class="gbox"><div class="gl">過熱風險</div>'
-    f'<div class="gbig" style="color:{level_color(risk)};text-shadow:none">{risk if risk is not None else "—"}'
-    f'<span style="font-size:16px;color:#94a3b8">/100</span></div>'
-    f'<div class="gs" style="color:#94a3b8">位階・RSI・乖離</div></div></div>'
-), sub="各項 0～10 分")
-
-light_rows = "".join(
-    f'<div class="lbl{" on" if key == light else ""}" style="{f"color:{color};border-color:{color}" if key == light else ""}">'
-    f'{"▶ " if key == light else ""}{LIGHT_TEXT[key]}</div>' for key, color in LIGHTS)
-p_light = panel(2, "預警燈號系統", (
-    f'<div class="lights">{traffic_light_svg(light)}<div class="lrow">{light_rows}</div></div>'
-    f'<div class="verdict">目前狀態：<b style="color:{dict(LIGHTS)[light]}">{LIGHT_TEXT[light].split("：")[1]}</b>'
-    f'　{light_why}</div>'
-))
-
-bull_blk, bear_blk = energy_blocks(bull_pct)
-energy_rows = "".join(
-    f'<div><span>{name}</span><span>{val}　<b style="color:{UP_COLOR if s > 0 else DOWN_COLOR if s < 0 else "#94a3b8"}">'
-    f'{"偏多" if s > 0 else "偏空" if s < 0 else "中性"}</b></span></div>' for name, val, s in factors)
-p_energy = panel(3, "多空能量條", (
-    f'<div class="ebar"><div><div class="gl">多方能量</div><div class="epct" style="color:{UP_COLOR}">{bull_pct}%</div></div>'
-    f'<div class="eblk">{bull_blk}</div><b style="color:#e2e8f0">VS</b><div class="eblk">{bear_blk}</div>'
-    f'<div style="text-align:right"><div class="gl">空方能量</div>'
-    f'<div class="epct" style="color:{DOWN_COLOR}">{100 - bull_pct}%</div></div></div>'
-    f'<div class="etab">{energy_rows}</div>'
-    f'<div class="verdict" style="color:{UP_COLOR if bull_pct >= 65 else DOWN_COLOR if bull_pct <= 35 else ACCENT}">'
-    f'結論：{energy_note}</div>'
-), sub=f"{n_bull} 多 {n_bear} 空")
-
-gauge_html = "".join(
-    f'<div><div class="gl">{label}</div>{gauge_svg(v)}<div class="gs" style="color:{level_color(v)}">{t}</div></div>'
-    for label, v, t in gauges)
-ranked = sorted(((v, n) for n, v in axes if v is not None), reverse=True)
-strong = "、".join(f"{n} {v:.1f}" for v, n in ranked[:2] if v >= 6) or "無"
-weak = "、".join(f"{n} {v:.1f}" for v, n in ranked[::-1][:2] if v < 5) or "無"
-p_gauge = panel(4, "個股健康儀表板", (
-    f'<div class="gauges">{gauge_html}</div>'
-    f'<div class="verdict">雷達強項：<b style="color:{UP_COLOR}">{strong}</b>'
-    f'　弱項：<b style="color:{DOWN_COLOR}">{weak}</b>　（6 分以上算強、5 分以下算弱）</div>'
-), cls="span2",
-                sub="量能＝今天成交量 ÷ 前 20 日均量；波動＝14 日平均真實波幅占股價 %")
-
-p_chip = panel(5, "52 週區間與法人籌碼", (
-    f'<div class="rl2"><span class="lo">低 {fmt(low_52w)}</span><span class="mi">目前 {fmt(close)}</span>'
-    f'<span class="hi">高 {fmt(high_52w)}</span></div><div class="rt"><div class="rth"></div></div>'
-    f'<div class="rm2"><span>位於年區間 <strong>{fmt(position_pct, "%", 1)}</strong></span></div>'
-    f'<div class="kg" style="grid-template-columns:repeat(3,1fr);margin-top:12px;">'
-    + kb("外資 10 日", lots(foreign_10d, False), sign_cls(foreign_10d), "張")
-    + kb("投信 10 日", lots(sitca_10d, False), sign_cls(sitca_10d), "張")
-    + kb("自營商 10 日", lots(dealers_10d, False), sign_cls(dealers_10d), "張")
-    + kb("大戶持股", fmt(latest_holder.get("big_holder_ratio")), "kv-or", "%")
-    + kb("外資持股", fmt(hold_latest), "kv-or",
-         f'%・20 日 <span style="color:{UP_COLOR if (hold_chg_20 or 0) > 0 else DOWN_COLOR};font-weight:700">'
-         f'{f"{hold_chg_20:+.2f}" if hold_chg_20 is not None else "N/A"}</span>')
-    + kb("融資使用率", fmt(latest_util.get("margin_rate"), "%") if latest_util.get("margin_rate") is not None else "N/A", "kv-or")
-    + "</div>"
-))
-
-p_fund = panel(6, f"基本面（{q_label or '最新季'}）", (
-    '<div class="kg5">'
-    + kb("EPS（年初累計）", fmt(latest_q.get("eps")), sign_cls(latest_q.get("eps")), "元")
-    + kb(f"本益比（{pe_note}）", fmt(pe_ratio) if pe_ratio else "N/A", "kv-or", "倍")
-    + kb("ROE（年初累計）", fmt(latest_q.get("roe")), "kv-or", "%")
-    + kb("股價淨值比", fmt(pb_now), "kv-or", "倍")
-    + kb("每股淨值", fmt(latest_q.get("book_value")), "", "元")
-    + '</div><div class="kg" style="grid-template-columns:repeat(3,1fr);margin-top:10px;">'
-    + kb("營業現金流", fmt(op_cf, "", 1), sign_cls(op_cf), "億元（年初累計）")
-    + kb("投資現金流", fmt(inv_cf, "", 1), "", "億元（負值代表投入）")
-    + kb("自由現金流", fmt(free_cf, "", 1), sign_cls(free_cf), "億元")
-    + "</div>"
-), cls="span2")
-
-rev_val = latest_rev.get("revenue")
-p_rev = panel(7, "營收與融資融券", (
-    '<div class="kg" style="grid-template-columns:repeat(2,1fr);">'
-    + kb(f"月營收（{latest_rev.get('year_month', 'N/A')}）", fmt(rev_val / 1000, "", 1) if rev_val else "N/A", "", "百萬元")
-    + kb("年增率", fmt(latest_rev.get("yoy_growth"), "%"), sign_cls(latest_rev.get("yoy_growth")))
-    + kb("月增率", fmt(latest_rev.get("mom_growth"), "%"), sign_cls(latest_rev.get("mom_growth")))
-    + kb("融資餘額", f"{latest_margin.get('margin_balance'):,.0f}" if latest_margin.get("margin_balance") else "N/A", "", "張")
-    + kb("融券餘額", f"{latest_margin.get('short_balance'):,.0f}" if latest_margin.get("short_balance") else "N/A", "", "張")
-    + kb("融券使用率", fmt(latest_util.get("short_rate"), "%") if latest_util.get("short_rate") is not None else "N/A", "kv-or")
-    + "</div>"
-))
-
-stop_text = f"｜停損參考 {stop_m:,.2f}（{STOP_RULE.replace('預計買進價', '收盤價')}）" if stop_m else ""
-summary = (f'總評：<b style="color:{ACCENT}">{grade} {grade_desc}</b>｜'
-           f'<b style="color:{dict(LIGHTS)[light]}">{LIGHT_TEXT[light]}</b>｜多方能量 {bull_pct}%｜'
-           f'{LIGHT_ADVICE[light]}{stop_text}')
-
-html = f"""
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;600;700&display=swap');
-:root{{
-  --bdr:#1e3a6e;--inn:rgba(5,11,26,.55);
-  --th:#f8fafc;--tp:#e2e8f0;--ts:#94a3b8;--td:#7c8db0;
-  --gn:{DOWN_COLOR};--rd:{UP_COLOR};--or:{ACCENT};
-}}
-*{{margin:0;padding:0;box-sizing:border-box;}}
-body{{background:transparent;font-family:"Noto Sans TC","IBM Plex Mono",sans-serif;color:var(--tp);}}
-.wrap{{padding:4px 2px 8px;}}
-.hd{{display:flex;flex-wrap:wrap;align-items:center;gap:10px 22px;padding:12px 16px;margin-bottom:12px;
-     border:1px solid var(--bdr);border-radius:8px;background:linear-gradient(90deg,#0d1b3a,#102a5c 60%,#0d1b3a);
-     box-shadow:0 0 14px rgba(56,189,248,.2);}}
-.hid{{font-family:"IBM Plex Mono",monospace;font-size:26px;font-weight:700;color:{ACCENT};text-shadow:0 0 10px rgba(251,191,36,.5);}}
-.hname{{font-size:26px;font-weight:900;color:var(--th);}}
-.htag{{font-size:12px;color:var(--ts);border:1px solid var(--bdr);border-radius:20px;padding:2px 10px;}}
-.hbox{{border:1px solid var(--bdr);border-radius:6px;padding:4px 12px;background:var(--inn);font-size:13px;color:var(--ts);}}
-.hbox b{{font-family:"IBM Plex Mono",monospace;font-size:20px;}}
-.hdate{{margin-left:auto;font-size:12px;color:var(--ts);}}
-.rl2{{display:flex;justify-content:space-between;font-family:"IBM Plex Mono",monospace;font-size:12px;margin-bottom:7px;}}
-.lo{{color:var(--gn);font-weight:700;}} .mi{{color:var(--ts);}} .hi{{color:var(--rd);font-weight:700;}}
-.rt{{position:relative;height:10px;background:linear-gradient(90deg,rgba(22,163,74,.45),rgba(251,191,36,.35),rgba(220,38,38,.5));border-radius:5px;}}
-.rth{{position:absolute;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:{ACCENT};border-radius:50%;
-      box-shadow:0 0 0 2px #050b1a,0 0 10px {ACCENT};left:{position_pct}%;}}
-.rm2{{margin-top:7px;font-size:11.5px;color:var(--ts);}}
-.kg{{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}}
-.kg5{{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;}}
-@media(max-width:700px){{.kg5{{grid-template-columns:repeat(2,1fr);}}}}
-.kb{{background:var(--inn);border:1px solid var(--bdr);border-radius:6px;padding:9px 11px;}}
-.kl{{font-size:11px;color:var(--ts);margin-bottom:4px;}}
-.kv{{font-family:"IBM Plex Mono",monospace;font-size:19px;font-weight:700;line-height:1.1;color:var(--th);}}
-.kv-gn{{color:var(--gn);}} .kv-or{{color:var(--or);}} .kv-rd{{color:var(--rd);}}
-.kn{{font-size:10.5px;color:var(--td);margin-top:3px;}}
-.sum{{margin-top:12px;padding:10px 14px;border:1px solid {ACCENT};border-radius:8px;font-size:14px;text-align:center;
-      background:rgba(251,191,36,.06);box-shadow:0 0 12px rgba(251,191,36,.15);}}
-.cf{{margin-top:10px;font-size:11px;color:var(--td);line-height:1.6;text-align:center;}}
-{DASH_CSS}
-</style>
-</head>
-<body>
-<div class="wrap">
-<div class="hd">
-  <span class="hid">{stock_id}</span><span class="hname">{info.get('stock_name', '')}</span>
-  <span class="htag">{info.get('market', '')}・{info.get('industry', '')}</span>
-  <span class="hbox">收盤 <b style="color:{up_color}">{fmt(close)}</b>
-    <span style="color:{up_color};font-weight:700">{up_arrow} {fmt(abs(change))}（{fmt(change_pct, '%')}）</span></span>
-  <span class="hbox">成交量 <b style="color:{ACCENT}">{f"{volume_lots:,.0f}" if volume_lots is not None else "N/A"}</b> 張</span>
-  <span class="hdate">資料日期：{latest['date']}</span>
-</div>
-<div class="dash">
-{p_radar}{p_light}{p_energy}
-{p_gauge}{p_chip}
-{p_fund}{p_rev}
-</div>
-<div class="sum">{summary}</div>
-<div class="cf">
-  雷達圖用每日選股評分（法人 32、資金 8、基本面 35、技術 25 分換算成 10 分）與動能條件（趨勢模板 8 條件、相對強度）；
-  燈號與能量條依均線、RSI、KD、MACD、法人與量價用固定規則判斷，不是預測。<br>
-  資料來源：證交所、櫃買中心、集保結算所、公開資訊觀測站｜資料截至 {latest['date']}｜僅供參考，不構成投資建議，投資請自負風險。
-</div>
-</div>
-</body>
-</html>
-"""
-
-# st.components.v1.html 已被 Streamlit 標為淘汰，改用 st.iframe；高度跟著內容自動調整，不必另外捲動
-st.iframe(html, height="content")
-
-# ===== 葛蘭碧與每日選股分析（和自選股頁相同的判斷）=====
 SCORE_RECENT, SCORE_TOP = 20, 20
 st.markdown("---")
 g_col, s_col = st.columns(2)
@@ -577,6 +444,12 @@ with s_col:
         pass
 
 # ===== 動能條件：趨勢模板、52 週新高突破（momentum.py 每天收盤後計算）=====
+@st.cache_data(ttl=3600)
+def load_momentum_row(stock_id):
+    since = str(pd.Timestamp.today().date() - pd.Timedelta(days=20))
+    df = get_rows_for_stocks("momentum_signals", [stock_id], since=since)
+    return df.iloc[-1].to_dict() if not df.empty else None
+
 st.markdown("---")
 st.subheader("🚀 動能條件（趨勢模板＋52 週新高）")
 mrow = load_momentum_row(stock_id)
