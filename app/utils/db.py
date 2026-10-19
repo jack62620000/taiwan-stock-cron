@@ -349,6 +349,11 @@ def get_signal_performance(top_n=20, horizon=5):
             time.sleep(1)
 
 
+# ===== 動能選股（momentum.py 產生）=====
+def get_momentum_latest():
+    """全市場最新一天的趨勢模板、52 週新高突破判斷"""
+    return _latest_snapshot("momentum_signals", "date")
+
 # ===== 資料更新狀態 =====
 # (顯示名稱, 資料表, 日期欄位, 頻率)；有 stock_id 的表用權值股查最新日期，其餘直接排序（表都很小）
 DATA_TABLES = [

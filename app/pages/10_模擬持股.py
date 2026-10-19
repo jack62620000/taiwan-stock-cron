@@ -11,7 +11,8 @@ from utils.db import (
 )
 from utils.groups import group_picker
 from utils.paper import evaluate_trades, BUY_FEE, SELL_FEE, SELL_TAX
-from utils.granville import STOP_LOSS_PCT, next_day_triggers, rule_frames
+from utils.granville import STOP_RULE, next_day_triggers, rule_frames, stop_price
+from utils.analysis import load_atr
 from utils.ui import require_login, render_metric_cards, style_sign
 require_login()
 
@@ -63,10 +64,10 @@ def load_exit_status(stock_ids):
     return status, triggers
 
 
-def exit_row(row, status, triggers):
+def exit_row(row, status, triggers, atrs):
     """一筆持股的出場狀態與說明"""
     sid, close = row["stock_id"], float(row["end_price"])
-    stop = round(float(row["buy_price"]) * (1 - STOP_LOSS_PCT / 100), 2)
+    stop = stop_price(float(row["buy_price"]), atrs.get(sid))
     st_row = status.loc[sid] if sid in status.index else None
     trig = triggers.loc[sid] if sid in triggers.index else None
     trig_price = float(trig["trigger_price"]) if trig is not None else None
@@ -74,7 +75,7 @@ def exit_row(row, status, triggers):
                  if trig is not None else "")
     if close <= stop:
         state = "⛔ 跌破停損"
-        note = f"收盤已跌破停損價（買進價 −{STOP_LOSS_PCT:g}%），可考慮明天開盤賣出"
+        note = "收盤已跌破停損價，可考慮明天開盤賣出"
     elif st_row is not None and (st_row["r5"] or st_row["r6"]):
         state = "⚠️ 出現賣出訊號"
         note = "今天出現法則 " + "、".join(str(n) for n in (5, 6) if st_row[f"r{n}"]) + "（均線轉弱），可考慮明天開盤賣出"
@@ -160,12 +161,14 @@ if not trades.empty:
         })
 
         st.markdown("**🚦 出場狀態**")
-        st.caption(f"停損價是買進價往下 {STOP_LOSS_PCT:g}%；賣出觸發價是明天收盤跌到多少會出現葛蘭碧法則 5／6"
+        st.caption(f"停損價是{STOP_RULE.replace('預計買進價', '買進價')}，ATR 依最新資料計算；賣出觸發價是明天收盤跌到多少會出現葛蘭碧法則 5／6"
                    "（20 日均線轉弱）。依最新收盤計算，僅供參考。")
-        status, exit_triggers = load_exit_status(tuple(sorted(holding["stock_id"].unique())))
+        held_ids = tuple(sorted(holding["stock_id"].unique()))
+        status, exit_triggers = load_exit_status(held_ids)
+        atrs = load_atr(held_ids)
         exits = pd.DataFrame([{"代號": r["stock_id"], "名稱": r["stock_name"], "買進日": r["buy_date"],
                                "買進價": r["buy_price"], "最新收盤": r["end_price"], "報酬%": r["pnl_pct"],
-                               **exit_row(r, status, exit_triggers)}
+                               **exit_row(r, status, exit_triggers, atrs)}
                               for _, r in holding.iterrows() if pd.notna(r["end_price"])])
         if not exits.empty:
             order = {"⛔ 跌破停損": 0, "⚠️ 出現賣出訊號": 1, "🔔 接近賣出": 2, "🔥 過熱": 3, "✅ 續抱": 4}
@@ -247,6 +250,25 @@ with st.container(border=True):
     note = st.text_input("備註（選填）", placeholder="例如：法則2出現、外資連買")
     if sid and buy_price_day and buy_price_day != str(buy_day):
         st.caption(f"{buy_day} 沒有收盤價，預設帶入 {buy_price_day} 的收盤價。")
+    if sid and buy_price > 0:
+        stop = stop_price(float(buy_price), load_atr((sid,)).get(sid))
+        per_share = float(buy_price) - stop
+        st.caption(f"停損價 {stop:,.2f} 元（{STOP_RULE.replace('預計買進價', '買進價')}），"
+                   f"每張風險約 {per_share * 1000:,.0f} 元。")
+        with st.expander("🧮 部位大小試算：依停損價決定買多少"):
+            k1, k2 = st.columns(2)
+            capital = k1.number_input("本金（元）", min_value=10_000, value=1_000_000, step=100_000, key="size_capital")
+            risk_pct = k2.number_input("每筆最多虧本金的 %", min_value=0.1, max_value=10.0, value=1.0, step=0.5,
+                                       format="%.1f", key="size_risk",
+                                       help="常見做法是 1～2%：就算連續停損 10 次，本金也只少 10～20%")
+            budget = capital * risk_pct / 100
+            n = int(min(budget / per_share if per_share > 0 else 0, capital / float(buy_price)))
+            if n < 1:
+                st.info("以這個本金和風險，連 1 股都買不起或停損距離太大。")
+            else:
+                st.markdown(f"建議買 **{n:,} 股**（約 {n / 1000:.2f} 張），買進金額約 {n * float(buy_price):,.0f} 元；"
+                            f"跌到停損價出場約虧 {n * per_share:,.0f} 元，是本金的 {n * per_share / capital:.1%}。")
+                st.caption("買進金額被本金限制時，實際虧損會比設定的 % 少。沒算手續費與證交稅。")
     if st.button("新增", type="primary", disabled=not sid or buy_price <= 0):
         add_paper_trades(group_id, [{"stock_id": sid, "source": "手動", "buy_date": str(buy_day),
                            "buy_price": round(float(buy_price), 2), "shares": int(qty) / 1000, "note": note.strip()}])
