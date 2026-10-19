@@ -10,11 +10,13 @@ from utils.db import (
     get_stock_info, get_daily_prices, get_quarterly,
     get_revenue, get_stock_ins, get_margin, get_holder,
     get_margin_utilization, get_stock_list, get_market_index,
-    get_watchlist, add_to_watchlist, remove_from_watchlist,
+    get_watchlist, add_to_watchlist, remove_from_watchlist, get_signal_history,
 )
+from utils.analysis import granville_status
+from utils.granville import STOP_LOSS_PCT
 from utils.indicators import calc_all, get_latest_signals
 from utils.groups import current_group
-from utils.ui import require_login, UP_COLOR, DOWN_COLOR
+from utils.ui import require_login, render_metric_cards, UP_COLOR, DOWN_COLOR
 require_login()
 
 st.set_page_config(page_title="個股分析卡", page_icon="🗂️", layout="wide")
@@ -356,6 +358,88 @@ body{{background:var(--bg);font-family:"IBM Plex Mono","Noto Sans TC",monospace;
 
 # st.components.v1.html 已被 Streamlit 標為淘汰，改用 st.iframe；高度跟著內容自動調整，不必另外捲動
 st.iframe(html, height="content")
+
+# ===== 葛蘭碧與每日選股分析（和自選股頁相同的判斷）=====
+@st.cache_data(ttl=3600)
+def load_granville(stock_id, prices, ins):
+    cols = [c for c in ["stock_id", "date", "close_price", "volume"] if c in prices.columns]
+    p = prices[cols].assign(stock_id=stock_id)
+    i = ins[["date", "foreign_net_shares"]].assign(stock_id=stock_id) \
+        if not ins.empty and "foreign_net_shares" in ins.columns else pd.DataFrame()
+    return granville_status([stock_id], p, i)
+
+@st.cache_data(ttl=3600)
+def load_score_history(stock_id):
+    return get_signal_history(stock_id, limit=60)
+
+SCORE_RECENT, SCORE_TOP = 20, 20
+st.markdown("---")
+g_col, s_col = st.columns(2)
+with g_col:
+    st.subheader("📐 葛蘭碧分析")
+    g = load_granville(stock_id, prices, ins)
+    if g.empty:
+        st.info("股價資料不足，暫時無法判斷葛蘭碧法則（要有 20 個交易日以上的資料）。")
+    else:
+        g = g.iloc[0]
+        render_metric_cards([
+            ("狀態", g["狀態"], g["今天法則"] or "今天沒有符合的法則", None),
+            ("20 日均線", f"{g['均線']:,.2f}", f"均線{g['均線方向']}", None),
+            ("乖離", f"{g['乖離%']:+.2f}%", "收盤價離均線", g["乖離%"]),
+        ])
+        st.markdown(f"💬 {g['說明']}")
+        lines = []
+        if pd.notna(g["買進觸發價"]):
+            lines.append(f"- **買進觸發價**：明天收盤 ≥ {g['買進觸發價']:,.2f} 元就出現法則 2")
+        if pd.notna(g["停損價"]):
+            lines.append(f"- **停損價**：{g['停損價']:,.2f} 元（預計買進價往下 {STOP_LOSS_PCT:g}%）")
+        if pd.notna(g["賣出觸發價"]):
+            lines.append(f"- **賣出觸發價**：明天收盤 ≤ {g['賣出觸發價']:,.2f} 元（{g['賣出距離%']:+.2f}%）會出現法則 5 或 6")
+        lines.append(f"- **趨勢**：{g['趨勢']}")
+        st.markdown("\n".join(lines))
+        st.caption("依 20 日均線、葛蘭碧頁的預設參數；觸發價是推算「下一個交易日收盤」要到多少才會出現訊號。")
+    try:
+        st.page_link("pages/6_葛蘭碧八大法則.py", label="到葛蘭碧頁看完整說明", icon="📐")
+    except Exception:  # 單獨執行這一頁時找不到其他頁面
+        pass
+
+with s_col:
+    st.subheader("🎯 每日選股評分")
+    hist = load_score_history(stock_id)
+    if hist.empty:
+        st.info("這檔股票沒有每日選股評分（可能是新上市或資料不足）。")
+    else:
+        now = hist.iloc[-1]
+        recent = hist.tail(SCORE_RECENT)
+        ranks = pd.to_numeric(recent["rank"], errors="coerce")
+        prev_score = hist.iloc[-2]["total_score"] if len(hist) > 1 else None
+        diff = now["total_score"] - prev_score if prev_score is not None else None
+        render_metric_cards([
+            ("總分", f"{int(now['total_score'])} / 100",
+             f"較前一日 {diff:+.0f}" if diff is not None else now["date"], diff),
+            ("排名", f"第 {int(now['rank'])} 名" if pd.notna(now["rank"]) else "未列入排名",
+             "只排 20 日均量 500 張以上", None),
+            (f"近 {SCORE_RECENT} 日", f"平均 {pd.to_numeric(recent['total_score'], errors='coerce').mean():.1f} 分",
+             f"進前 {SCORE_TOP} 名 {int((ranks <= SCORE_TOP).sum())} 天", None),
+        ])
+        st.markdown(f"籌碼 {int(now['chip_score'])}/32、資金 {int(now['margin_score'])}/8、"
+                    f"基本面 {int(now['fund_score'])}/35、技術 {int(now['tech_score'])}/25（評分日 {now['date']}）")
+        reasons = now["reasons"] if isinstance(now["reasons"], list) else []
+        warnings = now["warnings"] if isinstance(now["warnings"], list) else []
+        st.markdown("**✅ 加分理由**：" + ("、".join(reasons) or "無"))
+        if warnings:
+            st.markdown("**⚠️ 風險提醒**：" + "、".join(warnings))
+        trend = hist.assign(date=pd.to_datetime(hist["date"]),
+                            total_score=pd.to_numeric(hist["total_score"], errors="coerce"))
+        st.altair_chart(alt.Chart(trend).mark_line(point=alt.OverlayMarkDef(size=15), color=UP_COLOR).encode(
+            x=alt.X("date:T", title=None, axis=alt.Axis(format="%m/%d")),
+            y=alt.Y("total_score:Q", title="總分", scale=alt.Scale(domain=[0, 100])),
+            tooltip=[alt.Tooltip("date:T", title="日期"), alt.Tooltip("total_score:Q", title="總分")],
+        ).properties(height=180), width="stretch")
+    try:
+        st.page_link("pages/7_每日選股訊號.py", label="到每日選股頁看規則回測", icon="🎯")
+    except Exception:
+        pass
 
 # ===== 圖表 =====
 st.markdown("---")
