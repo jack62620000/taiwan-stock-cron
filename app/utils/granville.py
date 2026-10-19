@@ -412,6 +412,9 @@ def next_day_triggers(prices, rules, side, stock_ids=None, steps=80, refine=14, 
 
 # 盤整股：近 CHOP_DAYS 個交易日股價穿越均線（站上或跌破）的次數達 CHOP_CROSSES 次
 # 趨勢明確的股票從法則 1 到法則 2 通常只穿越 3～4 次（跌破 → 站上 → 回檔跌破 → 再站上）
+# 回測（2025-10 ~ 2026-10 全部法則 2 訊號，約 1 萬筆，隔天開盤買、持有 6 日）：
+# 穿越 0～2 次平均 +0.33%、3～4 次 +0.83%、5 次 +0.65%、6～7 次 +1.13%、8 次以上 +0.86%，
+# 盤整股並沒有比較差，所以只當參考標示，不影響排序
 CHOP_DAYS = 40
 CHOP_CROSSES = 6
 
@@ -427,6 +430,28 @@ def ma_cross_counts(prices, ma_days=20, days=CHOP_DAYS):
     recent = side.iloc[-(days + 1):]
     crosses = (recent != recent.shift(1)) & recent.notna() & recent.shift(1).notna()
     return crosses.sum().astype(int)
+
+
+# 停損：買進價往下 STOP_LOSS_PCT %，收盤跌破就出場
+# 回測（同上，法則 2 持有 6 日）：不停損平均 +0.86%、最差 -38%；停損 8% 平均 +0.66%、最差 -16.6%；
+# 停損 5% 平均 +0.52%（一半的交易被洗出場）。8% 少賺一點，但能擋掉大虧
+STOP_LOSS_PCT = 8.0
+RS_DAYS = 20
+
+
+def relative_strength(prices, days=RS_DAYS):
+    """
+    每檔股票近 days 個交易日漲跌幅減去同期全部股票的平均漲跌幅（%），正值代表比大盤強。
+    大盤用全部股票等權平均，和模擬交易的「同期大盤」相同。
+    """
+    if prices.empty:
+        return pd.Series(dtype=float)
+    close = _pivot(prices, "close_price").ffill()
+    if len(close) <= days:
+        return pd.Series(dtype=float)
+    ret = (close.iloc[-1] / close.iloc[-(days + 1)] - 1) * 100
+    ret = ret.replace([np.inf, -np.inf], np.nan).dropna()
+    return ret - ret.mean()
 
 
 # =====================================================================
