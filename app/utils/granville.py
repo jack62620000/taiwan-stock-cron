@@ -442,7 +442,7 @@ RS_DAYS = 20
 def relative_strength(prices, days=RS_DAYS):
     """
     每檔股票近 days 個交易日漲跌幅減去同期全部股票的平均漲跌幅（%），正值代表比大盤強。
-    大盤用全部股票等權平均，和模擬交易的「同期大盤」相同。
+    大盤用全部股票等權平均。
     """
     if prices.empty:
         return pd.Series(dtype=float)
@@ -452,110 +452,3 @@ def relative_strength(prices, days=RS_DAYS):
     ret = (close.iloc[-1] / close.iloc[-(days + 1)] - 1) * 100
     ret = ret.replace([np.inf, -np.inf], np.nan).dropna()
     return ret - ret.mean()
-
-
-# =====================================================================
-# 模擬交易（歷史回測）
-# =====================================================================
-BUY_FEE = 0.001425          # 手續費（買、賣各收一次，未打折）
-SELL_TAX = 0.003            # 證交稅（賣出時收）
-
-
-def simulate_trades(prices, buy_rules, sell_rules, hold_days=20, stop_loss_pct=None,
-                    min_volume=500, start_date=None, ins=None, confirms=(), **rule_params):
-    """
-    依葛蘭碧法則模擬買賣，每檔股票同一時間最多持有一筆。
-
-    進場：收盤後出現 buy_rules 任一條，且 20 日均量 ≥ min_volume 張 → 隔天開盤價買進。
-    出場（先碰到哪個算哪個）：
-      - 收盤出現 sell_rules 任一條 → 隔天開盤價賣出
-      - 收盤價跌破進場價 stop_loss_pct% → 隔天開盤價賣出
-      - 持有滿 hold_days 個交易日 → 當天收盤價賣出
-    開盤價缺漏時改用收盤價。資料最後一天還沒出場的，用最後收盤價計算未實現報酬。
-    報酬已扣手續費（買賣各 0.1425%）與證交稅（0.3%）。
-    confirms：買進還要同時符合的確認條件（CONFIRMS 的 key），外資條件需要傳入 ins。
-
-    回傳 (trades, benchmark)：
-      trades：每筆交易一列；benchmark：同期間全部股票等權平均的累積指數（日期 → 指數），
-      用來算每筆交易同一段期間「買大盤」的報酬。
-    """
-    close = _pivot(prices, "close_price")
-    open_ = _pivot(prices, "open_price").reindex(index=close.index, columns=close.columns)
-    open_ = open_.where(open_ > 0).fillna(close)
-    vol = _pivot(prices, "volume").reindex(index=close.index, columns=close.columns)
-    avg_vol = vol.fillna(0).rolling(20, min_periods=20).mean() / 1000
-
-    hits = rule_frames(close, **rule_params)["hits"]
-    empty = pd.DataFrame(False, index=close.index, columns=close.columns)
-    buy = empty.copy()
-    for n in buy_rules:
-        buy |= hits[n]
-    buy &= avg_vol >= min_volume
-    foreign = _pivot(ins, "foreign_net_shares") if ins is not None and not ins.empty else None
-    ok = _confirmed(confirm_frames(close, vol, foreign), confirms, close.columns)
-    if ok is not None:
-        buy &= ok
-    sell = empty.copy()
-    for n in sell_rules:
-        sell |= hits[n]
-
-    # 等權平均指數：每天所有股票漲跌幅的平均，連乘起來
-    daily = close.pct_change(fill_method=None).clip(-0.11, 0.11)  # 擋掉除權息、減資造成的跳空
-    benchmark = (1 + daily.mean(axis=1).fillna(0)).cumprod()
-
-    dates = close.index
-    first = 0 if start_date is None else int(np.searchsorted(dates, start_date))
-    sl = None if not stop_loss_pct else 1 - stop_loss_pct / 100
-    trades = []
-    for sid in close.columns:
-        b = buy[sid].to_numpy()
-        if not b[first:-1].any():
-            continue
-        s = sell[sid].to_numpy()
-        c = close[sid].to_numpy()
-        o = open_[sid].to_numpy()
-        i = first
-        n = len(dates)
-        while i < n - 1:
-            if not b[i] or np.isnan(o[i + 1]):
-                i += 1
-                continue
-            entry_i, entry_px = i + 1, o[i + 1]
-            exit_i, exit_px, reason = None, None, None
-            j = entry_i
-            while j < n:
-                if np.isnan(c[j]):
-                    j += 1
-                    continue
-                if j - entry_i + 1 >= hold_days:
-                    exit_i, exit_px, reason = j, c[j], f"持有滿 {hold_days} 天"
-                    break
-                if j + 1 < n and (s[j] or (sl is not None and c[j] <= entry_px * sl)):
-                    exit_i, exit_px = j + 1, o[j + 1]
-                    reason = "賣出訊號" if s[j] else f"停損 {stop_loss_pct:g}%"
-                    break
-                j += 1
-            if exit_i is None:
-                last = n - 1
-                while last > entry_i and np.isnan(c[last]):
-                    last -= 1
-                exit_i, exit_px, reason = last, c[last], "未平倉"
-            gross = exit_px / entry_px
-            net = gross * (1 - BUY_FEE - SELL_TAX) / (1 + BUY_FEE) - 1
-            trades.append({
-                "stock_id": sid,
-                "signal_date": dates[i],
-                "entry_date": dates[entry_i],
-                "entry_price": float(entry_px),
-                "exit_date": dates[exit_i],
-                "exit_price": float(exit_px),
-                "hold_days": exit_i - entry_i + 1,
-                "return_pct": net * 100,
-                "benchmark_pct": (benchmark.iloc[exit_i] / benchmark.iloc[entry_i - 1] - 1) * 100,
-                "exit_reason": reason,
-                "rules": [k for k in buy_rules if hits[k][sid].iloc[i]],
-            })
-            if reason == "未平倉":
-                break
-            i = exit_i  # 出場當天收盤若又出現買進訊號，隔天可以再進場
-    return pd.DataFrame(trades), benchmark

@@ -331,14 +331,6 @@ def get_top_signals(date, n=5):
         .eq("date", date).lte("rank", n).order("rank").execute()
     return pd.DataFrame(res.data)
 
-def get_top_picks(n):
-    """所有評分日排名前 n 名的股票（模擬帳戶算停損、停利用），依日期、排名排列"""
-    return pd.DataFrame(_fetch_all(
-        lambda: supabase.table("daily_signals").select("stock_id, date, rank")
-            .lte("rank", n)
-            .order("date", desc=False).order("rank", desc=False)
-    ))
-
 def get_signal_history(stock_id, limit=60):
     """單一股票最近 limit 個評分日的分數"""
     return _latest_rows("daily_signals", stock_id, ["date"], limit)
