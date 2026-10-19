@@ -382,31 +382,57 @@ def get_data_status():
             for (name, table, _, freq), d in zip(DATA_TABLES, latest)]
 
 
+# ===== 分組：每個登入帳號底下可以有多個分組，自選股、模擬持股都屬於某一個分組 =====
+def get_groups(owner):
+    """某帳號的分組（依建立順序）"""
+    res = supabase.table("watch_groups").select("id, name").eq("owner", owner).order("id").execute()
+    return pd.DataFrame(res.data, columns=["id", "name"])
+
+def create_group(owner, name):
+    supabase.table("watch_groups").insert({"owner": owner, "name": name}).execute()
+
+def rename_group(group_id, name):
+    supabase.table("watch_groups").update({"name": name}).eq("id", group_id).execute()
+
+def delete_group(group_id):
+    supabase.table("watch_groups").delete().eq("id", group_id).execute()
+
+def claim_unowned_groups(owner):
+    """分組功能上線前的資料放在 owner 為空字串的分組，交給主帳號"""
+    supabase.table("watch_groups").update({"owner": owner}).eq("owner", "").execute()
+
+def count_group_items(group_id):
+    """分組裡的自選股與模擬持股筆數（刪除分組前檢查用）"""
+    w = supabase.table("watchlist").select("stock_id", count="exact").eq("group_id", group_id).limit(1).execute()
+    p = supabase.table("paper_trades").select("id", count="exact").eq("group_id", group_id).limit(1).execute()
+    return (w.count or 0) + (p.count or 0)
+
 # ===== 自選股 =====
-def get_watchlist():
-    """自選股清單（依加入時間由舊到新），不快取，新增或移除後馬上看得到"""
-    res = supabase.table("watchlist").select("*").order("added_at", desc=False).execute()
+def get_watchlist(group_id):
+    """某分組的自選股清單（依加入時間由舊到新），不快取，新增或移除後馬上看得到"""
+    res = supabase.table("watchlist").select("stock_id, note, added_at").eq("group_id", group_id) \
+        .order("added_at", desc=False).execute()
     return pd.DataFrame(res.data, columns=["stock_id", "note", "added_at"])
 
-def add_to_watchlist(stock_id, note=""):
-    supabase.table("watchlist").upsert({"stock_id": stock_id, "note": note}).execute()
+def add_to_watchlist(group_id, stock_id, note=""):
+    supabase.table("watchlist").upsert({"group_id": group_id, "stock_id": stock_id, "note": note}).execute()
 
-def update_watchlist_note(stock_id, note):
-    supabase.table("watchlist").update({"note": note}).eq("stock_id", stock_id).execute()
+def update_watchlist_note(group_id, stock_id, note):
+    supabase.table("watchlist").update({"note": note}).eq("group_id", group_id).eq("stock_id", stock_id).execute()
 
-def remove_from_watchlist(stock_id):
-    supabase.table("watchlist").delete().eq("stock_id", stock_id).execute()
+def remove_from_watchlist(group_id, stock_id):
+    supabase.table("watchlist").delete().eq("group_id", group_id).eq("stock_id", stock_id).execute()
 
 # ===== 模擬持股（自己挑股票假設買賣）=====
-def get_paper_trades():
-    res = supabase.table("paper_trades").select("*") \
+def get_paper_trades(group_id):
+    res = supabase.table("paper_trades").select("*").eq("group_id", group_id) \
         .order("buy_date", desc=False).order("id", desc=False).execute()
     return pd.DataFrame(res.data)
 
-def add_paper_trades(rows):
+def add_paper_trades(group_id, rows):
     """rows 是多筆 {stock_id, source, buy_date, buy_price, shares, note}"""
     if rows:
-        supabase.table("paper_trades").insert(rows).execute()
+        supabase.table("paper_trades").insert([{**r, "group_id": group_id} for r in rows]).execute()
 
 def sell_paper_trade(trade_id, sell_date, sell_price):
     supabase.table("paper_trades").update({"sell_date": sell_date, "sell_price": sell_price}) \

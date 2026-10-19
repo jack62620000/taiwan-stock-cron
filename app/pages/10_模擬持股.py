@@ -9,6 +9,7 @@ from utils.db import (
     get_stock_list, get_rows_for_stocks, get_price_adjustments, apply_adjustments,
     get_paper_trades, add_paper_trades, sell_paper_trade, delete_paper_trade,
 )
+from utils.groups import group_picker
 from utils.paper import evaluate_trades, BUY_FEE, SELL_FEE, SELL_TAX
 from utils.granville import STOP_LOSS_PCT, next_day_triggers, rule_frames
 from utils.ui import require_login, render_metric_cards, style_sign
@@ -18,7 +19,7 @@ st.set_page_config(page_title="模擬持股", page_icon="💼", layout="wide")
 st.title("💼 模擬持股")
 st.caption(
     "從「自選股」頁挑股票加入，或在下方手動新增，假設買進後過一段時間再賣出，"
-    "看看實際會不會賺錢。持有中的股票用最新收盤價估算損益。"
+    "看看實際會不會賺錢。持有中的股票用最新收盤價估算損益。分組和自選股頁共用，可以在自選股頁新增或改名稱。"
 )
 
 if st.button("🔄 強制重新整理資料"):
@@ -103,7 +104,10 @@ def close_on(stock_id, day):
 
 stock_list = get_stock_list()
 names = stock_list.set_index("stock_id")["stock_name"].to_dict()
-trades = get_paper_trades()
+pick_col, _ = st.columns([1, 2])
+with pick_col:
+    group_id, group_name = group_picker()
+trades = get_paper_trades(group_id)
 
 if not trades.empty:
     ids = tuple(sorted(trades["stock_id"].unique()))
@@ -244,7 +248,7 @@ with st.container(border=True):
     if sid and buy_price_day and buy_price_day != str(buy_day):
         st.caption(f"{buy_day} 沒有收盤價，預設帶入 {buy_price_day} 的收盤價。")
     if st.button("新增", type="primary", disabled=not sid or buy_price <= 0):
-        add_paper_trades([{"stock_id": sid, "source": "手動", "buy_date": str(buy_day),
+        add_paper_trades(group_id, [{"stock_id": sid, "source": "手動", "buy_date": str(buy_day),
                            "buy_price": round(float(buy_price), 2), "shares": int(qty) / 1000, "note": note.strip()}])
         st.rerun()
 

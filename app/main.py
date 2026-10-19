@@ -9,33 +9,32 @@ from utils.db import (
     get_rows_for_stocks, get_price_adjustments, apply_adjustments, get_stock_list,
 )
 from utils.freshness import evaluate
+from utils.groups import login, current_group, render_account_sidebar
 
 apply_theme()
 
 
 # ===== 登入驗證 =====
+# 帳號在 Streamlit secrets：USERNAME / PASSWORD 是主帳號，家人的帳號在 [users.帳號]（見 utils/groups.py）
 def check_password():
     def password_entered():
-        if (st.session_state["username"] == st.secrets["USERNAME"] and
-            st.session_state["password"] == st.secrets["PASSWORD"]):
-            st.session_state["authenticated"] = True
-        else:
+        if not login(st.session_state["username"], st.session_state["password"]):
             st.session_state["authenticated"] = False
-            st.error("帳號或密碼錯誤")
+            st.session_state["login_failed"] = True
 
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
-
-    if not st.session_state["authenticated"]:
+    if not st.session_state.get("authenticated") or not st.session_state.get("user"):
         st.title("🔐 台股分析系統")
         st.text_input("帳號", key="username")
         st.text_input("密碼", type="password", key="password")
         st.button("登入", on_click=password_entered)
+        if st.session_state.pop("login_failed", False):
+            st.error("帳號或密碼錯誤")
         return False
     return True
 
 if not check_password():
     st.stop()
+render_account_sidebar()
 # ===== 主程式碼 =====
 st.set_page_config(
     page_title="台股分析系統",
@@ -76,12 +75,12 @@ st.markdown("---")
 
 # ===== 今日大盤 =====
 @st.cache_data(ttl=3600)
-def load_home_data():
-    """首頁用：加權與櫃買指數、最新評分日前 5 名、自選股最近股價與評分"""
+def load_home_data(group_id):
+    """首頁用：加權與櫃買指數、最新評分日前 5 名、目前分組自選股最近股價與評分"""
     taiex, tpex = get_market_index("TAIEX", 5), get_market_index("TPEX", 5)
     sig_dates = get_signal_dates(1)
     top = get_top_signals(sig_dates[0], 5) if sig_dates else pd.DataFrame()
-    watch_ids = get_watchlist()["stock_id"].tolist()
+    watch_ids = get_watchlist(group_id)["stock_id"].tolist()
     prices = signals = pd.DataFrame()
     if watch_ids:
         since = (date.today() - timedelta(days=14)).isoformat()
@@ -124,7 +123,7 @@ def watch_summary(watch_ids, prices, signals):
     return df
 
 
-taiex, tpex, sig_date, top, watch_ids, prices, signals = load_home_data()
+taiex, tpex, sig_date, top, watch_ids, prices, signals = load_home_data(current_group()[0])
 stock_list = get_stock_list()
 names = dict(zip(stock_list["stock_id"], stock_list["stock_name"].fillna(""))) if not stock_list.empty else {}
 
@@ -147,7 +146,7 @@ with top_col:
         st.switch_page("pages/7_每日選股訊號.py")
 
 with watch_col:
-    st.subheader(f"⭐ 自選股（{len(watch_ids)} 檔）")
+    st.subheader(f"⭐ 自選股：{current_group()[1]}（{len(watch_ids)} 檔）")
     if not watch_ids:
         st.info("還沒有自選股，可以在自選股頁或個股分析卡加入。")
     else:
@@ -195,8 +194,8 @@ with st.expander("ℹ️ 功能說明與資料來源"):
 | 💰 融資使用率 | 全台股融資餘額、融資限額與使用率多日表格，支援使用率篩選 |
 | 📐 葛蘭碧八大法則 | 列出出現法則 1、等待法則 2 的股票與明天的觸發價、停損價、比大盤強弱，以及快出現賣出訊號的股票；進階分頁有完整八大法則篩選，可把股票加入自選股 |
 | 🎯 每日選股訊號 | 籌碼、資金、基本面、技術面四面向評分排行榜，個股分數走勢、AI 解讀，單一個股規則回測（排名前面時之後的漲跌），可把股票加入自選股 |
-| ⭐ 自選股 | 自選股的股價、法人買賣超、外資持股、營收總覽，每檔的葛蘭碧狀態（觸發價、停損價、賣出警示）與每日選股評分、分數走勢，可加入模擬持股、新增、移除、寫備註 |
-| 💼 模擬持股 | 從自選股挑股票（或手動新增）假設買進，之後自己決定何時賣出，追蹤扣除手續費、證交稅後的損益，並顯示每筆持股的停損價與賣出訊號 |
+| ⭐ 自選股 | 自選股的股價、法人買賣超、外資持股、營收總覽，每檔的葛蘭碧狀態（觸發價、停損價、賣出警示）與每日選股評分、分數走勢，可加入模擬持股、新增、移除、寫備註；每個帳號可以分成多個分組並改名稱 |
+| 💼 模擬持股 | 從自選股挑股票（或手動新增）假設買進，之後自己決定何時賣出，追蹤扣除手續費、證交稅後的損益，並顯示每筆持股的停損價與賣出訊號；和自選股共用分組 |
 
 #### 資料來源
 - 股價、法人、融資券：台灣證券交易所、櫃買中心
