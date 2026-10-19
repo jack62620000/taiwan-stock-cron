@@ -9,7 +9,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import get_stock_list, get_recent_closes, get_recent_ins
 from utils.granville import (
     RULES, STABLE_RULES, CONFIRMS, HOLD_HINT, WATCH_DAYS, WATCH_STATUS, LATE_STATUS,
-    granville_signals, rule1_watchlist, simulate_trades, watch_note,
+    granville_signals, rule1_watchlist, rule_frames, simulate_trades, watch_note,
 )
 from utils.paper import add_form
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
@@ -55,12 +55,27 @@ if prices.empty:
 latest_date = prices["date"].max()
 
 # ===== 側邊參數 =====
+# 回測可靠度是用這組預設值算的；用 session_state 給初始值，「恢復預設」按鈕才能把值改回來
+PARAM_DEFAULTS = {
+    "g_ma_days": 20, "g_slope_days": 5, "g_lookback": 5, "g_near_pct": 2.0, "g_bias_pct": 10.0,
+    "g_min_volume": 500, **{f"confirm_{key}": False for key in CONFIRMS},
+}
+for key, value in PARAM_DEFAULTS.items():
+    st.session_state.setdefault(key, value)
+
+
+def reset_params():
+    st.session_state.update(PARAM_DEFAULTS)
+
+
 st.sidebar.header("⚙️ 判斷參數")
-ma_days = st.sidebar.selectbox("均線", [20, 10], format_func=lambda d: f"{d} 日均線")
-slope_days = st.sidebar.number_input("均線方向：與幾天前的均線比較", 2, 10, 5)
-lookback = st.sidebar.number_input("法則 2、3、6、7：往回看幾天", 2, 10, 5)
-near_pct = st.sidebar.number_input("法則 3、7：靠近均線的距離（%）", 0.5, 10.0, 2.0, step=0.5)
-bias_pct = st.sidebar.number_input("法則 4、8：乖離過大門檻（%）", 3.0, 50.0, 10.0, step=1.0)
+st.sidebar.button("↩️ 恢復預設參數", on_click=reset_params, width="stretch",
+                  help="頁面上的回測可靠度是用預設參數算的，改過參數後可一鍵恢復")
+ma_days = st.sidebar.selectbox("均線", [20, 10], format_func=lambda d: f"{d} 日均線", key="g_ma_days")
+slope_days = st.sidebar.number_input("均線方向：與幾天前的均線比較", 2, 10, key="g_slope_days")
+lookback = st.sidebar.number_input("法則 2、3、6、7：往回看幾天", 2, 10, key="g_lookback")
+near_pct = st.sidebar.number_input("法則 3、7：靠近均線的距離（%）", 0.5, 10.0, step=0.5, key="g_near_pct")
+bias_pct = st.sidebar.number_input("法則 4、8：乖離過大門檻（%）", 3.0, 50.0, step=1.0, key="g_bias_pct")
 
 st.sidebar.header("🔍 篩選條件")
 search_id = st.sidebar.text_input("股票代號（可輸入多個，用逗號分隔）", placeholder="例如: 2330,2454")
@@ -69,7 +84,7 @@ selected_market = st.sidebar.selectbox("市場", markets)
 industries = ["全部"] + sorted(stock_list["industry"].dropna().unique().tolist())
 selected_industry = st.sidebar.selectbox("產業別", industries)
 min_volume = st.sidebar.number_input(
-    "20 日均量下限（張）", 0, 1000000, 500, step=100,
+    "20 日均量下限（張）", 0, 1000000, step=100, key="g_min_volume",
     help="回測顯示冷門股的訊號雜訊很大，預設只看 20 日均量 500 張以上的股票",
 )
 
@@ -77,7 +92,7 @@ st.sidebar.header("✅ 買進確認條件")
 st.sidebar.caption("勾選後，買進法則 1～4 還要同時符合這些條件才算數；賣出、過熱不受影響。")
 confirms = tuple(
     key for key, label in CONFIRMS.items()
-    if st.sidebar.checkbox(label, value=False, key=f"confirm_{key}")
+    if st.sidebar.checkbox(label, key=f"confirm_{key}")
 )
 
 # ===== 計算訊號 =====
@@ -345,6 +360,69 @@ with tab_today:
         st.caption("法則 8（正乖離過大）回測多半續漲，列在這裡只當追高風險提醒。")
         show_rule_table([5, 6, 7, 8], "sell", "賣出訊號")
 
+    # ===== 個股走勢 =====
+    with st.container(border=True):
+        st.subheader("📈 個股走勢")
+        st.caption(f"近 3 個月收盤價（還原權值）與 {ma_days} 日均線，圓點是當天符合的法則"
+                   "（紅＝買進、綠＝賣出、橘＝過熱；只看均線條件，不含左側的買進確認條件）。")
+        chart_df = df.assign(has_rule=df["rules"].str.len() > 0) \
+            .sort_values(["has_rule", "stock_id"], ascending=[False, True])
+        chart_labels = {
+            r.stock_id: f"{r.stock_id} {r.stock_name}"
+            + ("｜" + "、".join(f"法則{n}" for n in r.rules) if r.rules else "")
+            for r in chart_df.itertuples()
+        }
+        if not chart_labels:
+            st.info("目前篩選條件下沒有股票")
+        else:
+            c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
+            chart_id = c1.selectbox("選擇股票（有訊號的排在前面）", list(chart_labels),
+                                    format_func=chart_labels.get, key="chart_stock")
+            if c2.button("前往個股分析卡", width="stretch"):
+                st.session_state["card_stock_id"] = chart_id
+                st.switch_page("pages/2_個股分析卡.py")
+            one = prices[prices["stock_id"] == chart_id]
+            close_wide = one.assign(close_price=pd.to_numeric(one["close_price"], errors="coerce")) \
+                .pivot_table(index="date", columns="stock_id", values="close_price", aggfunc="last").sort_index()
+            frames = rule_frames(close_wide, ma_days, slope_days, lookback, near_pct, bias_pct)
+            line = pd.DataFrame({
+                "date": pd.to_datetime(close_wide.index),
+                "收盤價": close_wide[chart_id].values,
+                "均線": frames["ma"][chart_id].round(2).values,
+            })
+            marks = []
+            for n, hit in frames["hits"].items():
+                for d in hit.index[hit[chart_id].fillna(False).astype(bool)]:
+                    marks.append({"date": d, "rule": n, "side": RULES[n][0]})
+            base = alt.Chart(line).encode(x=alt.X("date:T", title=None, axis=alt.Axis(format="%m/%d")))
+            layers = [
+                base.mark_line(color=MUTED, strokeDash=[6, 4]).encode(
+                    y=alt.Y("均線:Q", title="股價", scale=alt.Scale(zero=False))),
+                base.mark_line(color=ACCENT, strokeWidth=2).encode(
+                    y=alt.Y("收盤價:Q", scale=alt.Scale(zero=False)),
+                    tooltip=[alt.Tooltip("date:T", title="日期"),
+                             alt.Tooltip("收盤價:Q", format=",.2f"), alt.Tooltip("均線:Q", format=",.2f")]),
+            ]
+            if marks:
+                pts = pd.DataFrame(marks).groupby("date").agg(
+                    rule_text=("rule", lambda r: "、".join(str(n) for n in sorted(r))),
+                    side=("side", "first"),
+                ).reset_index()
+                pts = pts.merge(line.assign(date=line["date"].dt.strftime("%Y-%m-%d")), on="date")
+                pts["date"] = pd.to_datetime(pts["date"])
+                color = alt.Color("side:N", legend=None, scale=alt.Scale(
+                    domain=["買進", "賣出", "過熱"], range=[UP_COLOR, DOWN_COLOR, WARN_COLOR]))
+                point_base = alt.Chart(pts).encode(x="date:T", y="收盤價:Q")
+                layers += [
+                    point_base.mark_circle(size=90, opacity=1).encode(
+                        color=color,
+                        tooltip=[alt.Tooltip("date:T", title="日期"), alt.Tooltip("rule_text:N", title="法則"),
+                                 alt.Tooltip("收盤價:Q", format=",.2f")]),
+                    point_base.mark_text(dy=-12, fontSize=11, fontWeight="bold").encode(
+                        text="rule_text:N", color=color),
+                ]
+            st.altair_chart(alt.layer(*layers).properties(height=320), width="stretch")
+
 
 # =====================================================================
 # 模擬交易：用歷史資料假設照著法則買賣，看結果如何
@@ -384,25 +462,36 @@ def run_simulation(period_days, buy_rules, sell_rules, hold_days, stop_loss_pct,
     )
 
 
+def apply_recommended():
+    """頁面說明中回測較好的組合：法則 2 + 三個買進確認條件，持有 10 個交易日"""
+    st.session_state.update({"sim_buy": [2], "sim_hold": 10,
+                             **{f"confirm_{key}": True for key in CONFIRMS}})
+
+
+st.session_state.setdefault("sim_buy", [2])
+st.session_state.setdefault("sim_hold", 20)
+
 with tab_sim:
     st.markdown(
         "用過去的股價假設「照著法則買賣」，看看會賺還是賠。"
         "收盤出現買進訊號 → **隔天開盤買進**；出現賣出訊號或跌破停損 → **隔天開盤賣出**；"
         "持有滿設定天數 → 當天收盤賣出。每檔股票同時只持有一筆，報酬已扣手續費與證交稅。"
     )
+    st.button("⭐ 套用建議組合", on_click=apply_recommended,
+              help="買進法則 2 + 左側三個買進確認條件全部勾選 + 最長持有 10 個交易日（頁面說明中回測較好的組合）")
     s1, s2, s3 = st.columns(3)
     with s1:
         sim_period = st.selectbox("回測期間", list(SIM_PERIODS), index=1)
         sim_buy = st.multiselect(
-            "買進法則", [1, 2, 3, 4], default=[2],
-            format_func=lambda n: f"法則{n}（{RULES[n][2]}）",
+            "買進法則", [1, 2, 3, 4],
+            format_func=lambda n: f"法則{n}（{RULES[n][2]}）", key="sim_buy",
         )
     with s2:
         sim_sell = st.multiselect(
             "賣出法則（出現就出場）", [5, 6, 7, 8], default=[6, 7],
             format_func=lambda n: f"法則{n}（{RULES[n][0]}·{RULES[n][2]}）",
         )
-        sim_hold = st.number_input("最長持有天數（交易日）", 1, 120, 20)
+        sim_hold = st.number_input("最長持有天數（交易日）", 1, 120, key="sim_hold")
     with s3:
         sim_stop = st.number_input("停損（%，0 表示不停損）", 0.0, 50.0, 8.0, step=1.0)
         sim_amount = st.number_input("每筆投入金額（元）", 10000, 10000000, 100000, step=10000)
@@ -450,20 +539,34 @@ with tab_sim:
             m7.metric("最大單筆獲利", f"{ret.max():+.1f}%")
             m8.metric("最大單筆虧損", f"{ret.min():+.1f}%")
 
-            # 已實現損益累積曲線（依出場日）
-            curve = closed.assign(pnl=closed["return_pct"] / 100 * sim_amount) \
-                .groupby("exit_date")["pnl"].sum().cumsum().reset_index()
+            # 已實現損益累積曲線（依出場日），對照：同樣的日子、同樣的金額改買同期大盤（全部股票等權平均）
+            curve = closed.assign(
+                法則=closed["return_pct"] / 100 * sim_amount,
+                同期大盤=closed["benchmark_pct"] / 100 * sim_amount,
+            ).groupby("exit_date")[["法則", "同期大盤"]].sum().cumsum().reset_index()
             curve["exit_date"] = pd.to_datetime(curve["exit_date"])
             if not curve.empty:
+                curve_long = curve.melt("exit_date", var_name="series", value_name="pnl")
+                curve_long["series"] = curve_long["series"].map(
+                    {"法則": "照法則買賣", "同期大盤": "同期大盤（等權平均）"})
                 st.altair_chart(
-                    alt.Chart(curve).mark_line().encode(
+                    alt.Chart(curve_long).mark_line().encode(
                         x=alt.X("exit_date:T", title="出場日", axis=alt.Axis(format="%m/%d")),
                         y=alt.Y("pnl:Q", title="已實現累積損益（元）"),
+                        color=alt.Color("series:N", title=None, legend=alt.Legend(orient="top"),
+                                        scale=alt.Scale(domain=["照法則買賣", "同期大盤（等權平均）"],
+                                                        range=[ACCENT, MUTED])),
+                        strokeDash=alt.StrokeDash("series:N", legend=None,
+                                                  scale=alt.Scale(domain=["照法則買賣", "同期大盤（等權平均）"],
+                                                                  range=[[1, 0], [6, 4]])),
                         tooltip=[alt.Tooltip("exit_date:T", title="出場日"),
+                                 alt.Tooltip("series:N", title="線"),
                                  alt.Tooltip("pnl:Q", title="累積損益", format=",.0f")],
                     ).properties(height=300),
                     width="stretch",
                 )
+                st.caption("灰色虛線：每筆交易同樣的持有期間、同樣的金額，改成買全部股票的等權平均，"
+                           "已實現損益會是多少（大盤報酬未扣手續費）。")
 
             # 出場原因統計
             by_reason = trades.groupby("exit_reason").agg(
@@ -512,7 +615,7 @@ with tab_sim:
                 mime="text/csv",
             )
             st.caption(
-                "⚠️ 模擬限制：股價未還原除權息；手續費以牌價 0.1425% 計（未打折）；"
+                "⚠️ 模擬限制：股價已還原除權息（配息、配股不會被當成下跌）；手續費以牌價 0.1425% 計（未打折）；"
                 "假設開盤一定買得到、賣得掉（漲跌停鎖死時實際上可能成交不了）；"
                 "同期大盤是全部股票的等權平均漲跌。過去結果不代表未來表現。"
             )
