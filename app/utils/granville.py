@@ -290,6 +290,127 @@ def watch_note(row):
 
 
 # =====================================================================
+# 下一個交易日的觸發價：明天收盤到多少，就會出現某條法則
+# =====================================================================
+LIMIT_PCT = 0.10  # 台股漲跌幅限制，超出這個範圍的價格不可能出現
+
+
+def _next_day_parts(close, ma_days=20, slope_days=5, lookback=5, near_pct=2.0, bias_pct=10.0, trend_days=60):
+    """
+    只算「明天」一天的法則時，跟明天收盤價無關的部分先算好（和 rule_frames 同樣的定義）。
+    回傳 dict，交給 _next_day_hits 代入明天收盤價。
+    """
+    close = close.ffill()
+    ma = close.rolling(ma_days, min_periods=ma_days).mean()
+    bias = (close - ma) / ma * 100
+    s = slope_days
+    past = bias.iloc[-lookback:]  # 明天往回看的區間（不含明天）
+    ma_long_prev = close.iloc[-(trend_days - 1):] if trend_days > 1 else close.iloc[0:0]
+    return {
+        "ma_days": ma_days, "trend_days": trend_days, "near_pct": near_pct, "bias_pct": bias_pct,
+        "sum_ma": close.iloc[-(ma_days - 1):].sum(min_count=ma_days - 1),          # 明天均線要用的前 ma_days-1 天
+        "sum_long": ma_long_prev.sum(min_count=trend_days - 1) if len(close) >= trend_days - 1 else None,
+        "ma_back": ma.iloc[-s],                                                    # s 天前（相對明天）的均線
+        "slope_before": ma.iloc[-s] - ma.iloc[-2 * s],                             # 明天的「一段時間前均線方向」
+        "c_y": close.iloc[-1], "ma_y": ma.iloc[-1],
+        "w_min": past.min(), "w_max": past.max(),
+    }
+
+
+def _next_day_hits(parts, p):
+    """把明天收盤價 p（每檔股票一個值的 Series）代入，回傳 {法則: 布林 Series}，判斷方式同 rule_frames"""
+    ma = (parts["sum_ma"] + p) / parts["ma_days"]
+    if parts["sum_long"] is None:
+        above_long = pd.Series(True, index=p.index)
+    else:
+        ma_long = (parts["sum_long"] + p) / parts["trend_days"]
+        above_long = ma_long.isna() | (ma > ma_long)
+    slope = ma - parts["ma_back"]
+    sb = parts["slope_before"]
+    bias = (p - ma) / ma * 100
+    c_y, ma_y, w_min, w_max = parts["c_y"], parts["ma_y"], parts["w_min"], parts["w_max"]
+    rising, falling = slope > 0, slope < 0
+    cross_up = (c_y <= ma_y) & (p > ma)
+    cross_down = (c_y >= ma_y) & (p < ma)
+    near, big = parts["near_pct"], parts["bias_pct"]
+    hits = {
+        1: cross_up & (sb <= 0) & (slope >= 0),
+        2: rising & (sb > 0) & (w_min < 0) & (p > ma) & above_long,
+        3: rising & (w_min > 0) & (w_min <= near) & (bias > 0) & (p > c_y),
+        4: falling & (bias <= -big),
+        5: cross_down & (sb >= 0) & (slope <= 0),
+        6: falling & (sb < 0) & (w_max > 0) & (p < ma),
+        7: falling & (w_max < 0) & (w_max >= -near) & (bias < 0) & (p < c_y),
+        8: rising & (bias >= big),
+    }
+    valid = p.notna() & ma.notna() & sb.notna()
+    return {n: (h & valid).fillna(False).astype(bool) for n, h in hits.items()}
+
+
+def next_day_triggers(prices, rules, side, stock_ids=None, steps=80, refine=14, **rule_params):
+    """
+    推算下一個交易日收盤價要到多少，才會出現 rules 裡任一條法則。
+
+    假設明天收盤 = 今天收盤 ×（1 + g），g 在 ±10%（漲跌幅限制）內，先用格點找出會觸發的範圍，
+    再用二分法找到邊界價格。
+    side="買進"：回傳最低觸發價（明天收盤 ≥ 這個價就出現）；
+    side="賣出"：回傳最高觸發價（明天收盤 ≤ 這個價就出現）。
+    回傳 DataFrame：stock_id、trigger_price、trigger_pct（相對今天收盤 %）、rules（觸發價當下會出現的法則）。
+    ±10% 內都不會出現的股票不列出。
+    """
+    empty = pd.DataFrame(columns=["stock_id", "trigger_price", "trigger_pct", "rules"])
+    close = _pivot(prices, "close_price")
+    if stock_ids is not None:
+        keep = set(stock_ids)
+        close = close[[c for c in close.columns if c in keep]]
+    if close.empty:
+        return empty
+    last = close.ffill().iloc[-1]
+    close = close.loc[:, last.notna().to_numpy()]
+    last = last[close.columns]
+    parts = _next_day_parts(close, **rule_params)
+
+    def any_hit(g):
+        h = _next_day_hits(parts, last * (1 + g))
+        out = pd.Series(False, index=close.columns)
+        for n in rules:
+            out |= h[n]
+        return out
+
+    grid = np.linspace(-LIMIT_PCT, LIMIT_PCT, steps + 1)
+    table = np.column_stack([any_hit(g).to_numpy() for g in grid])  # 股票 × 格點
+    found = table.any(axis=1)
+    if not found.any():
+        return empty
+    if side == "買進":
+        i = table.argmax(axis=1)                                         # 最低會觸發的格點
+        miss_i = i - 1                                                   # 再低一格（不觸發）
+    else:
+        i = table.shape[1] - 1 - table[:, ::-1].argmax(axis=1)          # 最高會觸發的格點
+        miss_i = i + 1
+    edge = found & (miss_i >= 0) & (miss_i < len(grid))
+    hit_g = pd.Series(grid[i], index=close.columns)
+    miss_g = pd.Series(np.where(edge, grid[np.clip(miss_i, 0, len(grid) - 1)], np.nan), index=close.columns)
+    for _ in range(refine):  # 二分法逼近觸發和不觸發的邊界
+        mid = ((hit_g + miss_g) / 2).where(edge, hit_g)
+        h = any_hit(mid).to_numpy()
+        hit_g = hit_g.where(~(edge & h), mid)
+        miss_g = miss_g.where(~(edge & ~h), mid)
+    price = last * (1 + hit_g)
+    # 買進取無條件進位、賣出取無條件捨去到 0.01，讓列出的價格一定會觸發
+    price = np.ceil(price * 100 - 1e-6) / 100 if side == "買進" else np.floor(price * 100 + 1e-6) / 100
+    final = _next_day_hits(parts, price)
+    ok = found & any_hit(price / last - 1).to_numpy()
+    cols = close.columns[ok]
+    return pd.DataFrame({
+        "stock_id": cols,
+        "trigger_price": price[cols].to_numpy(),
+        "trigger_pct": (price[cols] / last[cols] - 1).to_numpy() * 100,
+        "rules": [[n for n in rules if bool(final[n][sid])] for sid in cols],
+    })
+
+
+# =====================================================================
 # 模擬交易（歷史回測）
 # =====================================================================
 BUY_FEE = 0.001425          # 手續費（買、賣各收一次，未打折）
