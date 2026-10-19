@@ -6,10 +6,10 @@ import os
 import math
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from utils.db import get_stock_list, get_recent_closes, get_recent_ins
+from utils.db import get_stock_list, get_recent_closes, get_recent_ins, get_watchlist, get_paper_trades
 from utils.granville import (
     RULES, STABLE_RULES, CONFIRMS, HOLD_HINT, WATCH_DAYS, WATCH_STATUS, LATE_STATUS,
-    granville_signals, rule1_watchlist, rule_frames, simulate_trades, watch_note,
+    granville_signals, next_day_triggers, rule1_watchlist, rule_frames, simulate_trades, watch_note,
 )
 from utils.paper import add_form
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
@@ -19,7 +19,7 @@ st.set_page_config(
     page_title="葛蘭碧八大法則",
     page_icon="📐",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 st.title("📐 葛蘭碧八大法則選股")
 
@@ -118,7 +118,84 @@ if selected_industry != "全部":
 if min_volume > 0:
     df = df[df["avg_volume_20"] >= min_volume]
 
-tab_today, tab_sim = st.tabs(["📋 今日訊號", "🧪 模擬交易"])
+RULE_PARAMS = {"ma_days": ma_days, "slope_days": slope_days, "lookback": lookback,
+               "near_pct": near_pct, "bias_pct": bias_pct}
+
+# 法則 1 觀察名單（買賣預告、進階分頁共用），只留左側篩選後的股票
+watch_all = pd.DataFrame() if ins is None else rule1_watchlist(prices, ins=ins, min_volume=min_volume, **RULE_PARAMS)
+if not watch_all.empty:
+    watch_all = watch_all[watch_all["stock_id"].isin(df["stock_id"])] \
+        .merge(stock_list[["stock_id", "stock_name", "industry"]], on="stock_id", how="left")
+
+tab_plan, tab_today, tab_sim = st.tabs(["🎯 買賣預告", "📋 進階：八大法則", "🧪 模擬交易"])
+
+# ===== 個股走勢圖 =====
+def render_stock_chart(labels, triggers):
+    """
+    labels：{stock_id: 選單文字}，依顯示順序；triggers：{stock_id: (價格, 說明)}，在圖上畫成水平虛線。
+    """
+    st.subheader("📈 個股走勢")
+    st.caption(f"近 3 個月收盤價（還原權值）與 {ma_days} 日均線，圓點是當天符合的法則"
+               "（紅＝買進、綠＝賣出、橘＝過熱；只看均線條件，不含買進確認條件），白色虛線是明天的觸發價。")
+    if not labels:
+        st.info("目前篩選條件下沒有股票")
+        return
+    c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
+    chart_id = c1.selectbox("選擇股票（預告清單的股票排在前面）", list(labels),
+                            format_func=labels.get, key="chart_stock")
+    if c2.button("前往個股分析卡", width="stretch"):
+        st.session_state["card_stock_id"] = chart_id
+        st.switch_page("pages/2_個股分析卡.py")
+    one = prices[prices["stock_id"] == chart_id]
+    close_wide = one.assign(close_price=pd.to_numeric(one["close_price"], errors="coerce")) \
+        .pivot_table(index="date", columns="stock_id", values="close_price", aggfunc="last").sort_index()
+    frames = rule_frames(close_wide, ma_days, slope_days, lookback, near_pct, bias_pct)
+    line = pd.DataFrame({
+        "date": pd.to_datetime(close_wide.index),
+        "收盤價": close_wide[chart_id].values,
+        "均線": frames["ma"][chart_id].round(2).values,
+    })
+    marks = []
+    for n, hit in frames["hits"].items():
+        for d in hit.index[hit[chart_id].fillna(False).astype(bool)]:
+            marks.append({"date": d, "rule": n, "side": RULES[n][0]})
+    base = alt.Chart(line).encode(x=alt.X("date:T", title=None, axis=alt.Axis(format="%m/%d")))
+    layers = [
+        base.mark_line(color=MUTED, strokeDash=[6, 4]).encode(
+            y=alt.Y("均線:Q", title="股價", scale=alt.Scale(zero=False))),
+        base.mark_line(color=ACCENT, strokeWidth=2).encode(
+            y=alt.Y("收盤價:Q", scale=alt.Scale(zero=False)),
+            tooltip=[alt.Tooltip("date:T", title="日期"),
+                     alt.Tooltip("收盤價:Q", format=",.2f"), alt.Tooltip("均線:Q", format=",.2f")]),
+    ]
+    if marks:
+        pts = pd.DataFrame(marks).groupby("date").agg(
+            rule_text=("rule", lambda r: "、".join(str(n) for n in sorted(r))),
+            side=("side", "first"),
+        ).reset_index()
+        pts = pts.merge(line.assign(date=line["date"].dt.strftime("%Y-%m-%d")), on="date")
+        pts["date"] = pd.to_datetime(pts["date"])
+        color = alt.Color("side:N", legend=None, scale=alt.Scale(
+            domain=["買進", "賣出", "過熱"], range=[UP_COLOR, DOWN_COLOR, WARN_COLOR]))
+        point_base = alt.Chart(pts).encode(x="date:T", y="收盤價:Q")
+        layers += [
+            point_base.mark_circle(size=90, opacity=1).encode(
+                color=color,
+                tooltip=[alt.Tooltip("date:T", title="日期"), alt.Tooltip("rule_text:N", title="法則"),
+                         alt.Tooltip("收盤價:Q", format=",.2f")]),
+            point_base.mark_text(dy=-12, fontSize=11, fontWeight="bold").encode(
+                text="rule_text:N", color=color),
+        ]
+    if chart_id in triggers:
+        price, text = triggers[chart_id]
+        ref = alt.Chart(pd.DataFrame({"y": [price], "label": [text]}))
+        layers += [
+            ref.mark_rule(color="#e5e5e5", strokeDash=[2, 3]).encode(y="y:Q"),
+            ref.mark_text(align="left", dx=4, dy=-7, color="#e5e5e5", fontSize=11)
+                .encode(y="y:Q", x=alt.value(0), text="label:N"),
+        ]
+    st.altair_chart(alt.layer(*layers).properties(height=320), width="stretch")
+
 
 # ===== 八大法則示意圖 =====
 # 一張圖標出八個法則的位置。畫布 420×260，y 越小越高。
@@ -279,14 +356,7 @@ with tab_today:
             f"③ 今天收盤價重新站回 {ma_days} 日均線之上  \n"
             f"④ {ma_days} 日均線在季線（60 日均線）之上"
         )
-        watch = pd.DataFrame() if ins is None else rule1_watchlist(
-            prices, ins=ins, min_volume=min_volume, ma_days=ma_days, slope_days=slope_days,
-            lookback=lookback, near_pct=near_pct, bias_pct=bias_pct,
-        )
-        if not watch.empty:
-            # 套用左側的代號、市場、產業篩選
-            watch = watch[watch["stock_id"].isin(df["stock_id"])] \
-                .merge(stock_list[["stock_id", "stock_name", "industry"]], on="stock_id", how="left")
+        watch = watch_all.copy()
         if ins is None:
             st.warning("法人資料讀取失敗，觀察名單暫時無法判斷外資條件。")
         elif watch.empty:
@@ -347,12 +417,7 @@ with tab_today:
         st.subheader("🔴 買進訊號")
         if confirms:
             st.caption("已套用買進確認條件：" + "、".join(CONFIRMS[c] for c in confirms))
-        buy_result = show_rule_table([1, 2, 3, 4], "buy", "買進訊號")
-        # 觀察名單與買進訊號的股票都可以加入模擬持股，以最新收盤價假設買進
-        picks = [f[["stock_id", "stock_name", "close_price"]] for f in (watch, buy_result)
-                 if f is not None and not f.empty and "stock_name" in f.columns]
-        add_form(pd.concat(picks, ignore_index=True) if picks else pd.DataFrame(columns=["stock_id", "stock_name", "close_price"]),
-                 "葛蘭碧", latest_date, "granville")
+        show_rule_table([1, 2, 3, 4], "buy", "買進訊號")
 
     # ===== 賣出訊號 =====
     with st.container(border=True):
@@ -360,68 +425,177 @@ with tab_today:
         st.caption("法則 8（正乖離過大）回測多半續漲，列在這裡只當追高風險提醒。")
         show_rule_table([5, 6, 7, 8], "sell", "賣出訊號")
 
+
+# =====================================================================
+# 買賣預告：推算明天收盤到多少會出現訊號
+# =====================================================================
+@st.cache_data(ttl=3600)
+def load_triggers(rules, side, stock_ids, params):
+    return next_day_triggers(load_prices(), list(rules), side, stock_ids=list(stock_ids), **dict(params))
+
+
+def my_stock_ids():
+    """自選股與持有中的模擬持股"""
+    ids = set()
+    try:
+        ids |= set(get_watchlist()["stock_id"])
+    except Exception:
+        pass
+    try:
+        trades = get_paper_trades()
+        if not trades.empty:
+            ids |= set(trades[trades["sell_date"].isna()]["stock_id"])
+    except Exception:
+        pass
+    return ids
+
+
+SELL_RULE_TEXT = {5: "法則5（均線轉弱、跌破均線）", 6: "法則6（反彈失敗、跌回均線下）"}
+
+with tab_plan:
+    params_key = tuple(RULE_PARAMS.items())
+    lo, hi = HOLD_HINT
+    st.caption(
+        f"資料日期：{latest_date}（收盤後）。觸發價是推算「下一個交易日收盤」要到多少才會出現訊號；"
+        f"依 {ma_days} 日均線，只看 20 日均量 ≥ {min_volume:,} 張的股票（參數、篩選在左側）。"
+    )
+    with st.expander("💡 這一頁怎麼看"):
+        st.markdown(f"""
+- **準備買進**：先出現法則 1（股價突破剛轉折的均線，而且外資買超、MACD 翻正、成交量放大），之後股價回檔跌破均線、
+  再站回均線，就是法則 2 的買點。回測是法則 2 出現的**隔天開盤買進，持有 {lo}～{hi} 個交易日**。
+- **觸發價**：用最近的收盤價算出來。例如「明天收盤 ≥ 52.02 元」，代表明天收盤只要在 52.02 元以上，法則 2 就成立，後天開盤就是買點。
+- **賣出警示**：均線已經走平或往下，明天收盤跌破觸發價就會出現賣出訊號（法則 5、6）。手上有的股票可以先記下這個價位。
+- 法則 1 出現後 {WATCH_DAYS} 個交易日內沒等到法則 2，就視為失效，不再列出。
+- 觸發價只代表「如果收盤到這個價位」，不代表一定會發生；技術分析僅供參考。完整的八條法則在「進階」分頁。
+""")
+
+    # ===== 準備買進 =====
+    chart_labels, chart_triggers = {}, {}
+    with st.container(border=True):
+        st.subheader("🔴 準備買進")
+        st.caption("最近出現法則 1 的股票，等法則 2 出現再買。")
+        if ins is None:
+            st.warning("法人資料讀取失敗，暫時無法判斷法則 1 的外資條件。")
+            cand = pd.DataFrame()
+        elif watch_all.empty:
+            cand = pd.DataFrame()
+        else:
+            cand = watch_all[watch_all["status"].isin(["今天出現法則2", "等待法則2"])]
+        if ins is not None and cand.empty:
+            st.info("目前沒有出現法則 1、正在等待法則 2 的股票")
+        elif not cand.empty:
+            waiting = tuple(sorted(cand.loc[cand["status"] == "等待法則2", "stock_id"]))
+            trig = load_triggers((2,), "買進", waiting, params_key).set_index("stock_id")
+            ma_now = df.set_index("stock_id")["ma"]
+            rows = []
+            for r in cand.itertuples():
+                left = WATCH_DAYS - int(r.days_since)
+                price = pct = None
+                if r.status == "今天出現法則2":
+                    state, order = "✅ 明天開盤可買", 0
+                    note = f"今天已出現法則 2，回測建議持有 {lo}～{hi} 個交易日"
+                elif r.stock_id in trig.index:
+                    state, order = "⏳ 等待法則2", 1
+                    price, pct = float(trig.at[r.stock_id, "trigger_price"]), float(trig.at[r.stock_id, "trigger_pct"])
+                    note = (f"明天收盤 ≥ {price:,.2f} 元（漲 {pct:.2f}% 以上）就出現法則 2" if pct > 0 else
+                            f"明天收盤只要不低於 {price:,.2f} 元（跌幅在 {-pct:.2f}% 以內）就出現法則 2")
+                    note += f"（還剩 {left} 個交易日）"
+                    chart_triggers[r.stock_id] = (price, f"收盤 ≥ {price:,.2f} 出現法則2")
+                else:
+                    state, order = "👀 觀察中", 2
+                    if r.r2_c1 != "符合":
+                        note = "均線還沒穩定上揚，明天不會出現法則 2"
+                    elif r.r2_c4 != "符合":
+                        note = "月線還在季線之下，明天不會出現法則 2"
+                    elif r.close_price < ma_now.get(r.stock_id, float("nan")):
+                        note = f"目前在均線（約 {ma_now[r.stock_id]:,.2f} 元）之下，明天漲停也站不回，暫時不會出現法則 2"
+                    elif r.r2_c2 != "符合":
+                        note = f"還沒回檔：要先跌破均線（約 {ma_now.get(r.stock_id, float('nan')):,.2f} 元）再站回，才會出現法則 2"
+                    else:
+                        note = "法則 2 的條件還沒到齊，明天不會出現"
+                    note += f"（還剩 {left} 個交易日）"
+                rows.append({"order": order, "狀態": state, "代號": r.stock_id, "名稱": r.stock_name,
+                             "產業": r.industry, "最新收盤": r.close_price, "觸發價": price, "距離%": pct,
+                             "法則1日期": r.setup_date, "說明": note})
+            buy_df = pd.DataFrame(rows)
+            buy_df["abs_pct"] = buy_df["距離%"].abs()
+            buy_df = buy_df.sort_values(["order", "abs_pct", "代號"]).drop(columns=["order", "abs_pct"])
+            m1, m2, m3 = st.columns(3)
+            m1.metric("明天開盤可買", f"{(buy_df['狀態'] == '✅ 明天開盤可買').sum()} 檔")
+            m2.metric("有觸發價、等待法則2", f"{(buy_df['狀態'] == '⏳ 等待法則2').sum()} 檔")
+            m3.metric("觀察中", f"{(buy_df['狀態'] == '👀 觀察中').sum()} 檔")
+            st.dataframe(
+                buy_df.style
+                    .format("{:,.2f}", subset=["最新收盤", "觸發價"], na_rep="")
+                    .format("{:+.2f}", subset=["距離%"], na_rep="")
+                    .map(style_sign, subset=["距離%"]),
+                hide_index=True, width="stretch", height=min(500, 38 + 35 * len(buy_df)),
+                column_config={"代號": st.column_config.TextColumn(pinned=True),
+                               "名稱": st.column_config.TextColumn(pinned=True),
+                               "距離%": st.column_config.Column(help="觸發價比今天收盤高（+）或低（−）幾 %"),
+                               "說明": st.column_config.TextColumn(width="large")},
+            )
+            add_form(buy_df.rename(columns={"代號": "stock_id", "名稱": "stock_name", "最新收盤": "close_price"}),
+                     "葛蘭碧", latest_date, "granville")
+            for r in buy_df.itertuples():
+                chart_labels[r.代號] = f"{r.代號} {r.名稱}｜{r.狀態}"
+
+    # ===== 賣出警示 =====
+    with st.container(border=True):
+        st.subheader("🟢 賣出警示")
+        st.caption("均線已經走平或往下，明天收盤跌破觸發價就會出現賣出訊號。")
+        c1, c2 = st.columns([2, 1], vertical_alignment="bottom")
+        only_mine = c1.toggle("只看自選股與持有中的模擬持股", value=False)
+        max_drop = c2.number_input("列出再跌幾 % 以內就會出現的", 1.0, 10.0, 3.0, step=0.5)
+        base = df[df["stock_id"].isin(my_stock_ids())] if only_mine else df
+        today_sell = base[base["rules"].apply(lambda r: any(n in r for n in SELL_RULE_TEXT))]
+        rest = tuple(sorted(set(base["stock_id"]) - set(today_sell["stock_id"])))
+        trig = load_triggers(tuple(SELL_RULE_TEXT), "賣出", rest, params_key)
+        trig = trig[trig["trigger_pct"] >= -max_drop]
+        info = base.set_index("stock_id")
+        rows = []
+        for r in today_sell.itertuples():
+            names = "、".join(SELL_RULE_TEXT[n] for n in r.rules if n in SELL_RULE_TEXT)
+            rows.append({"order": 0, "狀態": "⚠️ 今天已出現", "代號": r.stock_id, "名稱": r.stock_name,
+                         "產業": r.industry, "最新收盤": r.close_price, "觸發價": None, "距離%": None,
+                         "均線": r.ma, "說明": f"今天出現{names}：手上有的話，可考慮明天開盤賣出"})
+        for t in trig.itertuples():
+            r = info.loc[t.stock_id]
+            names = "、".join(SELL_RULE_TEXT[n] for n in t.rules)
+            rows.append({"order": 1, "狀態": "🔔 接近賣出", "代號": t.stock_id, "名稱": r["stock_name"],
+                         "產業": r["industry"], "最新收盤": r["close_price"], "觸發價": t.trigger_price,
+                         "距離%": t.trigger_pct, "均線": r["ma"],
+                         "說明": (f"明天收盤 ≤ {t.trigger_price:,.2f} 元（跌 {-t.trigger_pct:.2f}% 以上）會出現{names}"
+                                if t.trigger_pct < 0 else
+                                f"明天收盤只要沒站上 {t.trigger_price:,.2f} 元（漲幅不到 {t.trigger_pct:.2f}%）就會出現{names}")})
+            chart_triggers[t.stock_id] = (t.trigger_price, f"收盤 ≤ {t.trigger_price:,.2f} 出現賣出訊號")
+        if not rows:
+            st.info("目前沒有出現或接近賣出訊號的股票")
+        else:
+            sell_df = pd.DataFrame(rows).sort_values(["order", "距離%", "代號"], ascending=[True, False, True]) \
+                .drop(columns=["order"])
+            m1, m2 = st.columns(2)
+            m1.metric("今天已出現賣出訊號", f"{(sell_df['狀態'] == '⚠️ 今天已出現').sum()} 檔")
+            m2.metric(f"再跌 {max_drop:g}% 以內會出現", f"{(sell_df['狀態'] == '🔔 接近賣出').sum()} 檔")
+            st.dataframe(
+                sell_df.style
+                    .format("{:,.2f}", subset=["最新收盤", "觸發價", "均線"], na_rep="")
+                    .format("{:+.2f}", subset=["距離%"], na_rep="")
+                    .map(style_sign, subset=["距離%"]),
+                hide_index=True, width="stretch", height=min(500, 38 + 35 * len(sell_df)),
+                column_config={"代號": st.column_config.TextColumn(pinned=True),
+                               "名稱": st.column_config.TextColumn(pinned=True),
+                               "距離%": st.column_config.Column(help="觸發價比今天收盤低（−）或高（+）幾 %"),
+                               "說明": st.column_config.TextColumn(width="large")},
+            )
+            for r in sell_df.itertuples():
+                chart_labels.setdefault(r.代號, f"{r.代號} {r.名稱}｜{r.狀態}")
+
     # ===== 個股走勢 =====
     with st.container(border=True):
-        st.subheader("📈 個股走勢")
-        st.caption(f"近 3 個月收盤價（還原權值）與 {ma_days} 日均線，圓點是當天符合的法則"
-                   "（紅＝買進、綠＝賣出、橘＝過熱；只看均線條件，不含左側的買進確認條件）。")
-        chart_df = df.assign(has_rule=df["rules"].str.len() > 0) \
-            .sort_values(["has_rule", "stock_id"], ascending=[False, True])
-        chart_labels = {
-            r.stock_id: f"{r.stock_id} {r.stock_name}"
-            + ("｜" + "、".join(f"法則{n}" for n in r.rules) if r.rules else "")
-            for r in chart_df.itertuples()
-        }
-        if not chart_labels:
-            st.info("目前篩選條件下沒有股票")
-        else:
-            c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-            chart_id = c1.selectbox("選擇股票（有訊號的排在前面）", list(chart_labels),
-                                    format_func=chart_labels.get, key="chart_stock")
-            if c2.button("前往個股分析卡", width="stretch"):
-                st.session_state["card_stock_id"] = chart_id
-                st.switch_page("pages/2_個股分析卡.py")
-            one = prices[prices["stock_id"] == chart_id]
-            close_wide = one.assign(close_price=pd.to_numeric(one["close_price"], errors="coerce")) \
-                .pivot_table(index="date", columns="stock_id", values="close_price", aggfunc="last").sort_index()
-            frames = rule_frames(close_wide, ma_days, slope_days, lookback, near_pct, bias_pct)
-            line = pd.DataFrame({
-                "date": pd.to_datetime(close_wide.index),
-                "收盤價": close_wide[chart_id].values,
-                "均線": frames["ma"][chart_id].round(2).values,
-            })
-            marks = []
-            for n, hit in frames["hits"].items():
-                for d in hit.index[hit[chart_id].fillna(False).astype(bool)]:
-                    marks.append({"date": d, "rule": n, "side": RULES[n][0]})
-            base = alt.Chart(line).encode(x=alt.X("date:T", title=None, axis=alt.Axis(format="%m/%d")))
-            layers = [
-                base.mark_line(color=MUTED, strokeDash=[6, 4]).encode(
-                    y=alt.Y("均線:Q", title="股價", scale=alt.Scale(zero=False))),
-                base.mark_line(color=ACCENT, strokeWidth=2).encode(
-                    y=alt.Y("收盤價:Q", scale=alt.Scale(zero=False)),
-                    tooltip=[alt.Tooltip("date:T", title="日期"),
-                             alt.Tooltip("收盤價:Q", format=",.2f"), alt.Tooltip("均線:Q", format=",.2f")]),
-            ]
-            if marks:
-                pts = pd.DataFrame(marks).groupby("date").agg(
-                    rule_text=("rule", lambda r: "、".join(str(n) for n in sorted(r))),
-                    side=("side", "first"),
-                ).reset_index()
-                pts = pts.merge(line.assign(date=line["date"].dt.strftime("%Y-%m-%d")), on="date")
-                pts["date"] = pd.to_datetime(pts["date"])
-                color = alt.Color("side:N", legend=None, scale=alt.Scale(
-                    domain=["買進", "賣出", "過熱"], range=[UP_COLOR, DOWN_COLOR, WARN_COLOR]))
-                point_base = alt.Chart(pts).encode(x="date:T", y="收盤價:Q")
-                layers += [
-                    point_base.mark_circle(size=90, opacity=1).encode(
-                        color=color,
-                        tooltip=[alt.Tooltip("date:T", title="日期"), alt.Tooltip("rule_text:N", title="法則"),
-                                 alt.Tooltip("收盤價:Q", format=",.2f")]),
-                    point_base.mark_text(dy=-12, fontSize=11, fontWeight="bold").encode(
-                        text="rule_text:N", color=color),
-                ]
-            st.altair_chart(alt.layer(*layers).properties(height=320), width="stretch")
+        for r in df.sort_values("stock_id").itertuples():
+            chart_labels.setdefault(r.stock_id, f"{r.stock_id} {r.stock_name}")
+        render_stock_chart(chart_labels, chart_triggers)
 
 
 # =====================================================================
