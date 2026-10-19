@@ -22,6 +22,9 @@ create table if not exists public.momentum_signals (
     primary key (stock_id, date)
 );
 
+-- 和其他表一樣開 RLS、不設規則：只有 service_role 金鑰（網站、排程）讀寫得到，anon 金鑰讀不到
+alter table public.momentum_signals enable row level security;
+
 -- 網頁查「最新一天的全市場資料」用
 create index if not exists momentum_signals_date_idx on public.momentum_signals (date);
 
