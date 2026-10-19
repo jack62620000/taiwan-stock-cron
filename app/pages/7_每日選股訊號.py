@@ -373,7 +373,7 @@ with tab_backtest:
                     x=alt.X("total_score:Q", title="當天總分", scale=alt.Scale(zero=False)),
                     y=alt.Y(f"{ret}:Q", title=f"{bt_h} 日後漲跌幅（%）"),
                     color=alt.Color("組別:N", scale=alt.Scale(domain=[f"前 {bt_top} 名", "其他"],
-                                                             range=[UP_COLOR, "#a3a3a3"]),
+                                                             range=[UP_COLOR, "#94a3b8"]),
                                     legend=alt.Legend(orient="top", title=None)),
                     tooltip=[alt.Tooltip("date:N", title="評分日"), alt.Tooltip("total_score:Q", title="總分"),
                              alt.Tooltip("rank:Q", title="排名"), alt.Tooltip(f"{ret}:Q", title="漲跌幅%", format="+.2f")],

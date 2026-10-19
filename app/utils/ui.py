@@ -6,54 +6,69 @@ UP_COLOR   = "#dc2626"
 DOWN_COLOR = "#16a34a"
 WARN_COLOR = "#ea580c"
 
-# 金融終端配色（.streamlit/config.toml 也用同一組）
-ACCENT     = "#f5a524"  # 琥珀色：標題、重點、主要線條
-BG_COLOR   = "#0a0a0a"
-PANEL      = "#141414"
-BORDER     = "#2a2a2a"
-TEXT       = "#e5e5e5"
-MUTED      = "#a3a3a3"
-SERIES     = ["#f5a524", "#60a5fa", "#a78bfa", "#9ca3af"]  # 圖表多條線的顏色（避開紅綠，免得和漲跌混淆）
+# 深藍儀表板配色（.streamlit/config.toml 也用同一組）
+ACCENT     = "#fbbf24"  # 金色：標題、重點、主要線條
+GLOW       = "#38bdf8"  # 青色：面板發光邊框、次要線條
+BG_COLOR   = "#050b1a"
+PANEL      = "#0b1631"
+BORDER     = "#1e3a6e"
+TEXT       = "#e2e8f0"
+MUTED      = "#94a3b8"
+SERIES     = ["#fbbf24", "#38bdf8", "#a78bfa", "#94a3b8"]  # 圖表多條線的顏色（避開紅綠，免得和漲跌混淆）
 
 # 全站字型會蓋掉 Streamlit 內建圖示（展開箭頭、側邊欄收合鈕），所以 stIconMaterial 要換回圖示字型，
 # 否則會顯示成 arrow_right、keyboard_double_arrow_left 之類的文字
 _THEME_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
 html, body, [class*="st-"], .stMarkdown, .stButton button, input, textarea, select {
-    font-family: 'IBM Plex Mono', 'Noto Sans TC', monospace !important;
+    font-family: 'Noto Sans TC', 'IBM Plex Mono', sans-serif !important;
 }
 [data-testid="stIconMaterial"], [class*="material-symbols"] {
     font-family: 'Material Symbols Rounded' !important;
 }
-[data-testid="stHeader"] { background: #f5a524; height: 2.6rem; }
+[data-testid="stApp"] {
+    background:
+        radial-gradient(ellipse at top, rgba(56,189,248,.08), transparent 60%),
+        linear-gradient(rgba(56,189,248,.035) 1px, transparent 1px) 0 0 / 32px 32px,
+        linear-gradient(90deg, rgba(56,189,248,.035) 1px, transparent 1px) 0 0 / 32px 32px,
+        #050b1a;
+}
+[data-testid="stHeader"] { background: linear-gradient(90deg, #0b1631, #102a5c 50%, #0b1631);
+                           border-bottom: 1px solid #38bdf8; box-shadow: 0 0 12px rgba(56,189,248,.35); height: 2.6rem; }
 [data-testid="stHeader"]::before {
-    content: "TWSE TERMINAL"; position: absolute; left: 1rem; top: 0.6rem;
-    color: #0a0a0a; font-weight: 700; letter-spacing: 2px; font-family: 'IBM Plex Mono', monospace;
+    content: "台股分析儀表板"; position: absolute; left: 1rem; top: 0.55rem;
+    color: #fbbf24; font-weight: 900; letter-spacing: 3px; font-family: 'Noto Sans TC', sans-serif;
+    text-shadow: 0 0 8px rgba(251,191,36,.45);
 }
-[data-testid="stHeader"] button, [data-testid="stHeader"] svg { color: #0a0a0a !important; fill: #0a0a0a; }
-h1 { color: #f5a524 !important; font-weight: 700 !important; letter-spacing: 1px;
-     border-bottom: 1px solid #2a2a2a; padding-bottom: 0.4rem !important; }
-h2, h3 { color: #f5a524 !important; font-size: 1.05rem !important; letter-spacing: 1px;
-         border-bottom: 1px solid #2a2a2a; padding-bottom: 0.3rem !important; }
-[data-testid="stSidebar"] { background: #111111; border-right: 1px solid #2a2a2a; }
+[data-testid="stHeader"] button, [data-testid="stHeader"] svg { color: #e2e8f0 !important; fill: #e2e8f0; }
+h1 { color: #fbbf24 !important; font-weight: 900 !important; letter-spacing: 1px;
+     text-shadow: 0 0 10px rgba(251,191,36,.35);
+     border-bottom: 1px solid #1e3a6e; padding-bottom: 0.4rem !important; }
+h2, h3 { color: #e2e8f0 !important; font-size: 1.05rem !important; letter-spacing: 1px;
+         border-left: 3px solid #38bdf8; padding-left: 0.6rem !important;
+         border-bottom: 1px solid #1e3a6e; padding-bottom: 0.3rem !important; }
+[data-testid="stSidebar"] { background: #071026; border-right: 1px solid #1e3a6e; }
 .stButton button, .stDownloadButton button {
-    border-radius: 2px; border: 1px solid #f5a524; color: #f5a524; background: transparent;
+    border-radius: 6px; border: 1px solid #38bdf8; color: #e2e8f0; background: rgba(56,189,248,.08);
 }
-.stButton button:hover, .stDownloadButton button:hover { background: #f5a524; color: #0a0a0a; }
-.stButton button[kind="primary"] { background: #f5a524; color: #0a0a0a; }
-[data-testid="stAlert"] { background: #141414; border: 1px solid #2a2a2a; border-left: 3px solid #f5a524; border-radius: 2px; }
-[data-testid="stAlert"] * { color: #e5e5e5; }
-[data-testid="stMetric"] { background: #141414; border: 1px solid #2a2a2a; padding: 10px 12px; border-radius: 2px; }
-[data-testid="stExpander"] details { border: 1px solid #2a2a2a; border-radius: 2px; }
-.stTabs [data-baseweb="tab"] { font-weight: 600; }
-.stTabs [aria-selected="true"] { color: #f5a524 !important; }
-hr { border-color: #2a2a2a !important; }
+.stButton button:hover, .stDownloadButton button:hover { background: #38bdf8; color: #050b1a; }
+.stButton button[kind="primary"] { background: #fbbf24; border-color: #fbbf24; color: #050b1a; }
+[data-testid="stAlert"] { background: #0b1631; border: 1px solid #1e3a6e; border-left: 3px solid #38bdf8; border-radius: 6px; }
+[data-testid="stAlert"] * { color: #e2e8f0; }
+[data-testid="stMetric"] { background: #0b1631; border: 1px solid #1e3a6e; padding: 10px 12px; border-radius: 8px;
+                           box-shadow: 0 0 10px rgba(56,189,248,.15) inset; }
+[data-testid="stExpander"] details { border: 1px solid #1e3a6e; border-radius: 8px; background: rgba(11,22,49,.6); }
+[data-testid="stVerticalBlockBorderWrapper"] { border-color: #1e3a6e !important; border-radius: 8px; }
+.stTabs [data-baseweb="tab"] { font-weight: 700; }
+.stTabs [aria-selected="true"] { color: #fbbf24 !important; }
+.stTabs [data-baseweb="tab-highlight"] { background-color: #fbbf24 !important; }
+hr { border-color: #1e3a6e !important; }
 </style>
 """
 
 def apply_theme():
-    """套用金融終端風格（字體、標題、按鈕、提示框等），每個頁面開頭呼叫一次"""
+    """套用深藍儀表板風格（字體、背景格線、標題、按鈕、提示框等），每個頁面開頭呼叫一次"""
     st.markdown(_THEME_CSS, unsafe_allow_html=True)
 
 
@@ -125,11 +140,11 @@ _TABLE_CSS = """
     font-family: 'IBM Plex Mono', 'Noto Sans TC', monospace;
 }}
 .data-table th {{
-    background: #1c1c1c;
-    color: #f5a524;
+    background: #0f2147;
+    color: #fbbf24;
     padding: 8px 6px;
     text-align: center;
-    border-bottom: 1px solid #f5a524;
+    border-bottom: 1px solid #38bdf8;
     position: sticky;
     top: 0;
     white-space: nowrap;
@@ -139,17 +154,18 @@ _TABLE_CSS = """
 .data-table td {{
     padding: 5px 8px;
     text-align: right;
-    border-bottom: 1px solid #1f1f1f;
+    border-bottom: 1px solid #13254d;
     white-space: nowrap;
 }}
 {left_rules}
-.data-table tr:hover {{ background: #1c1c1c; }}
+.data-table tr:hover {{ background: #102a5c; }}
 .table-container {{
     max-height: 700px;
     overflow-y: auto;
     overflow-x: auto;
-    border: 1px solid #2a2a2a;
-    border-radius: 2px;
+    border: 1px solid #1e3a6e;
+    border-radius: 8px;
+    background: #0b1631;
 }}
 </style>
 """
@@ -178,14 +194,16 @@ _METRIC_CSS = """
     margin-bottom: 8px;
 }
 .metric-card {
-    border: 1px solid #2a2a2a;
-    border-radius: 2px;
+    border: 1px solid #1e3a6e;
+    border-radius: 8px;
     padding: 12px 14px;
-    background: #141414;
+    background: linear-gradient(180deg, #0f1d3d, #0b1631);
+    box-shadow: 0 0 10px rgba(56,189,248,.15) inset;
 }
-.metric-card .label { font-size: 12px; color: #a3a3a3; letter-spacing: 1px; }
-.metric-card .value { font-size: 24px; font-weight: 700; color: #e5e5e5; margin: 2px 0; }
-.metric-card .delta { font-size: 13px; font-weight: 600; color: #a3a3a3; }
+.metric-card .label { font-size: 12px; color: #94a3b8; letter-spacing: 1px; }
+.metric-card .value { font-size: 24px; font-weight: 700; color: #e2e8f0; margin: 2px 0;
+                      font-family: 'IBM Plex Mono', 'Noto Sans TC', monospace; }
+.metric-card .delta { font-size: 13px; font-weight: 600; color: #94a3b8; }
 </style>
 """
 

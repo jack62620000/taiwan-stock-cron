@@ -192,8 +192,8 @@ def render_stock_chart(labels, triggers):
         price, text = triggers[chart_id]
         ref = alt.Chart(pd.DataFrame({"y": [price], "label": [text]}))
         layers += [
-            ref.mark_rule(color="#e5e5e5", strokeDash=[2, 3]).encode(y="y:Q"),
-            ref.mark_text(align="left", dx=4, dy=-7, color="#e5e5e5", fontSize=11)
+            ref.mark_rule(color="#e2e8f0", strokeDash=[2, 3]).encode(y="y:Q"),
+            ref.mark_text(align="left", dx=4, dy=-7, color="#e2e8f0", fontSize=11)
                 .encode(y="y:Q", x=alt.value(0), text="label:N"),
         ]
     st.altair_chart(alt.layer(*layers).properties(height=320), width="stretch")
@@ -220,12 +220,12 @@ def granville_diagram():
     dots = ""
     for n, (x, y) in _RULE_POINTS.items():
         color = {"買進": UP_COLOR, "賣出": DOWN_COLOR}.get(RULES[n][0], WARN_COLOR)
-        dots += (f'<circle cx="{x}" cy="{y}" r="10" fill="{color}" stroke="#0a0a0a" stroke-width="2"/>'
+        dots += (f'<circle cx="{x}" cy="{y}" r="10" fill="{color}" stroke="#050b1a" stroke-width="2"/>'
                  f'<text x="{x}" y="{y + 4}" text-anchor="middle" font-size="12" font-weight="700" '
                  f'fill="#ffffff" font-family="IBM Plex Mono, monospace">{n}</text>')
     return (
         f'<svg viewBox="0 0 420 260" width="100%" role="img" aria-label="葛蘭碧八大法則位置示意圖" '
-        f'style="max-width:520px;background:#111111;border:1px solid #2a2a2a;border-radius:2px;display:block">'
+        f'style="max-width:520px;background:#0b1631;border:1px solid #1e3a6e;border-radius:2px;display:block">'
         f'<polyline points="{ma}" fill="none" stroke="{MUTED}" stroke-width="2" stroke-dasharray="6 5"/>'
         f'<polyline points="{price}" fill="none" stroke="{ACCENT}" stroke-width="2.5" stroke-linejoin="round"/>'
         f'{dots}</svg>'
@@ -239,7 +239,7 @@ with tab_today:
         text_col, pic_col = st.columns([3, 2], vertical_alignment="center")
         text_col.markdown("\n".join(f"- **法則{n}（{side}·{level}）**：{desc}" for n, (side, desc, level) in RULES.items()))
         pic_col.markdown(granville_diagram(), unsafe_allow_html=True)
-        pic_col.caption("橘線＝股價，灰色虛線＝均線；圓點數字是法則編號（紅＝買進、綠＝賣出、橘＝過熱）")
+        pic_col.caption("金線＝股價，灰色虛線＝均線；圓點數字是法則編號（紅＝買進、綠＝賣出、橘＝過熱）")
         st.markdown(f"""
 **程式怎麼判斷（以最新一個交易日為準，參數可在左側調整）**
 - 均線上揚／下彎：今天的均線比 {slope_days} 天前高／低。

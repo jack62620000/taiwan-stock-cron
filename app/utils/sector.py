@@ -86,7 +86,7 @@ def render_sector_rotation(closes, ins, stock_list):
         tooltip=[alt.Tooltip("產業:N"), alt.Tooltip("20日%:Q", format="+.2f"), alt.Tooltip("5日%:Q", format="+.2f"),
                  alt.Tooltip("外資5日(億):Q", format="+,.1f"), alt.Tooltip("投信5日(億):Q", format="+,.1f")],
     )
-    labels = quad.mark_text(dy=-12, fontSize=11, color="#a3a3a3").encode(text="產業:N", size=alt.value(11))
+    labels = quad.mark_text(dy=-12, fontSize=11, color="#94a3b8").encode(text="產業:N", size=alt.value(11))
     rules = alt.Chart(pd.DataFrame({"v": [0]})).mark_rule(color="#9ca3af", strokeDash=[4, 4])
     st.altair_chart((rules.encode(x="v:Q") + rules.encode(y="v:Q") + quad + labels).properties(height=440), width="stretch")
     st.caption("右上：中期強、短線也還在漲（強勢延續）；左上：中期弱但最近 5 日轉強（可能開始輪動進來）；"
