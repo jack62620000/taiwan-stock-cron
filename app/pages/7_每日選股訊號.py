@@ -10,6 +10,7 @@ from utils.db import (
     get_signal_history, get_signal_performance, get_top_picks,
     get_rows_for_stocks, get_price_adjustments, apply_adjustments,
 )
+from utils.paper import add_form
 from utils.ui import require_login, render_metric_cards, UP_COLOR, DOWN_COLOR
 require_login()
 
@@ -171,6 +172,8 @@ with tab_rank:
             "warnings": st.column_config.ListColumn("風險提醒", width="medium"),
         },
     )
+
+    add_form(view, "每日選股", date, "picks")
 
     with st.expander("📖 評分規則說明"):
         st.markdown("""

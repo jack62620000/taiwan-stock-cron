@@ -405,6 +405,24 @@ def update_watchlist_note(stock_id, note):
 def remove_from_watchlist(stock_id):
     supabase.table("watchlist").delete().eq("stock_id", stock_id).execute()
 
+# ===== 模擬持股（自己挑股票假設買賣）=====
+def get_paper_trades():
+    res = supabase.table("paper_trades").select("*") \
+        .order("buy_date", desc=False).order("id", desc=False).execute()
+    return pd.DataFrame(res.data)
+
+def add_paper_trades(rows):
+    """rows 是多筆 {stock_id, source, buy_date, buy_price, shares, note}"""
+    if rows:
+        supabase.table("paper_trades").insert(rows).execute()
+
+def sell_paper_trade(trade_id, sell_date, sell_price):
+    supabase.table("paper_trades").update({"sell_date": sell_date, "sell_price": sell_price}) \
+        .eq("id", trade_id).execute()
+
+def delete_paper_trade(trade_id):
+    supabase.table("paper_trades").delete().eq("id", trade_id).execute()
+
 def get_rows_for_stocks(table, stock_ids, date_col="date", since=None, columns="*"):
     """
     指定幾檔股票在 since 之後的資料（自選股頁用）。

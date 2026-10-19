@@ -11,6 +11,7 @@ from utils.granville import (
     RULES, STABLE_RULES, CONFIRMS, HOLD_HINT, WATCH_DAYS, WATCH_STATUS, LATE_STATUS,
     granville_signals, rule1_watchlist, simulate_trades, watch_note,
 )
+from utils.paper import add_form
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
 require_login()
 
@@ -244,6 +245,7 @@ with tab_today:
             mime="text/csv",
             key=f"download_{key}",
         )
+        return result
 
     # ===== 法則 1 觀察名單 =====
     with st.container(border=True):
@@ -330,7 +332,12 @@ with tab_today:
         st.subheader("🔴 買進訊號")
         if confirms:
             st.caption("已套用買進確認條件：" + "、".join(CONFIRMS[c] for c in confirms))
-        show_rule_table([1, 2, 3, 4], "buy", "買進訊號")
+        buy_result = show_rule_table([1, 2, 3, 4], "buy", "買進訊號")
+        # 觀察名單與買進訊號的股票都可以加入模擬持股，以最新收盤價假設買進
+        picks = [f[["stock_id", "stock_name", "close_price"]] for f in (watch, buy_result)
+                 if f is not None and not f.empty and "stock_name" in f.columns]
+        add_form(pd.concat(picks, ignore_index=True) if picks else pd.DataFrame(columns=["stock_id", "stock_name", "close_price"]),
+                 "葛蘭碧", latest_date, "granville")
 
     # ===== 賣出訊號 =====
     with st.container(border=True):
