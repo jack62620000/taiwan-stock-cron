@@ -4,7 +4,7 @@
 各表保留期限（2026-10 決定）：
   股價 daily_prices                     3 年（長期均線、還原權值、回測）
   三大法人＋外資持股 stock_ins_daily      2 年（籌碼因子驗證）
-  融資融券 margin_utilization             2 年（保留券資比重新驗證需要的樣本）
+  融資融券 margin_utilization             1 年（網頁最多看 60 天；券資比只占評分 8 分，2026-10 從 2 年縮短，省約 50 MB）
   大戶持股 holder_distribution            2 年
   每日評分 daily_signals                  1 年（規則回測）
   其他小表（月營收、季報、指數、期貨、還原權值事件）全部保留。
@@ -30,7 +30,7 @@ load_dotenv()
 RETENTION = [
     ("daily_prices", "date", 3),
     ("stock_ins_daily", "date", 2),
-    ("margin_utilization", "date", 2),
+    ("margin_utilization", "date", 1),
     ("holder_distribution", "week_date", 2),
     ("daily_signals", "date", 1),
 ]
