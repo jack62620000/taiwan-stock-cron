@@ -10,10 +10,8 @@ from utils.db import (
     get_stock_list, get_signal_dates, get_rows_for_stocks, get_price_adjustments, apply_adjustments,
     get_watchlist, add_to_watchlist, update_watchlist_note, remove_from_watchlist,
 )
-from utils.granville import (
-    RULES, HOLD_HINT, STOP_LOSS_PCT, CHOP_DAYS, CHOP_CROSSES,
-    granville_signals, ma_cross_counts, next_day_triggers, rule1_watchlist, watch_note,
-)
+from utils.granville import STOP_LOSS_PCT, CHOP_DAYS, CHOP_CROSSES
+from utils.analysis import granville_status
 from utils.paper import add_form
 from utils.groups import group_picker, group_manager
 from utils.ui import require_login, style_sign
@@ -115,75 +113,7 @@ def build_table(ids, sig_dates, signals, prices, ins, revenue):
 
 @st.cache_data(ttl=3600)
 def granville_table(ids, prices, ins):
-    """
-    每檔自選股的葛蘭碧狀態（參數同葛蘭碧頁的預設值）：今天符合的法則、法則 1 之後的狀態、
-    明天收盤到多少會出現法則 2（買進）或法則 5、6（賣出）、停損價。
-    """
-    gp = prices[["stock_id", "date", "close_price", "volume"]]
-    sig = granville_signals(gp, ins=ins)
-    if sig.empty:
-        return pd.DataFrame()
-    setups = rule1_watchlist(gp, ins=ins, min_volume=0) if ins is not None and not ins.empty else pd.DataFrame()
-    setups = setups.set_index("stock_id") if not setups.empty else setups
-    buy_trig = next_day_triggers(gp, (2,), "買進", stock_ids=list(ids)).set_index("stock_id")
-    sell_trig = next_day_triggers(gp, (5, 6), "賣出", stock_ids=list(ids)).set_index("stock_id")
-    crosses = ma_cross_counts(gp)
-    lo, hi = HOLD_HINT
-    rows = []
-    for r in sig.itertuples():
-        sid = r.stock_id
-        status = setups.at[sid, "status"] if not setups.empty and sid in setups.index else None
-        buy = stop = None
-        sell_rules = [n for n in r.rules if n in (5, 6)]
-        if sell_rules:
-            state = "⚠️ 今天出現賣出訊號"
-            note = f"今天出現法則{'、'.join(map(str, sell_rules))}：手上有的話，可考慮明天開盤賣出"
-        elif 2 in r.rules:
-            state = "✅ 明天開盤可買"
-            stop = r.close_price * (1 - STOP_LOSS_PCT / 100)
-            note = f"今天出現法則 2，回測是隔天開盤買進、持有 {lo}～{hi} 個交易日"
-            if status == "今天出現法則2":
-                note += "（之前也出現過法則 1）"
-        elif sid in buy_trig.index:
-            state = "⏳ 等待法則2"
-            buy = float(buy_trig.at[sid, "trigger_price"])
-            stop = buy * (1 - STOP_LOSS_PCT / 100)
-            pct = float(buy_trig.at[sid, "trigger_pct"])
-            note = (f"明天收盤 ≥ {buy:,.2f} 元（漲 {pct:.2f}% 以上）就出現法則 2" if pct > 0 else
-                    f"明天收盤只要不低於 {buy:,.2f} 元就出現法則 2")
-            if status == "等待法則2":
-                note += "（之前已出現法則 1）"
-        elif 8 in r.rules:
-            state = "🔥 過熱（法則8）"
-            note = f"離均線 {r.bias:+.1f}%。回測多半續漲，不必急著賣；可把停損移到均線（約 {r.ma:,.2f} 元）鎖住獲利"
-        elif status is not None:
-            state = "👀 法則1後觀察中" if status == "等待法則2" else f"🕒 {status}"
-            note = watch_note(setups.loc[sid])
-            if status == "等待法則2":
-                note += "；明天還不會出現法則 2"
-        elif r.rules:
-            state = "📌 今天出現法則" + "、".join(map(str, r.rules))
-            note = "；".join(RULES[n][1] for n in r.rules)
-        else:
-            state = "— 沒有訊號"
-            note = f"均線{r.ma_trend}，股價在均線{'之上' if r.bias > 0 else '之下'}"
-        sell = float(sell_trig.at[sid, "trigger_price"]) if sid in sell_trig.index and not sell_rules else None
-        n_cross = int(crosses.get(sid, 0))
-        rows.append({
-            "代號": sid, "名稱": names.get(sid, ""), "狀態": state,
-            "今天法則": "、".join(f"法則{n}" for n in r.rules),
-            "收盤價": r.close_price, "均線": r.ma, "乖離%": r.bias, "均線方向": r.ma_trend,
-            "買進觸發價": buy, "停損價": round(stop, 2) if stop is not None else None,
-            "賣出觸發價": sell,
-            "賣出距離%": (sell / r.close_price - 1) * 100 if sell is not None else None,
-            "趨勢": "🌊 盤整" if n_cross >= CHOP_CROSSES else "📈 明確",
-            "說明": note,
-        })
-    order = {sid: k for k, sid in enumerate(ids)}
-    out = pd.DataFrame(rows)
-    for c in ["買進觸發價", "停損價", "賣出觸發價", "賣出距離%"]:
-        out[c] = pd.to_numeric(out[c], errors="coerce")
-    return out.sort_values("代號", key=lambda c: c.map(order)).reset_index(drop=True)
+    return granville_status(ids, prices, ins, names)
 
 
 def picks_table(ids, signals):
