@@ -1,7 +1,7 @@
 """
 自動化版本 - 給 GitHub Actions 排程使用
 每次執行會同步一個交易日的股價、三大法人（含外資持股）、融資融券（餘額＋限額＋使用率），
-以及最近兩週的還原權值事件、當月的大盤指數。
+以及最近兩週的還原權值事件、當月的大盤指數；每月 1～20 號另外補抓上個月還沒存到的月營收。
 
 抓取函式全部來自 fetch_stock_info.py，這裡不再複製一份，
 之後只要改 fetch_stock_info.py，排程就會跟著更新。
@@ -16,10 +16,14 @@ from datetime import datetime, timedelta, timezone
 import fetch_adjustments as adj
 import fetch_foreign_holding as foreign
 import fetch_market_index as market
+import fetch_revenue_history as revenue
 import fetch_stock_info as f
 
 SLEEP_BETWEEN_API = 2
 ADJUST_LOOKBACK_DAYS = 14   # 還原權值事件每天重抓最近兩週，漏抓一兩天也會補上
+# 月營收法定期限是次月 10 日（遇假日順延），晚報的公司陸續補上，所以 1～20 號每天補抓上個月
+REVENUE_UNTIL_DAY = 20
+REVENUE_DEADLINE_DAY = 10  # 這天之前彙總表可能還沒出來，抓不到不算錯誤
 
 
 def target_date():
@@ -110,6 +114,15 @@ def main():
     print("\n--- 大盤指數（重抓當月）---")
     _, index_problems = market.fetch_range(today[:8] + "01", today)
     problems.extend(index_problems)
+
+    day = int(today[8:10])
+    if day <= REVENUE_UNTIL_DAY:
+        last_month = (datetime.strptime(today[:8] + "01", "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+        print(f"\n--- 月營收（補抓 {last_month[:7]} 還沒存到的公司）---")
+        _, rev_problems = revenue.fetch_range(last_month, last_month, valid_stocks)
+        if day <= REVENUE_DEADLINE_DAY:
+            rev_problems = [p for p in rev_problems if "彙總表沒有資料" not in p]
+        problems.extend(rev_problems)
 
     if problems:
         print(f"\n❌ {today} 的同步不完整：")
