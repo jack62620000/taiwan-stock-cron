@@ -48,7 +48,7 @@ def evaluate_trades(trades, raw, adj):
         end_price = float(t["sell_price"]) if sold else float(end_row["close_price"])
         # 買進到結束之間的除權息：還原比例的變化
         div_mult = float(end_row["mult"]) / float(buy_row["mult"])
-        shares = float(t["shares"]) * 1000
+        shares = float(t["shares"]) * 1000  # 資料表存的是張數（零股為小數）
         cost = float(t["buy_price"]) * shares * (1 + BUY_FEE)
         proceeds = end_price * div_mult * shares * (1 - SELL_FEE - SELL_TAX)
         end_date = str(t["sell_date"]) if sold else str(end_row["date"])
@@ -80,12 +80,13 @@ def add_form(candidates, source, buy_date, key):
                   for r in options.itertuples()}
         c1, c2 = st.columns([4, 1])
         picked = c1.multiselect("股票", list(labels), format_func=labels.get, key=f"paper_pick_{key}")
-        lots = c2.number_input("每檔張數", min_value=1, max_value=1000, value=1, step=1, key=f"paper_lots_{key}")
+        qty = c2.number_input("每檔股數", min_value=1, max_value=1_000_000, value=1000, step=100, key=f"paper_qty_{key}",
+                              help="1 張 = 1000 股；不到 1000 股就是零股")
         if st.button("加入模擬持股", key=f"paper_add_{key}", type="primary", disabled=not picked):
             price = options.set_index("stock_id")["close_price"]
             add_paper_trades([
                 {"stock_id": sid, "source": source, "buy_date": str(buy_date),
-                 "buy_price": round(float(price[sid]), 2), "shares": int(lots), "note": ""}
+                 "buy_price": round(float(price[sid]), 2), "shares": int(qty) / 1000, "note": ""}
                 for sid in picked
             ])
             st.success(f"已加入 {len(picked)} 檔")

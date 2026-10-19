@@ -59,6 +59,7 @@ if not trades.empty:
     raw, adj = load_prices(ids, since)
     result = evaluate_trades(trades, raw, adj)
     result["stock_name"] = result["stock_id"].map(names).fillna("")
+    result["qty"] = (pd.to_numeric(result["shares"]) * 1000).round()  # 資料表存張數，畫面用股數
     sold_mask = result["sell_date"].notna()
     holding, closed = result[~sold_mask], result[sold_mask]
 
@@ -83,7 +84,7 @@ if not trades.empty:
                 .format("{:,.2f}", subset=prices, na_rep="")
                 .format("{:,.0f}", subset=money, na_rep="")
                 .format("{:+.2f}", subset=["報酬%"], na_rep="")
-                .format("{:,.0f}", subset=["張數", "持有天數"], na_rep="")
+                .format("{:,.0f}", subset=["股數", "持有天數"], na_rep="")
                 .map(style_sign, subset=["損益(元)", "報酬%"]),
             hide_index=True, width="stretch",
             height=min(600, 38 + 35 * len(table)),
@@ -98,13 +99,13 @@ if not trades.empty:
     else:
         show(holding, {
             "stock_id": "代號", "stock_name": "名稱", "source": "來源", "buy_date": "買進日",
-            "buy_price": "買進價", "shares": "張數", "end_date": "最新日期", "end_price": "最新收盤",
+            "buy_price": "買進價", "qty": "股數", "end_date": "最新日期", "end_price": "最新收盤",
             "hold_days": "持有天數", "cost": "成本(元)", "pnl": "損益(元)", "pnl_pct": "報酬%", "note": "備註",
         })
 
         with st.container(border=True):
             st.markdown("**賣出**")
-            labels = {r.id: f"{r.stock_id} {r.stock_name}｜{r.buy_date} 買 {float(r.buy_price):,.2f} × {float(r.shares):g} 張"
+            labels = {r.id: f"{r.stock_id} {r.stock_name}｜{r.buy_date} 買 {float(r.buy_price):,.2f} × {r.qty:,.0f} 股"
                       for r in holding.itertuples()}
             c1, c2, c3 = st.columns([3, 1, 1])
             pick = c1.selectbox("要賣出的持股", list(labels), format_func=labels.get, key="sell_pick")
@@ -129,7 +130,7 @@ if not trades.empty:
     else:
         show(closed.sort_values("sell_date", ascending=False), {
             "stock_id": "代號", "stock_name": "名稱", "source": "來源", "buy_date": "買進日",
-            "buy_price": "買進價", "shares": "張數", "sell_date": "賣出日", "sell_price": "賣出價",
+            "buy_price": "買進價", "qty": "股數", "sell_date": "賣出日", "sell_price": "賣出價",
             "hold_days": "持有天數", "cost": "成本(元)", "pnl": "損益(元)", "pnl_pct": "報酬%", "note": "備註",
         })
 
@@ -162,13 +163,14 @@ with st.container(border=True):
     default_buy, buy_price_day = close_on(sid, buy_day) if sid else (None, None)
     buy_price = c3.number_input("買進價", min_value=0.0, value=default_buy or 0.0, step=0.05, format="%.2f",
                                 key=f"buy_price_{sid}_{buy_day}")
-    lots = c4.number_input("張數", min_value=1, max_value=1000, value=1, step=1)
+    qty = c4.number_input("股數", min_value=1, max_value=1_000_000, value=1000, step=100,
+                          help="1 張 = 1000 股；不到 1000 股就是零股")
     note = st.text_input("備註（選填）", placeholder="例如：法則2出現、外資連買")
     if sid and buy_price_day and buy_price_day != str(buy_day):
         st.caption(f"{buy_day} 沒有收盤價，預設帶入 {buy_price_day} 的收盤價。")
     if st.button("新增", type="primary", disabled=not sid or buy_price <= 0):
         add_paper_trades([{"stock_id": sid, "source": "手動", "buy_date": str(buy_day),
-                           "buy_price": round(float(buy_price), 2), "shares": int(lots), "note": note.strip()}])
+                           "buy_price": round(float(buy_price), 2), "shares": int(qty) / 1000, "note": note.strip()}])
         st.rerun()
 
 st.caption(
