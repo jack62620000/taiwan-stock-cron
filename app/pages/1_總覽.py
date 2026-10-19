@@ -13,8 +13,9 @@ from utils.db import (
     get_stock_list, get_latest_prices, get_latest_ins,
     get_latest_margin, get_latest_holder, get_latest_revenue,
     get_latest_quarterly, get_latest_margin_utilization, get_recent_closes,
-    get_market_index, get_futures_ins
+    get_market_index, get_futures_ins, get_recent_ins
 )
+from utils.sector import render_sector_rotation
 require_login()
 
 st.set_page_config(
@@ -73,7 +74,8 @@ def load_overview_data():
         get_latest_holder,
         get_latest_revenue,
         get_latest_quarterly,
-        get_recent_closes,
+        # 類股輪動要算成交值，所以多取 volume
+        lambda: get_recent_closes(columns="stock_id, date, close_price, volume"),
     ]
     with st.spinner("正在載入資料..."):
         data = [f() for f in loaders]
@@ -87,6 +89,11 @@ stock_list, prices, ins, margin, margin_util, holder, revenue, quarterly, closes
 def load_market_data():
     """加權、櫃買指數近 120 個交易日，以及臺股期貨三大法人未平倉"""
     return get_market_index("TAIEX", 120), get_market_index("TPEX", 120), get_futures_ins()
+
+@st.cache_data(ttl=3600)
+def load_sector_ins():
+    """類股輪動用：近 10 天外資、投信買賣超"""
+    return get_recent_ins(calendar_days=10, columns="stock_id, date, foreign_net_shares, sitca_net_shares")
 
 def market_breadth(closes):
     """每個交易日的上漲、下跌家數（和前一個交易日的還原收盤價比較，沒有成交的不算）"""
@@ -112,81 +119,90 @@ def index_card(label, df):
 taiex, tpex, futures = load_market_data()
 breadth = market_breadth(closes)
 
-st.subheader("📈 大盤儀表板")
-cards = [index_card("加權指數", taiex), index_card("櫃買指數", tpex)]
+tab_market, tab_sector, tab_all = st.tabs(["📈 大盤", "🔄 類股輪動", "📋 全台股數據"])
 
-# 上市＋上櫃成交值（億元），和前一個交易日比較
-value = pd.concat([taiex, tpex])[["date", "trade_value"]] if not taiex.empty else pd.DataFrame()
-if not value.empty:
-    value = value.groupby("date")["trade_value"].sum().sort_index() / 1e8
-    v_now = value.iloc[-1]
-    v_chg = (v_now / value.iloc[-2] - 1) * 100 if len(value) > 1 and value.iloc[-2] > 0 else 0
-    cards.append(("上市櫃成交值", f"{v_now:,.0f} 億", f"較前一日 {v_chg:+.1f}%", v_chg))
+with tab_market:
+    cards = [index_card("加權指數", taiex), index_card("櫃買指數", tpex)]
 
-if not breadth.empty:
-    up, down = int(breadth["上漲"].iloc[-1]), int(breadth["下跌"].iloc[-1])
-    cards.append(("上漲／下跌家數", f"{up:,} / {down:,}",
-                  f"上漲佔 {up / (up + down) * 100:.0f}%" if up + down else "", up - down))
+    # 上市＋上櫃成交值（億元），和前一個交易日比較
+    value = pd.concat([taiex, tpex])[["date", "trade_value"]] if not taiex.empty else pd.DataFrame()
+    if not value.empty:
+        value = value.groupby("date")["trade_value"].sum().sort_index() / 1e8
+        v_now = value.iloc[-1]
+        v_chg = (v_now / value.iloc[-2] - 1) * 100 if len(value) > 1 and value.iloc[-2] > 0 else 0
+        cards.append(("上市櫃成交值", f"{v_now:,.0f} 億", f"較前一日 {v_chg:+.1f}%", v_chg))
 
-foreign_fut = futures[futures["item"] == "外資及陸資"].sort_values("date") if not futures.empty else futures
-if not foreign_fut.empty:
-    oi = foreign_fut["net_oi"].astype(float)
-    oi_chg = oi.iloc[-1] - oi.iloc[-2] if len(oi) > 1 else 0
-    cards.append(("外資台指期淨未平倉", f"{oi.iloc[-1]:,.0f} 口",
-                  f"較前一日 {oi_chg:+,.0f} 口", oi_chg))
-render_metric_cards(cards)
+    if not breadth.empty:
+        up, down = int(breadth["上漲"].iloc[-1]), int(breadth["下跌"].iloc[-1])
+        cards.append(("上漲／下跌家數", f"{up:,} / {down:,}",
+                      f"上漲佔 {up / (up + down) * 100:.0f}%" if up + down else "", up - down))
 
-chart_left, chart_right = st.columns(2)
-with chart_left:
-    index_pick = st.radio("指數", ["加權指數", "櫃買指數"], horizontal=True, label_visibility="collapsed")
-    idx = (taiex if index_pick == "加權指數" else tpex).copy()
-    if idx.empty:
-        st.info("無大盤指數資料")
-    else:
-        idx["date"] = idx["date"].astype(str)
-        idx["收盤"] = pd.to_numeric(idx["close"], errors="coerce")
-        idx["20 日均線"] = idx["收盤"].rolling(20).mean()
-        idx_long = idx[["date", "收盤", "20 日均線"]].melt("date", var_name="線", value_name="點數").dropna()
-        step = max(1, len(idx) // 6)
-        st.altair_chart(alt.Chart(idx_long).mark_line(strokeWidth=2).encode(
-            x=alt.X("date:O", title=None, axis=alt.Axis(values=idx["date"].iloc[::step].tolist(), labelAngle=0)),
-            y=alt.Y("點數:Q", title=f"{index_pick}（近 {len(idx)} 個交易日）", scale=alt.Scale(zero=False)),
-            color=alt.Color("線:N", scale=alt.Scale(domain=["收盤", "20 日均線"], range=["#f5a524", "#9ca3af"]),
+    foreign_fut = futures[futures["item"] == "外資及陸資"].sort_values("date") if not futures.empty else futures
+    if not foreign_fut.empty:
+        oi = foreign_fut["net_oi"].astype(float)
+        oi_chg = oi.iloc[-1] - oi.iloc[-2] if len(oi) > 1 else 0
+        cards.append(("外資台指期淨未平倉", f"{oi.iloc[-1]:,.0f} 口",
+                      f"較前一日 {oi_chg:+,.0f} 口", oi_chg))
+    render_metric_cards(cards)
+
+    chart_left, chart_right = st.columns(2)
+    with chart_left:
+        index_pick = st.radio("指數", ["加權指數", "櫃買指數"], horizontal=True, label_visibility="collapsed")
+        idx = (taiex if index_pick == "加權指數" else tpex).copy()
+        if idx.empty:
+            st.info("無大盤指數資料")
+        else:
+            idx["date"] = idx["date"].astype(str)
+            idx["收盤"] = pd.to_numeric(idx["close"], errors="coerce")
+            idx["20 日均線"] = idx["收盤"].rolling(20).mean()
+            idx_long = idx[["date", "收盤", "20 日均線"]].melt("date", var_name="線", value_name="點數").dropna()
+            step = max(1, len(idx) // 6)
+            st.altair_chart(alt.Chart(idx_long).mark_line(strokeWidth=2).encode(
+                x=alt.X("date:O", title=None, axis=alt.Axis(values=idx["date"].iloc[::step].tolist(), labelAngle=0)),
+                y=alt.Y("點數:Q", title=f"{index_pick}（近 {len(idx)} 個交易日）", scale=alt.Scale(zero=False)),
+                color=alt.Color("線:N", scale=alt.Scale(domain=["收盤", "20 日均線"], range=["#f5a524", "#9ca3af"]),
+                                legend=alt.Legend(orient="top", title=None)),
+                tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("線:N"),
+                         alt.Tooltip("點數:Q", format=",.2f")],
+            ).properties(height=260), width="stretch")
+
+    with chart_right:
+        st.markdown("**外資台指期淨未平倉（近 60 個交易日）**")
+        if foreign_fut.empty:
+            st.info("無期貨資料")
+        else:
+            fut = foreign_fut.tail(60)[["date", "net_oi"]].copy()
+            fut["date"] = fut["date"].astype(str)
+            fut["net_oi"] = fut["net_oi"].astype(float)
+            step = max(1, len(fut) // 6)
+            st.altair_chart(alt.Chart(fut).mark_bar().encode(
+                x=alt.X("date:O", title=None, axis=alt.Axis(values=fut["date"].iloc[::step].tolist(), labelAngle=0)),
+                y=alt.Y("net_oi:Q", title="淨未平倉（口）", axis=alt.Axis(format="~s")),
+                color=alt.condition(alt.datum.net_oi >= 0, alt.value(UP_COLOR), alt.value(DOWN_COLOR)),
+                tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("net_oi:Q", title="淨未平倉（口）", format=",")],
+            ).properties(height=260), width="stretch")
+
+    if not breadth.empty:
+        st.markdown(f"**每日漲跌家數（近 {len(breadth)} 個交易日）**")
+        b_long = breadth.assign(下跌=-breadth["下跌"]).melt("date", var_name="漲跌", value_name="家數")
+        st.altair_chart(alt.Chart(b_long).mark_bar().encode(
+            x=alt.X("date:O", title=None, axis=alt.Axis(labelAngle=0)),
+            y=alt.Y("家數:Q", title="家數（下跌畫在零軸下方）"),
+            color=alt.Color("漲跌:N", scale=alt.Scale(domain=["上漲", "下跌"], range=[UP_COLOR, DOWN_COLOR]),
                             legend=alt.Legend(orient="top", title=None)),
-            tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("線:N"),
-                     alt.Tooltip("點數:Q", format=",.2f")],
-        ).properties(height=260), width="stretch")
+            tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("漲跌:N"),
+                     alt.Tooltip("家數:Q", title="家數")],
+        ).properties(height=200), width="stretch")
+        st.caption("漲跌家數用還原權值後的收盤價和前一個交易日比較；上漲家數持續多於下跌家數，代表大部分股票一起走強，不是只有權值股撐盤。")
 
-with chart_right:
-    st.markdown("**外資台指期淨未平倉（近 60 個交易日）**")
-    if foreign_fut.empty:
-        st.info("無期貨資料")
-    else:
-        fut = foreign_fut.tail(60)[["date", "net_oi"]].copy()
-        fut["date"] = fut["date"].astype(str)
-        fut["net_oi"] = fut["net_oi"].astype(float)
-        step = max(1, len(fut) // 6)
-        st.altair_chart(alt.Chart(fut).mark_bar().encode(
-            x=alt.X("date:O", title=None, axis=alt.Axis(values=fut["date"].iloc[::step].tolist(), labelAngle=0)),
-            y=alt.Y("net_oi:Q", title="淨未平倉（口）", axis=alt.Axis(format="~s")),
-            color=alt.condition(alt.datum.net_oi >= 0, alt.value(UP_COLOR), alt.value(DOWN_COLOR)),
-            tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("net_oi:Q", title="淨未平倉（口）", format=",")],
-        ).properties(height=260), width="stretch")
+with tab_sector:
+    try:
+        sector_ins = load_sector_ins()
+    except Exception:
+        sector_ins = pd.DataFrame()
+        st.warning("法人資料暫時讀取失敗，產業的外資、投信金額先不顯示。")
+    render_sector_rotation(closes, sector_ins, stock_list)
 
-if not breadth.empty:
-    st.markdown(f"**每日漲跌家數（近 {len(breadth)} 個交易日）**")
-    b_long = breadth.assign(下跌=-breadth["下跌"]).melt("date", var_name="漲跌", value_name="家數")
-    st.altair_chart(alt.Chart(b_long).mark_bar().encode(
-        x=alt.X("date:O", title=None, axis=alt.Axis(labelAngle=0)),
-        y=alt.Y("家數:Q", title="家數（下跌畫在零軸下方）"),
-        color=alt.Color("漲跌:N", scale=alt.Scale(domain=["上漲", "下跌"], range=[UP_COLOR, DOWN_COLOR]),
-                        legend=alt.Legend(orient="top", title=None)),
-        tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("漲跌:N"),
-                 alt.Tooltip("家數:Q", title="家數")],
-    ).properties(height=200), width="stretch")
-    st.caption("漲跌家數用還原權值後的收盤價和前一個交易日比較；上漲家數持續多於下跌家數，代表大部分股票一起走強，不是只有權值股撐盤。")
-
-st.markdown("---")
 
 # ===== 合併資料 =====
 df = stock_list.copy()
@@ -295,6 +311,7 @@ if "open_price" in df.columns and "close_price" in df.columns:
 
 # ===== 側邊篩選器 =====
 st.sidebar.header("🔍 篩選條件")
+st.sidebar.caption("只套用在「📋 全台股數據」分頁。")
 st.sidebar.markdown("### 🔍 搜尋")
 search_id   = st.sidebar.text_input("股票代號（可輸入多個，用逗號分隔）", placeholder="例如: 2330,2454,0050")
 search_name = st.sidebar.text_input("公司名稱關鍵字", placeholder="例如: 台積")
@@ -350,117 +367,117 @@ if "foreign_net_shares" in filtered.columns:
 if "RSI" in filtered.columns:
     filtered = filtered[filtered["RSI"].isna() | ((filtered["RSI"] >= rsi_min) & (filtered["RSI"] <= rsi_max))]
 
-# ===== 顯示統計 =====
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("篩選後股票數", f"{len(filtered):,} 檔")
-col2.metric("上市", f"{len(filtered[filtered['market']=='上市']):,} 檔")
-col3.metric("上櫃", f"{len(filtered[filtered['market']=='上櫃']):,} 檔")
-col4.metric("資料日期", prices["date"].max() if not prices.empty else "N/A")
+with tab_all:
+    # ===== 顯示統計 =====
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("篩選後股票數", f"{len(filtered):,} 檔")
+    col2.metric("上市", f"{len(filtered[filtered['market']=='上市']):,} 檔")
+    col3.metric("上櫃", f"{len(filtered[filtered['market']=='上櫃']):,} 檔")
+    col4.metric("資料日期", prices["date"].max() if not prices.empty else "N/A")
 
-st.markdown("---")
+    st.markdown("---")
 
-# ===== 顯示資料表 =====
-st.subheader("📋 全台股數據總覽")
-st.caption("點欄位名稱可排序，滑到表格右上角可搜尋、全螢幕檢視。")
+    # ===== 顯示資料表 =====
+    st.caption("點欄位名稱可排序，滑到表格右上角可搜尋、全螢幕檢視。")
 
-DOWN_STYLE = f"color:{DOWN_COLOR};font-weight:600;"  # 虧損標示用
+    DOWN_STYLE = f"color:{DOWN_COLOR};font-weight:600;"  # 虧損標示用
 
-# 定義欄位對應（✅ 融券餘額改為融資使用率）
-col_map = {
-    "stock_id":           "股票代號",
-    "stock_name":         "公司名稱",
-    "market":             "市場",
-    "industry":           "產業別",
-    "close_price":        "收盤價",
-    "volume":             "成交量",
-    "pe_ratio":           "P/E(年化)",
-    "pb_ratio":           "P/B",
-    "eps":                "EPS(累計)",
-    "roe":                "ROE%(累計)",
-    "book_value":         "每股淨值",
-    "year_month":         "營收年月",
-    "revenue":            "月營收(千)",
-    "yoy_growth":         "年增率%",
-    "mom_growth":         "月增率%",
-    "foreign_net_shares": "外資買賣超",
-    "sitca_net_shares":   "投信買賣超",
-    "dealers_net_shares": "自營買賣超",
-    "total_net_shares":   "法人合計",
-    "big_holder_ratio":   "大戶持股%",
-    "margin_balance":     "融資餘額(張)",
-    "margin_rate":        "融資使用率",  # ✅ 原本是融券餘額，改為融資使用率
-    "RSI":                "RSI",
-}
+    # 定義欄位對應（✅ 融券餘額改為融資使用率）
+    col_map = {
+        "stock_id":           "股票代號",
+        "stock_name":         "公司名稱",
+        "market":             "市場",
+        "industry":           "產業別",
+        "close_price":        "收盤價",
+        "volume":             "成交量",
+        "pe_ratio":           "P/E(年化)",
+        "pb_ratio":           "P/B",
+        "eps":                "EPS(累計)",
+        "roe":                "ROE%(累計)",
+        "book_value":         "每股淨值",
+        "year_month":         "營收年月",
+        "revenue":            "月營收(千)",
+        "yoy_growth":         "年增率%",
+        "mom_growth":         "月增率%",
+        "foreign_net_shares": "外資買賣超",
+        "sitca_net_shares":   "投信買賣超",
+        "dealers_net_shares": "自營買賣超",
+        "total_net_shares":   "法人合計",
+        "big_holder_ratio":   "大戶持股%",
+        "margin_balance":     "融資餘額(張)",
+        "margin_rate":        "融資使用率",  # ✅ 原本是融券餘額，改為融資使用率
+        "RSI":                "RSI",
+    }
 
-available_cols = {k: v for k, v in col_map.items() if k in filtered.columns}
-show_cols = list(available_cols.keys())
-if "price_change" in filtered.columns:
-    show_cols.append("price_change")  # 收盤價上色用，不顯示
+    available_cols = {k: v for k, v in col_map.items() if k in filtered.columns}
+    show_cols = list(available_cols.keys())
+    if "price_change" in filtered.columns:
+        show_cols.append("price_change")  # 收盤價上色用，不顯示
 
-show_df = filtered[show_cols].copy()
-show_df = show_df.sort_values("stock_id").reset_index(drop=True)
+    show_df = filtered[show_cols].copy()
+    show_df = show_df.sort_values("stock_id").reset_index(drop=True)
 
-# P/E 轉成數字才能排序；虧損的公司設為無限大（排序時排在最貴的一端），顯示時標「虧損」
-loss_mask = pd.Series(False, index=show_df.index)
-if "pe_ratio" in show_df.columns:
-    loss_mask = show_df["pe_ratio"] == "虧損"
-    show_df["pe_ratio"] = pd.to_numeric(show_df["pe_ratio"].where(~loss_mask), errors="coerce")
-    show_df.loc[loss_mask, "pe_ratio"] = np.inf
+    # P/E 轉成數字才能排序；虧損的公司設為無限大（排序時排在最貴的一端），顯示時標「虧損」
+    loss_mask = pd.Series(False, index=show_df.index)
+    if "pe_ratio" in show_df.columns:
+        loss_mask = show_df["pe_ratio"] == "虧損"
+        show_df["pe_ratio"] = pd.to_numeric(show_df["pe_ratio"].where(~loss_mask), errors="coerce")
+        show_df.loc[loss_mask, "pe_ratio"] = np.inf
 
-price_change = show_df.pop("price_change") if "price_change" in show_df.columns \
-    else pd.Series(index=show_df.index, dtype=float)
+    price_change = show_df.pop("price_change") if "price_change" in show_df.columns \
+        else pd.Series(index=show_df.index, dtype=float)
 
-display_df = show_df.rename(columns=available_cols)
-present = set(display_df.columns)
-def cols(*names):
-    return [c for c in names if c in present]
+    display_df = show_df.rename(columns=available_cols)
+    present = set(display_df.columns)
+    def cols(*names):
+        return [c for c in names if c in present]
 
-fmt_2   = cols("收盤價", "P/B", "EPS(累計)", "ROE%(累計)", "每股淨值",
-               "年增率%", "月增率%", "大戶持股%", "RSI", "P/E(年化)")
-fmt_int = cols("成交量", "月營收(千)", "外資買賣超", "投信買賣超",
-               "自營買賣超", "法人合計", "融資餘額(張)")
-sign_cols = cols("EPS(累計)", "ROE%(累計)", "年增率%", "月增率%",
-                 "外資買賣超", "投信買賣超", "自營買賣超", "法人合計")
+    fmt_2   = cols("收盤價", "P/B", "EPS(累計)", "ROE%(累計)", "每股淨值",
+                   "年增率%", "月增率%", "大戶持股%", "RSI", "P/E(年化)")
+    fmt_int = cols("成交量", "月營收(千)", "外資買賣超", "投信買賣超",
+                   "自營買賣超", "法人合計", "融資餘額(張)")
+    sign_cols = cols("EPS(累計)", "ROE%(累計)", "年增率%", "月增率%",
+                     "外資買賣超", "投信買賣超", "自營買賣超", "法人合計")
 
-styler = display_df.style \
-    .format("{:,.2f}", subset=fmt_2, na_rep="") \
-    .format("{:,.0f}", subset=fmt_int, na_rep="") \
-    .map(style_sign, subset=sign_cols)
+    styler = display_df.style \
+        .format("{:,.2f}", subset=fmt_2, na_rep="") \
+        .format("{:,.0f}", subset=fmt_int, na_rep="") \
+        .map(style_sign, subset=sign_cols)
 
-if "融資使用率" in present:
-    styler = styler.format("{:.2f}%", subset=["融資使用率"], na_rep="") \
-        .map(style_rate, subset=["融資使用率"])
+    if "融資使用率" in present:
+        styler = styler.format("{:.2f}%", subset=["融資使用率"], na_rep="") \
+            .map(style_rate, subset=["融資使用率"])
 
-if "收盤價" in present:
-    # 收盤價依當日漲跌上色
-    styler = styler.apply(
-        lambda s: [style_sign(c) for c in price_change], subset=["收盤價"], axis=0
+    if "收盤價" in present:
+        # 收盤價依當日漲跌上色
+        styler = styler.apply(
+            lambda s: [style_sign(c) for c in price_change], subset=["收盤價"], axis=0
+        )
+
+    if "P/E(年化)" in present and loss_mask.any():
+        loss_idx = show_df.index[loss_mask]
+        styler = styler.format(lambda _: "虧損", subset=pd.IndexSlice[loss_idx, ["P/E(年化)"]]) \
+            .map(lambda _: DOWN_STYLE, subset=pd.IndexSlice[loss_idx, ["P/E(年化)"]])
+
+    st.dataframe(
+        styler,
+        hide_index=True,
+        width="stretch",
+        height=700,
+        column_config={
+            "股票代號": st.column_config.TextColumn(pinned=True),
+            "公司名稱": st.column_config.TextColumn(pinned=True),
+        },
     )
 
-if "P/E(年化)" in present and loss_mask.any():
-    loss_idx = show_df.index[loss_mask]
-    styler = styler.format(lambda _: "虧損", subset=pd.IndexSlice[loss_idx, ["P/E(年化)"]]) \
-        .map(lambda _: DOWN_STYLE, subset=pd.IndexSlice[loss_idx, ["P/E(年化)"]])
-
-st.dataframe(
-    styler,
-    hide_index=True,
-    width="stretch",
-    height=700,
-    column_config={
-        "股票代號": st.column_config.TextColumn(pinned=True),
-        "公司名稱": st.column_config.TextColumn(pinned=True),
-    },
-)
-
-# ===== 下載按鈕 =====
-st.markdown("---")
-csv_df = filtered[show_cols].copy()
-csv_df = csv_df.sort_values("stock_id").reset_index(drop=True)
-csv = csv_df.to_csv(index=False, encoding="utf-8-sig")
-st.download_button(
-    label="📥 下載篩選結果 CSV",
-    data=csv,
-    file_name="台股篩選結果.csv",
-    mime="text/csv",
-)
+    # ===== 下載按鈕 =====
+    st.markdown("---")
+    csv_df = filtered[show_cols].copy()
+    csv_df = csv_df.sort_values("stock_id").reset_index(drop=True)
+    csv = csv_df.to_csv(index=False, encoding="utf-8-sig")
+    st.download_button(
+        label="📥 下載篩選結果 CSV",
+        data=csv,
+        file_name="台股篩選結果.csv",
+        mime="text/csv",
+    )
