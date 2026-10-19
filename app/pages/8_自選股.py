@@ -15,13 +15,14 @@ from utils.granville import (
     granville_signals, ma_cross_counts, next_day_triggers, rule1_watchlist, watch_note,
 )
 from utils.paper import add_form
+from utils.groups import group_picker, group_manager
 from utils.ui import require_login, style_sign
 require_login()
 
 st.set_page_config(page_title="自選股", page_icon="⭐", layout="wide")
 st.title("⭐ 自選股")
 st.caption("把常看的股票加進來，一頁看完最新股價、法人動向與營收，並分別用葛蘭碧法則與每日選股評分分析。"
-           "清單存在資料庫，換裝置也看得到。")
+           "清單存在資料庫，換裝置也看得到；每個人的帳號底下可以分成多個分組。")
 
 if st.button("🔄 強制重新整理資料"):
     st.cache_data.clear()
@@ -30,7 +31,11 @@ if st.button("🔄 強制重新整理資料"):
 
 stock_list = get_stock_list()
 names = dict(zip(stock_list["stock_id"], stock_list["stock_name"].fillna(""))) if not stock_list.empty else {}
-watch = get_watchlist()
+pick_col, _ = st.columns([1, 2])
+with pick_col:
+    group_id, group_name = group_picker()
+group_manager()
+watch = get_watchlist(group_id)
 watch_ids = watch["stock_id"].tolist()
 
 
@@ -215,7 +220,7 @@ if not watch_ids:
 else:
     sig_dates, signals, prices, ins, revenue = load_watch_data(tuple(watch_ids))
     table = build_table(watch_ids, sig_dates, signals, prices, ins, revenue)
-    st.subheader(f"自選股 {len(watch_ids)} 檔（評分日 {sig_dates[0] if sig_dates else '—'}）")
+    st.subheader(f"{group_name}：{len(watch_ids)} 檔（評分日 {sig_dates[0] if sig_dates else '—'}）")
     tab_all, tab_granville, tab_picks = st.tabs(["📋 總覽", "📐 葛蘭碧分析", "🎯 每日選股分析"])
 
     with tab_all:
@@ -336,7 +341,7 @@ with add_col:
                           format_func=lambda s: f"{s} {names.get(s, '')}")
     new_note = st.text_input("備註（選填）", placeholder="例如: 等回測月線再買")
     if st.button("➕ 加入", disabled=new_id is None):
-        add_to_watchlist(new_id, new_note.strip())
+        add_to_watchlist(group_id, new_id, new_note.strip())
         st.cache_data.clear()
         st.rerun()
 
@@ -345,7 +350,7 @@ with remove_col:
     to_remove = st.multiselect("選擇要移除的股票", watch_ids, format_func=lambda s: f"{s} {names.get(s, '')}")
     if st.button("🗑️ 移除", disabled=not to_remove):
         for sid in to_remove:
-            remove_from_watchlist(sid)
+            remove_from_watchlist(group_id, sid)
         st.cache_data.clear()
         st.rerun()
 
@@ -359,6 +364,6 @@ if watch_ids:
     changed = edited[edited["備註"].fillna("") != notes["備註"].fillna("")]
     if st.button("💾 儲存備註", disabled=changed.empty):
         for _, r in changed.iterrows():
-            update_watchlist_note(r["代號"], (r["備註"] or "").strip())
+            update_watchlist_note(group_id, r["代號"], (r["備註"] or "").strip())
         st.success(f"已儲存 {len(changed)} 筆備註")
         st.rerun()

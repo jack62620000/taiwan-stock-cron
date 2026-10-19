@@ -61,10 +61,13 @@ def apply_theme():
 def require_login():
     """未登入就導回首頁。每個 page 開頭呼叫一次。"""
     apply_theme()
-    if not st.session_state.get("authenticated"):
+    # 分組功能上線前登入的工作階段沒有記帳號，也請重新登入
+    if not st.session_state.get("authenticated") or not st.session_state.get("user"):
         st.warning("請先登入")
         st.switch_page("main.py")
         st.stop()
+    from utils.groups import render_account_sidebar
+    render_account_sidebar()
 
 
 # ===== Styler 用（st.dataframe）=====

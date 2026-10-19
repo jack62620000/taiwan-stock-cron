@@ -13,6 +13,7 @@ from utils.db import (
     get_watchlist, add_to_watchlist, remove_from_watchlist,
 )
 from utils.indicators import calc_all, get_latest_signals
+from utils.groups import current_group
 from utils.ui import require_login, UP_COLOR, DOWN_COLOR
 require_login()
 
@@ -41,12 +42,13 @@ if not selected:
 stock_id = selected.split(" ", 1)[0]
 
 # ===== 自選股 =====
-if stock_id in set(get_watchlist()["stock_id"]):
-    if st.button("★ 已在自選股（按一下移除）"):
-        remove_from_watchlist(stock_id)
+watch_gid, watch_group = current_group()
+if stock_id in set(get_watchlist(watch_gid)["stock_id"]):
+    if st.button(f"★ 已在自選股「{watch_group}」（按一下移除）"):
+        remove_from_watchlist(watch_gid, stock_id)
         st.rerun()
-elif st.button("⭐ 加入自選股"):
-    add_to_watchlist(stock_id)
+elif st.button(f"⭐ 加入自選股「{watch_group}」"):
+    add_to_watchlist(watch_gid, stock_id)
     st.rerun()
 
 # ===== 載入資料 =====

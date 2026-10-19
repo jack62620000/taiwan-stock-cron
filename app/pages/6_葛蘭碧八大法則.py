@@ -12,6 +12,7 @@ from utils.granville import (
     STOP_LOSS_PCT, RS_DAYS, granville_signals, ma_cross_counts, next_day_triggers, relative_strength, rule1_watchlist, rule_frames, watch_note,
 )
 from utils.watch import add_watch_form
+from utils.groups import current_group
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
 require_login()
 
@@ -435,14 +436,18 @@ def load_triggers(rules, side, stock_ids, params):
 
 
 def my_stock_ids():
-    """自選股與持有中的模擬持股"""
+    """目前分組的自選股與持有中的模擬持股"""
     ids = set()
     try:
-        ids |= set(get_watchlist()["stock_id"])
+        gid, _ = current_group()
+    except Exception:
+        return ids
+    try:
+        ids |= set(get_watchlist(gid)["stock_id"])
     except Exception:
         pass
     try:
-        trades = get_paper_trades()
+        trades = get_paper_trades(gid)
         if not trades.empty:
             ids |= set(trades[trades["sell_date"].isna()]["stock_id"])
     except Exception:
@@ -572,7 +577,7 @@ with tab_plan:
         only_mine = c1.toggle("只看自選股與持有中的模擬持股", value=False)
         max_drop = c2.number_input("列出再跌幾 % 以內就會出現的", 1.0, 10.0, 3.0, step=0.5)
         base = df[df["stock_id"].isin(my_stock_ids())] if only_mine else df
-        today_sell = base[base["rules"].apply(lambda r: any(n in r for n in SELL_RULE_TEXT))]
+        today_sell = base[base["rules"].apply(lambda r: any(n in r for n in SELL_RULE_TEXT)).astype(bool)]
         rest = tuple(sorted(set(base["stock_id"]) - set(today_sell["stock_id"])))
         trig = load_triggers(tuple(SELL_RULE_TEXT), "賣出", rest, params_key)
         trig = trig[trig["trigger_pct"] >= -max_drop]

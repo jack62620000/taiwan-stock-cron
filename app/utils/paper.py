@@ -70,12 +70,15 @@ def add_form(candidates, source, buy_date, key):
     假設以 buy_date 的收盤價買進。
     """
     from utils.db import add_paper_trades
+    from utils.groups import current_group
+    gid, group_name = current_group()
     options = candidates.dropna(subset=["close_price"]).drop_duplicates("stock_id")
     with st.expander("💼 加入模擬持股", expanded=False):
         if options.empty:
             st.info("上面沒有可以加入的股票")
             return
-        st.caption(f"從上面列出的股票挑選，假設以 {buy_date} 收盤價買進；之後到「模擬持股」頁追蹤損益、決定何時賣出。")
+        st.caption(f"從上面列出的股票挑選，假設以 {buy_date} 收盤價買進，放在「{group_name}」分組；"
+                   "之後到「模擬持股」頁追蹤損益、決定何時賣出。")
         labels = {r.stock_id: f"{r.stock_id} {r.stock_name}（{float(r.close_price):,.2f}）"
                   for r in options.itertuples()}
         c1, c2 = st.columns([4, 1])
@@ -84,7 +87,7 @@ def add_form(candidates, source, buy_date, key):
                               help="1 張 = 1000 股；不到 1000 股就是零股")
         if st.button("加入模擬持股", key=f"paper_add_{key}", type="primary", disabled=not picked):
             price = options.set_index("stock_id")["close_price"]
-            add_paper_trades([
+            add_paper_trades(gid, [
                 {"stock_id": sid, "source": source, "buy_date": str(buy_date),
                  "buy_price": round(float(price[sid]), 2), "shares": int(qty) / 1000, "note": ""}
                 for sid in picked
