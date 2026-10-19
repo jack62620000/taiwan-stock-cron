@@ -1,0 +1,26 @@
+name: 網站自動測試
+
+# 每個 PR 都用假資料把網站每一頁跑一次，有錯誤就亮紅燈，合併前先擋下來（不會連到真的資料庫）
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: Run tests
+        run: pytest -q
