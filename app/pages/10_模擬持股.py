@@ -10,6 +10,7 @@ from utils.db import (
     get_paper_trades, add_paper_trades, sell_paper_trade, delete_paper_trade,
 )
 from utils.paper import evaluate_trades, BUY_FEE, SELL_FEE, SELL_TAX
+from utils.granville import STOP_LOSS_PCT, next_day_triggers, rule_frames
 from utils.ui import require_login, render_metric_cards, style_sign
 require_login()
 
@@ -36,6 +37,57 @@ def load_prices(stock_ids, since):
         return raw, raw
     adj = apply_adjustments(raw, get_price_adjustments(None, since))
     return raw, adj
+
+
+@st.cache_data(ttl=3600)
+def load_exit_status(stock_ids):
+    """
+    持有中股票的出場判斷（葛蘭碧預設參數、20 日均線）：
+    今天是否出現法則 5／6／8、均線價位、乖離，以及明天收盤跌到多少會出現法則 5／6。
+    """
+    since = str(date.today() - timedelta(days=120))
+    raw = get_rows_for_stocks("daily_prices", list(stock_ids), since=since,
+                              columns="stock_id, date, close_price")
+    if raw.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    adj = apply_adjustments(raw, get_price_adjustments(None, since))
+    close = adj.assign(close_price=pd.to_numeric(adj["close_price"], errors="coerce")) \
+        .pivot_table(index="date", columns="stock_id", values="close_price", aggfunc="last").sort_index()
+    f = rule_frames(close)
+    status = pd.DataFrame({
+        "ma": f["ma"].iloc[-1], "bias": f["bias"].iloc[-1],
+        **{f"r{n}": f["hits"][n].iloc[-1] for n in (5, 6, 8)},
+    })
+    triggers = next_day_triggers(adj, (5, 6), "賣出", list(stock_ids)).set_index("stock_id")
+    return status, triggers
+
+
+def exit_row(row, status, triggers):
+    """一筆持股的出場狀態與說明"""
+    sid, close = row["stock_id"], float(row["end_price"])
+    stop = round(float(row["buy_price"]) * (1 - STOP_LOSS_PCT / 100), 2)
+    st_row = status.loc[sid] if sid in status.index else None
+    trig = triggers.loc[sid] if sid in triggers.index else None
+    trig_price = float(trig["trigger_price"]) if trig is not None else None
+    trig_note = (f"明天收盤 ≤ {trig_price:,.2f} 元（{float(trig['trigger_pct']):+.2f}%）會出現賣出訊號"
+                 if trig is not None else "")
+    if close <= stop:
+        state = "⛔ 跌破停損"
+        note = f"收盤已跌破停損價（買進價 −{STOP_LOSS_PCT:g}%），可考慮明天開盤賣出"
+    elif st_row is not None and (st_row["r5"] or st_row["r6"]):
+        state = "⚠️ 出現賣出訊號"
+        note = "今天出現法則 " + "、".join(str(n) for n in (5, 6) if st_row[f"r{n}"]) + "（均線轉弱），可考慮明天開盤賣出"
+    elif st_row is not None and st_row["r8"]:
+        state = "🔥 過熱"
+        note = (f"離均線 {st_row['bias']:+.1f}%。回測多半續漲，不必急著賣；"
+                f"可把停損上移到均線（約 {st_row['ma']:,.2f} 元）鎖住獲利")
+    elif trig is not None and float(trig["trigger_pct"]) >= -3:
+        state = "🔔 接近賣出"
+        note = trig_note
+    else:
+        state = "✅ 續抱"
+        note = trig_note or "均線仍往上，明天跌停也不會出現賣出訊號"
+    return {"狀態": state, "停損價": stop, "賣出觸發價": trig_price, "說明": note}
 
 
 def close_on(stock_id, day):
@@ -102,6 +154,29 @@ if not trades.empty:
             "buy_price": "買進價", "qty": "股數", "end_date": "最新日期", "end_price": "最新收盤",
             "hold_days": "持有天數", "cost": "成本(元)", "pnl": "損益(元)", "pnl_pct": "報酬%", "note": "備註",
         })
+
+        st.markdown("**🚦 出場狀態**")
+        st.caption(f"停損價是買進價往下 {STOP_LOSS_PCT:g}%；賣出觸發價是明天收盤跌到多少會出現葛蘭碧法則 5／6"
+                   "（20 日均線轉弱）。依最新收盤計算，僅供參考。")
+        status, exit_triggers = load_exit_status(tuple(sorted(holding["stock_id"].unique())))
+        exits = pd.DataFrame([{"代號": r["stock_id"], "名稱": r["stock_name"], "買進日": r["buy_date"],
+                               "買進價": r["buy_price"], "最新收盤": r["end_price"], "報酬%": r["pnl_pct"],
+                               **exit_row(r, status, exit_triggers)}
+                              for _, r in holding.iterrows() if pd.notna(r["end_price"])])
+        if not exits.empty:
+            order = {"⛔ 跌破停損": 0, "⚠️ 出現賣出訊號": 1, "🔔 接近賣出": 2, "🔥 過熱": 3, "✅ 續抱": 4}
+            exits = exits.sort_values("狀態", key=lambda c: c.map(order), kind="stable")
+            exits = exits[["狀態", "代號", "名稱", "買進日", "買進價", "最新收盤", "報酬%", "停損價", "賣出觸發價", "說明"]]
+            st.dataframe(
+                exits.style
+                    .format("{:,.2f}", subset=["買進價", "最新收盤", "停損價", "賣出觸發價"], na_rep="")
+                    .format("{:+.2f}", subset=["報酬%"], na_rep="")
+                    .map(style_sign, subset=["報酬%"]),
+                hide_index=True, width="stretch", height=min(500, 38 + 35 * len(exits)),
+                column_config={"代號": st.column_config.TextColumn(pinned=True),
+                               "名稱": st.column_config.TextColumn(pinned=True),
+                               "說明": st.column_config.TextColumn(width="large")},
+            )
 
         with st.container(border=True):
             st.markdown("**賣出**")

@@ -9,7 +9,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import get_stock_list, get_recent_closes, get_recent_ins, get_watchlist, get_paper_trades
 from utils.granville import (
     RULES, STABLE_RULES, CONFIRMS, HOLD_HINT, WATCH_DAYS, WATCH_STATUS, LATE_STATUS, CHOP_DAYS, CHOP_CROSSES,
-    granville_signals, ma_cross_counts, next_day_triggers, rule1_watchlist, rule_frames, simulate_trades, watch_note,
+    STOP_LOSS_PCT, RS_DAYS, granville_signals, ma_cross_counts, next_day_triggers, relative_strength, rule1_watchlist, rule_frames, simulate_trades, watch_note,
 )
 from utils.paper import add_form
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
@@ -464,7 +464,12 @@ with tab_plan:
 - **準備買進**：先出現法則 1（股價突破剛轉折的均線，而且外資買超、MACD 翻正、成交量放大），之後股價回檔跌破均線、
   再站回均線，就是法則 2 的買點。回測是法則 2 出現的**隔天開盤買進，持有 {lo}～{hi} 個交易日**。
 - **觸發價**：用最近的收盤價算出來。例如「明天收盤 ≥ 52.02 元」，代表明天收盤只要在 52.02 元以上，法則 2 就成立，後天開盤就是買點。
+- **停損價**：買進價往下 {STOP_LOSS_PCT:g}%。回測法則 2 持有 {lo}～{hi} 日，不停損最差一筆虧 38%，停損 {STOP_LOSS_PCT:g}% 最差約虧 17%，
+  平均報酬只少一點（+0.86% → +0.66%）；停損設太緊（例如 5%）反而有一半的交易被洗出場。
+- **比大盤強弱**：近 {RS_DAYS} 個交易日漲跌幅減去全部股票的平均，正的代表比大盤強；同一個狀態裡，強於大盤的排前面。
 - **賣出警示**：均線已經走平或往下，明天收盤跌破觸發價就會出現賣出訊號（法則 5、6）。手上有的股票可以先記下這個價位。
+- **過熱（法則 8）**：只對自選股與持有中的模擬持股提醒。回測顯示離均線越遠、之後平均還是續漲，所以不建議急著賣，
+  而是把停損往上移到均線附近，鎖住大部分獲利。
 - 法則 1 出現後 {WATCH_DAYS} 個交易日內沒等到法則 2，就視為失效，不再列出。
 - 觸發價只代表「如果收盤到這個價位」，不代表一定會發生；技術分析僅供參考。完整的八條法則在「進階」分頁。
 """)
@@ -474,7 +479,7 @@ with tab_plan:
     with st.container(border=True):
         st.subheader("🔴 準備買進")
         st.caption(f"最近出現法則 1 的股票，等法則 2 出現再買。「🌊 盤整」是近 {CHOP_DAYS} 個交易日穿越均線 "
-                   f"{CHOP_CROSSES} 次以上、常在均線上下來回的股票，容易被洗進洗出，排在同狀態的後面。")
+                   f"{CHOP_CROSSES} 次以上的股票；回測一年的法則 2，盤整股的報酬並沒有比較差，所以只當參考，不影響排序。")
         if ins is None:
             st.warning("法人資料讀取失敗，暫時無法判斷法則 1 的外資條件。")
             cand = pd.DataFrame()
@@ -489,6 +494,7 @@ with tab_plan:
             trig = load_triggers((2,), "買進", waiting, params_key).set_index("stock_id")
             ma_now = df.set_index("stock_id")["ma"]
             crosses = ma_cross_counts(prices, ma_days)
+            rs = relative_strength(prices)
             rows = []
             for r in cand.itertuples():
                 left = WATCH_DAYS - int(r.days_since)
@@ -517,27 +523,38 @@ with tab_plan:
                         note = "法則 2 的條件還沒到齊，明天不會出現"
                     note += f"（還剩 {left} 個交易日）"
                 n_cross = int(crosses.get(r.stock_id, 0))
+                rs_v = rs.get(r.stock_id, float("nan"))
+                # 停損價以預計買進價計算：等待法則2 用觸發價，其餘用最新收盤（明天開盤價未知）
+                stop = round((price if price is not None else float(r.close_price)) * (1 - STOP_LOSS_PCT / 100), 2)
                 rows.append({"order": order, "狀態": state, "代號": r.stock_id, "名稱": r.stock_name,
+                             "比大盤%": rs_v, "停損價": stop,
                              "趨勢": "🌊 盤整" if n_cross >= CHOP_CROSSES else "📈 明確", "穿越均線": n_cross,
                              "產業": r.industry, "最新收盤": r.close_price, "觸發價": price, "距離%": pct,
                              "法則1日期": r.setup_date, "說明": note})
             buy_df = pd.DataFrame(rows)
             buy_df["abs_pct"] = buy_df["距離%"].abs()
-            buy_df["choppy"] = buy_df["穿越均線"] >= CHOP_CROSSES
-            buy_df = buy_df.sort_values(["order", "choppy", "abs_pct", "代號"]).drop(columns=["order", "choppy", "abs_pct"])
+            buy_df["weak"] = ~(buy_df["比大盤%"] > 0)
+            buy_df["neg_rs"] = -buy_df["比大盤%"]
+            buy_df = buy_df.sort_values(["order", "weak", "abs_pct", "neg_rs", "代號"])[
+                ["狀態", "代號", "名稱", "產業", "最新收盤", "觸發價", "距離%", "停損價", "比大盤%",
+                 "趨勢", "穿越均線", "法則1日期", "說明"]]
             m1, m2, m3 = st.columns(3)
             m1.metric("明天開盤可買", f"{(buy_df['狀態'] == '✅ 明天開盤可買').sum()} 檔")
             m2.metric("有觸發價、等待法則2", f"{(buy_df['狀態'] == '⏳ 等待法則2').sum()} 檔")
             m3.metric("觀察中", f"{(buy_df['狀態'] == '👀 觀察中').sum()} 檔")
             st.dataframe(
                 buy_df.style
-                    .format("{:,.2f}", subset=["最新收盤", "觸發價"], na_rep="")
-                    .format("{:+.2f}", subset=["距離%"], na_rep="")
-                    .map(style_sign, subset=["距離%"]),
+                    .format("{:,.2f}", subset=["最新收盤", "觸發價", "停損價"], na_rep="")
+                    .format("{:+.2f}", subset=["距離%", "比大盤%"], na_rep="")
+                    .map(style_sign, subset=["距離%", "比大盤%"]),
                 hide_index=True, width="stretch", height=min(500, 38 + 35 * len(buy_df)),
                 column_config={"代號": st.column_config.TextColumn(pinned=True),
                                "名稱": st.column_config.TextColumn(pinned=True),
                                "距離%": st.column_config.Column(help="觸發價比今天收盤高（+）或低（−）幾 %"),
+                               "比大盤%": st.column_config.Column(
+                                   help=f"近 {RS_DAYS} 個交易日漲跌幅減去全部股票平均，正的代表比大盤強"),
+                               "停損價": st.column_config.Column(
+                                   help=f"預計買進價往下 {STOP_LOSS_PCT:g}%，收盤跌破就出場"),
                                "穿越均線": st.column_config.NumberColumn(
                                    help=f"近 {CHOP_DAYS} 個交易日收盤價站上或跌破均線的次數，越少代表趨勢越明確"),
                                "說明": st.column_config.TextColumn(width="large")},
@@ -550,7 +567,7 @@ with tab_plan:
     # ===== 賣出警示 =====
     with st.container(border=True):
         st.subheader("🟢 賣出警示")
-        st.caption("均線已經走平或往下，明天收盤跌破觸發價就會出現賣出訊號。")
+        st.caption("均線已經走平或往下，明天收盤跌破觸發價就會出現賣出訊號。自選股與持有中的模擬持股如果離均線太遠，也會標成「🔥 過熱」。")
         c1, c2 = st.columns([2, 1], vertical_alignment="bottom")
         only_mine = c1.toggle("只看自選股與持有中的模擬持股", value=False)
         max_drop = c2.number_input("列出再跌幾 % 以內就會出現的", 1.0, 10.0, 3.0, step=0.5)
@@ -576,14 +593,23 @@ with tab_plan:
                                 if t.trigger_pct < 0 else
                                 f"明天收盤只要沒站上 {t.trigger_price:,.2f} 元（漲幅不到 {t.trigger_pct:.2f}%）就會出現{names}")})
             chart_triggers[t.stock_id] = (t.trigger_price, f"收盤 ≤ {t.trigger_price:,.2f} 出現賣出訊號")
+        # 法則 8 過熱：回測多半續漲，只提醒手上有的股票把停損往上移
+        listed = {row["代號"] for row in rows}
+        hot = df[df["stock_id"].isin(my_stock_ids()) & ~df["stock_id"].isin(listed)
+                 & df["rules"].apply(lambda r: 8 in r)]
+        for r in hot.itertuples():
+            rows.append({"order": 2, "狀態": "🔥 過熱（法則8）", "代號": r.stock_id, "名稱": r.stock_name,
+                         "產業": r.industry, "最新收盤": r.close_price, "觸發價": None, "距離%": None, "均線": r.ma,
+                         "說明": f"離均線 {r.bias:+.1f}%。回測多半續漲，不必急著賣；可把停損移到均線（約 {r.ma:,.2f} 元）鎖住獲利"})
         if not rows:
             st.info("目前沒有出現或接近賣出訊號的股票")
         else:
             sell_df = pd.DataFrame(rows).sort_values(["order", "距離%", "代號"], ascending=[True, False, True]) \
                 .drop(columns=["order"])
-            m1, m2 = st.columns(2)
+            m1, m2, m3 = st.columns(3)
             m1.metric("今天已出現賣出訊號", f"{(sell_df['狀態'] == '⚠️ 今天已出現').sum()} 檔")
             m2.metric(f"再跌 {max_drop:g}% 以內會出現", f"{(sell_df['狀態'] == '🔔 接近賣出').sum()} 檔")
+            m3.metric("持股過熱（法則8）", f"{(sell_df['狀態'] == '🔥 過熱（法則8）').sum()} 檔")
             st.dataframe(
                 sell_df.style
                     .format("{:,.2f}", subset=["最新收盤", "觸發價", "均線"], na_rep="")
