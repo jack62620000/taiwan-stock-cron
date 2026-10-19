@@ -171,6 +171,49 @@ kd_d       = signals.get("KD", {}).get("D")
 kd_status  = signals.get("KD", {}).get("status", "N/A")
 macd_hist  = signals.get("MACD", {}).get("hist")
 
+# ===== 其他技術面燈號：均線排列、乖離率、布林通道、量能 =====
+# 燈號顏色沿用上面：偏多（紅）、過熱或偏空（綠）、中性（金）
+def _num(v):
+    v = pd.to_numeric(v, errors="coerce")
+    return None if pd.isna(v) else float(v)
+
+ma5, ma20, ma60 = (_num(latest.get(c)) for c in ("MA5", "MA20", "MA60"))
+bb_up, bb_low = _num(latest.get("BB_UP")), _num(latest.get("BB_LOW"))
+vol_s = pd.to_numeric(prices_ta["volume"], errors="coerce")
+vol_avg20 = vol_s.iloc[-21:-1].mean() if len(vol_s) > 20 else None
+vol_ratio = float(vol_s.iloc[-1] / vol_avg20) if vol_avg20 else None
+
+extra_tech = []
+if None not in (ma5, ma20, ma60):
+    if ma5 > ma20 > ma60:
+        extra_tech.append(("均線排列", "多頭排列", "bull", "5 日 > 20 日 > 60 日"))
+    elif ma5 < ma20 < ma60:
+        extra_tech.append(("均線排列", "空頭排列", "bear", "5 日 < 20 日 < 60 日"))
+    else:
+        extra_tech.append(("均線排列", "均線糾結", "neu", "5、20、60 日線交錯"))
+if ma20:
+    bias = (close / ma20 - 1) * 100
+    extra_tech.append(("乖離率（20 日）", f"{bias:+.1f}%",
+                       "bear" if bias > 10 else "bull" if bias < -10 else "neu",
+                       "正乖離過大，短線過熱" if bias > 10 else "負乖離過大，可能超跌" if bias < -10 else
+                       "站上 20 日線" if bias >= 0 else "跌破 20 日線"))
+if bb_up is not None and bb_low is not None and bb_up > bb_low:
+    bb_pos = (close - bb_low) / (bb_up - bb_low) * 100
+    extra_tech.append(("布林通道", f"{bb_pos:.0f}%",
+                       "bear" if bb_pos >= 80 else "bull" if bb_pos <= 20 else "neu",
+                       "突破上軌" if bb_pos > 100 else "靠近上軌" if bb_pos >= 80 else
+                       "跌破下軌" if bb_pos < 0 else "靠近下軌" if bb_pos <= 20 else "通道中段"))
+if vol_ratio is not None:
+    if vol_ratio >= 1.5:
+        extra_tech.append(("量能", f"{vol_ratio:.1f} 倍", "bull" if change >= 0 else "bear",
+                           "價漲量增" if change >= 0 else "價跌量增"))
+    else:
+        extra_tech.append(("量能", f"{vol_ratio:.1f} 倍", "neu", "量縮" if vol_ratio < 0.7 else "量能正常"))
+
+extra_tech_html = "".join(
+    f'<div class="tb"><div class="tlb">{label}</div><div class="tbdg {cls}">{value}</div>'
+    f'<div class="tdd">{note}</div></div>' for label, value, cls, note in extra_tech)
+
 def fmt(v, suffix="", decimals=2):
     if v is None or pd.isna(v):
         return "N/A"
@@ -201,11 +244,11 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 .stripe{{display:none;}}
 .ch{{padding:18px 22px 16px;border:1px solid var(--bdr);border-radius:8px;
      background:linear-gradient(90deg,#0d1b3a,#102a5c 60%,#0d1b3a);box-shadow:0 0 14px rgba(56,189,248,.22);}}
-.hrow{{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;}}
+.hrow{{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;}}
 .stag{{font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:700;letter-spacing:2px;color:var(--or);background:var(--obg);border:1px solid var(--obr);padding:3px 9px;border-radius:4px;display:inline-block;margin-bottom:6px;}}
 .sname{{font-size:32px;font-weight:900;color:var(--th);line-height:1;text-shadow:0 0 10px rgba(56,189,248,.35);}}
 .sectag{{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ts);background:var(--inn);border:1px solid var(--bdr);border-radius:20px;padding:4px 12px;margin-top:8px;}}
-.prow{{display:flex;align-items:baseline;gap:12px;margin-top:16px;flex-wrap:wrap;}}
+.prow{{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;justify-content:flex-end;}}
 .pnum{{font-family:"IBM Plex Mono",monospace;font-size:44px;font-weight:700;color:var(--th);line-height:1;}}
 .pt{{font-family:"IBM Plex Mono",monospace;font-size:14px;font-weight:700;padding:3px 9px;border-radius:6px;color:{up_color};background:{('rgba(220,38,38,.15)' if change >= 0 else 'rgba(22,163,74,.15)')};}}
 .pdt{{font-size:12.5px;color:var(--td);align-self:flex-end;padding-bottom:5px;}}
@@ -229,14 +272,15 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 .kv{{font-family:"IBM Plex Mono",monospace;font-size:22px;font-weight:700;line-height:1;}}
 .kv-gn{{color:var(--gn);}} .kv-or{{color:var(--or);}} .kv-rd{{color:var(--rd);}}
 .kn{{font-size:11.5px;color:var(--td);margin-top:3px;}}
-.tg4{{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}}
-.tb{{background:var(--inn);border:1px solid var(--bdr);border-radius:6px;padding:10px 12px;text-align:center;}}
-.tlb{{font-size:11.5px;color:var(--td);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;}}
-.tbdg{{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;white-space:nowrap;}}
+.tg4{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}}
+@media(max-width:700px){{.tg4{{grid-template-columns:repeat(2,1fr);}}}}
+.tb{{background:var(--inn);border:1px solid var(--bdr);border-radius:6px;padding:14px 12px;text-align:center;}}
+.tlb{{font-size:13.5px;font-weight:700;color:var(--tp);letter-spacing:1px;margin-bottom:9px;}}
+.tbdg{{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:16px;font-weight:700;padding:5px 14px;border-radius:20px;white-space:nowrap;}}
 .bull{{background:var(--rbg);color:var(--rd);border:1px solid var(--rbr);}}
 .neu{{background:var(--obg);color:var(--or);border:1px solid var(--obr);}}
 .bear{{background:var(--gbg);color:var(--gn);border:1px solid var(--gbr);}}
-.tdd{{font-size:11.5px;color:var(--td);margin-top:5px;line-height:1.4;}}
+.tdd{{font-size:13px;color:var(--ts);margin-top:8px;line-height:1.4;}}
 .cf{{margin-top:12px;padding:10px 4px;font-size:12px;color:var(--td);line-height:1.6;text-align:center;}}
 </style>
 </head>
@@ -252,11 +296,11 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
       <div class="sname">{info.get('stock_name','')}</div>
       <div class="sectag">{info.get('industry','')}</div>
     </div>
-  </div>
-  <div class="prow">
-    <div class="pnum">{fmt(close)}</div>
-    <div class="pt">{up_arrow} {fmt(change)} ({fmt(change_pct,'%')})</div>
-    <div class="pdt">{latest['date']} 收盤</div>
+    <div class="prow">
+      <div class="pnum">{fmt(close)}</div>
+      <div class="pt">{up_arrow} {fmt(change)} ({fmt(change_pct,'%')})</div>
+      <div class="pdt">{latest['date']} 收盤</div>
+    </div>
   </div>
 </div>
 
@@ -345,6 +389,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
       <div class="tbdg {'bear' if position_pct>70 else ('bull' if position_pct<30 else 'neu')}">{fmt(position_pct,'%',0)}</div>
       <div class="tdd">{'年區間高位' if position_pct>70 else ('年區間低位' if position_pct<30 else '年區間中段')}</div>
     </div>
+    {extra_tech_html}
   </div>
 </div>
 
