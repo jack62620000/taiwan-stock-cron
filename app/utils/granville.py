@@ -436,6 +436,39 @@ def ma_cross_counts(prices, ma_days=20, days=CHOP_DAYS):
 # 回測（同上，法則 2 持有 6 日）：不停損平均 +0.86%、最差 -38%；停損 8% 平均 +0.66%、最差 -16.6%；
 # 停損 5% 平均 +0.52%（一半的交易被洗出場）。8% 少賺一點，但能擋掉大虧
 STOP_LOSS_PCT = 8.0
+
+# ATR 停損：停損距離取「ATR_MULT 倍 ATR」和「STOP_LOSS_PCT %」比較小的那個，收盤跌破就出場。
+# ATR（平均真實波幅）是近 ATR_DAYS 個交易日每天的波動幅度平均，代表這檔股票平常一天會動多少錢。
+# 回測（2025/1～2026/10，20 日均量 500 張以上、隨機進場持有 20 日）：
+# 固定 8% 平均 +1.05%、最差 -17%；純 3 倍 ATR 平均 +1.32%、最差 -46%（高波動股停損拉太寬）；
+# 3 倍 ATR、最多 8% 平均 +1.05%、最差 -17%。大虧上限不變，波動小的股票停損比較貼近
+ATR_DAYS = 14
+ATR_MULT = 3.0
+STOP_RULE = f"預計買進價往下 {ATR_MULT:g} 倍 ATR（近 {ATR_DAYS} 日平均波動），最多 {STOP_LOSS_PCT:g}%"
+
+
+def atr(prices, days=ATR_DAYS):
+    """
+    每檔股票最近 days 個交易日的 ATR（元），資料不足 days 天的不列出。
+    prices：stock_id、date、high_price、low_price、close_price（還原權值）。
+    """
+    if prices is None or prices.empty or not {"high_price", "low_price", "close_price"} <= set(prices.columns):
+        return pd.Series(dtype=float)
+    p = prices.sort_values(["stock_id", "date"])
+    high, low, close = (pd.to_numeric(p[c], errors="coerce") for c in ("high_price", "low_price", "close_price"))
+    prev = close.groupby(p["stock_id"]).shift(1)
+    tr = pd.concat([high - low, (high - prev).abs(), (low - prev).abs()], axis=1).max(axis=1).where(high.notna() & low.notna())
+    tr = tr.groupby(p["stock_id"]).tail(days)
+    stats = tr.groupby(p.loc[tr.index, "stock_id"]).agg(["mean", "count"])
+    return stats.loc[stats["count"] >= days, "mean"]
+
+
+def stop_price(buy, atr_value=None):
+    """停損價：買進價往下 ATR_MULT 倍 ATR，最多 STOP_LOSS_PCT %；沒有 ATR 就用 STOP_LOSS_PCT %"""
+    dist = buy * STOP_LOSS_PCT / 100
+    if atr_value is not None and pd.notna(atr_value) and atr_value > 0:
+        dist = min(dist, ATR_MULT * float(atr_value))
+    return round(buy - dist, 2)
 RS_DAYS = 20
 
 

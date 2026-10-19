@@ -8,9 +8,11 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import (
     get_stock_list, get_signal_dates, get_signals,
     get_signal_history, get_signal_performance,
-    get_rows_for_stocks, get_price_adjustments, apply_adjustments,
+    get_rows_for_stocks, get_price_adjustments, apply_adjustments, get_momentum_latest,
 )
 from utils.watch import add_watch_form, add_watch_button
+from utils.granville import STOP_RULE, stop_price
+from utils.momentum import BACKTEST_MD, RULES_MD
 from utils.ui import require_login, render_metric_cards, style_sign, UP_COLOR, DOWN_COLOR
 require_login()
 
@@ -56,6 +58,16 @@ def load_history(stock_id):
     return get_signal_history(stock_id, limit=120)
 
 @st.cache_data(ttl=3600)
+def load_momentum():
+    df = get_momentum_latest()
+    if df.empty:
+        return df
+    for c in ["close_price", "high_52w", "rs_rating", "vol_ratio", "atr14"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    info = get_stock_list(include_delisted=True)[["stock_id", "stock_name", "industry", "market"]]
+    return df.merge(info, on="stock_id", how="left")
+
+@st.cache_data(ttl=3600)
 def load_performance(top_n, horizon):
     return get_signal_performance(top_n, horizon)
 
@@ -88,7 +100,8 @@ if not dates:
     st.warning("還沒有評分資料。請到 GitHub Actions 執行「訊號評分回補」，或等今晚的每日排程跑完。")
     st.stop()
 
-tab_rank, tab_stock, tab_backtest = st.tabs(["📋 今日排行榜", "📈 個股分數走勢", "🧪 規則回測"])
+tab_rank, tab_momentum, tab_stock, tab_backtest = st.tabs(
+    ["📋 今日排行榜", "🚀 動能選股", "📈 個股分數走勢", "🧪 規則回測"])
 
 # =====================================================================
 # 排行榜
@@ -404,6 +417,69 @@ with tab_backtest:
                 tooltip=["date:T", alt.Tooltip("excess:Q", format=".2f")],
             ).properties(height=200)
             st.altair_chart(bars, width="stretch")
+
+# =====================================================================
+# 動能選股：趨勢模板（Minervini）、52 週新高突破＋量增
+# =====================================================================
+with tab_momentum:
+    mom = load_momentum()
+    if mom.empty:
+        st.info("還沒有動能選股資料，等今晚的每日排程跑完就會出現。")
+    else:
+        m_date = mom["date"].max()
+        liq = mom[mom["liquid"]]
+        st.caption(f"資料日期：{m_date}（收盤後）。只判斷 20 日均量 500 張以上的股票，共 {len(liq):,} 檔；"
+                   "條件說明與回測結果在下方。")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("兩者同時", f"{int((liq['trend_template'] & liq['breakout']).sum())} 檔")
+        m2.metric("52 週新高＋量增", f"{int(liq['breakout'].sum())} 檔")
+        m3.metric("符合趨勢模板", f"{int(liq['trend_template'].sum())} 檔")
+        m4.metric("今天剛符合趨勢模板", f"{int(liq['trend_new'].sum())} 檔")
+        choices = {
+            "兩者同時": liq["trend_template"] & liq["breakout"],
+            "52 週新高＋量增": liq["breakout"],
+            "今天剛符合趨勢模板": liq["trend_new"],
+            "符合趨勢模板（全部）": liq["trend_template"],
+        }
+        pick = st.radio("顯示", list(choices), horizontal=True, key="momentum_pick",
+                        help="回測以「兩者同時」最好；趨勢模板（全部）每天都很多檔，適合當作篩選的第一步")
+        view = liq[choices[pick]].copy()
+        if view.empty:
+            st.info(f"{m_date} 沒有「{pick}」的股票。")
+        else:
+            close = pd.to_numeric(view["close_price"], errors="coerce")
+            view["off_high"] = (close / pd.to_numeric(view["high_52w"], errors="coerce") - 1) * 100
+            view["stop"] = [stop_price(float(c), a) for c, a in zip(close, pd.to_numeric(view["atr14"], errors="coerce"))]
+            view["risk"] = ((close - view["stop"]) * 1000).round()
+            view["tt"] = view["trend_template"].map({True: "✅", False: ""})
+            view["bo"] = view["breakout"].map({True: "✅", False: ""})
+            view = view.sort_values(["rs_rating", "vol_ratio"], ascending=False)
+            table = view[["stock_id", "stock_name", "industry", "close_price", "rs_rating", "vol_ratio",
+                          "off_high", "tt", "bo", "stop", "risk"]]
+            st.dataframe(
+                table, hide_index=True, width="stretch", height=min(42 + 35 * len(table), 600),
+                column_config={
+                    "stock_id": st.column_config.TextColumn("代號", width="small", pinned=True),
+                    "stock_name": st.column_config.TextColumn("名稱", width="small", pinned=True),
+                    "industry": st.column_config.TextColumn("產業", width="small"),
+                    "close_price": st.column_config.NumberColumn("收盤", format="%.2f"),
+                    "rs_rating": st.column_config.NumberColumn("RS", format="%d",
+                                                               help="相對強度 0～99：贏過多少 % 的股票"),
+                    "vol_ratio": st.column_config.NumberColumn("量比", format="%.2f",
+                                                               help="今天成交量 ÷ 前 50 日均量"),
+                    "off_high": st.column_config.NumberColumn("離52週高%", format="%.1f",
+                                                              help="0 代表今天就是 52 週新高"),
+                    "tt": st.column_config.TextColumn("趨勢模板", width="small"),
+                    "bo": st.column_config.TextColumn("新高突破", width="small"),
+                    "stop": st.column_config.NumberColumn("停損價", format="%.2f", help=STOP_RULE),
+                    "risk": st.column_config.NumberColumn("每張風險", format="%d",
+                                                          help="（收盤 − 停損價）× 1000 股，單位：元"),
+                },
+            )
+            add_watch_form(view, "動能選股", m_date, "momentum")
+        with st.expander("📖 條件說明與回測結果"):
+            st.markdown(RULES_MD)
+            st.markdown(BACKTEST_MD)
 
 st.markdown("---")
 st.caption("⚠️ 本系統資料僅供參考，不構成投資建議。投資有風險，請謹慎評估。")

@@ -10,7 +10,7 @@ from utils.db import (
     get_stock_list, get_signal_dates, get_rows_for_stocks, get_price_adjustments, apply_adjustments,
     get_watchlist, add_to_watchlist, update_watchlist_note, remove_from_watchlist,
 )
-from utils.granville import STOP_LOSS_PCT, CHOP_DAYS, CHOP_CROSSES
+from utils.granville import STOP_RULE, CHOP_DAYS, CHOP_CROSSES
 from utils.analysis import granville_status
 from utils.paper import add_form
 from utils.groups import group_picker, group_manager
@@ -59,7 +59,7 @@ def load_watch_data(ids):
     ) if sig_dates else pd.DataFrame()
     anchor = date.fromisoformat(sig_dates[0]) if sig_dates else date.today()
     since_prices = (anchor - timedelta(days=110)).isoformat()
-    prices = get_rows_for_stocks("daily_prices", ids, since=since_prices, columns="stock_id, date, close_price, volume")
+    prices = get_rows_for_stocks("daily_prices", ids, since=since_prices, columns="stock_id, date, high_price, low_price, close_price, volume")
     if not prices.empty:
         prices = apply_adjustments(prices, get_price_adjustments(None, prices["date"].min()))
     ins = get_rows_for_stocks(
@@ -189,7 +189,7 @@ else:
         else:
             st.caption(f"資料日期：{prices['date'].max()}（收盤後），依 20 日均線、葛蘭碧頁的預設參數。"
                        "觸發價是推算「下一個交易日收盤」要到多少才會出現訊號；"
-                       f"停損價是預計買進價往下 {STOP_LOSS_PCT:g}%。")
+                       f"停損價是{STOP_RULE}；每張風險是買在預計價、跌到停損價出場，一張會虧多少元。")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("明天開盤可買", f"{(g['狀態'] == '✅ 明天開盤可買').sum()} 檔")
             m2.metric("等待法則2", f"{(g['狀態'] == '⏳ 等待法則2').sum()} 檔")
@@ -198,6 +198,7 @@ else:
             st.dataframe(
                 g.style
                     .format("{:,.2f}", subset=["收盤價", "均線", "買進觸發價", "停損價", "賣出觸發價"], na_rep="")
+                    .format("{:,.0f}", subset=["每張風險"], na_rep="")
                     .format("{:+.2f}", subset=["乖離%", "賣出距離%"], na_rep="")
                     .map(style_sign, subset=["乖離%", "賣出距離%"]),
                 hide_index=True, width="stretch", height=min(42 + 35 * len(g), 600),
@@ -206,6 +207,8 @@ else:
                     "名稱": st.column_config.TextColumn(pinned=True),
                     "乖離%": st.column_config.Column(help="收盤價離均線幾 %"),
                     "買進觸發價": st.column_config.Column(help="明天收盤 ≥ 這個價就出現法則 2（買點）"),
+                    "停損價": st.column_config.Column(help=STOP_RULE + "，收盤跌破就出場"),
+                    "每張風險": st.column_config.Column(help="（預計買進價 − 停損價）× 1000 股，單位：元"),
                     "賣出觸發價": st.column_config.Column(
                         help="明天收盤 ≤ 這個價就出現法則 5 或 6（賣出訊號）；空白代表明天漲跌停內都不會出現"),
                     "賣出距離%": st.column_config.Column(help="賣出觸發價比今天收盤低（−）或高（+）幾 %"),

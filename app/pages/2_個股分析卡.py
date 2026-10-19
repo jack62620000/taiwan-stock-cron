@@ -10,10 +10,11 @@ from utils.db import (
     get_stock_info, get_daily_prices, get_quarterly,
     get_revenue, get_stock_ins, get_margin, get_holder,
     get_margin_utilization, get_stock_list, get_market_index,
-    get_watchlist, add_to_watchlist, remove_from_watchlist, get_signal_history,
+    get_watchlist, add_to_watchlist, remove_from_watchlist, get_signal_history, get_rows_for_stocks,
 )
 from utils.analysis import granville_status
-from utils.granville import STOP_LOSS_PCT
+from utils.granville import STOP_RULE, stop_price
+from utils.momentum import BACKTEST_MD, RULES_MD, conditions
 from utils.indicators import calc_all, get_latest_signals
 from utils.groups import current_group
 from utils.ui import require_login, render_metric_cards, UP_COLOR, DOWN_COLOR
@@ -362,7 +363,7 @@ st.iframe(html, height="content")
 # ===== 葛蘭碧與每日選股分析（和自選股頁相同的判斷）=====
 @st.cache_data(ttl=3600)
 def load_granville(stock_id, prices, ins):
-    cols = [c for c in ["stock_id", "date", "close_price", "volume"] if c in prices.columns]
+    cols = [c for c in ["stock_id", "date", "high_price", "low_price", "close_price", "volume"] if c in prices.columns]
     p = prices[cols].assign(stock_id=stock_id)
     i = ins[["date", "foreign_net_shares"]].assign(stock_id=stock_id) \
         if not ins.empty and "foreign_net_shares" in ins.columns else pd.DataFrame()
@@ -392,7 +393,7 @@ with g_col:
         if pd.notna(g["買進觸發價"]):
             lines.append(f"- **買進觸發價**：明天收盤 ≥ {g['買進觸發價']:,.2f} 元就出現法則 2")
         if pd.notna(g["停損價"]):
-            lines.append(f"- **停損價**：{g['停損價']:,.2f} 元（預計買進價往下 {STOP_LOSS_PCT:g}%）")
+            lines.append(f"- **停損價**：{g['停損價']:,.2f} 元（{STOP_RULE}），一張最多約虧 {g['每張風險']:,.0f} 元")
         if pd.notna(g["賣出觸發價"]):
             lines.append(f"- **賣出觸發價**：明天收盤 ≤ {g['賣出觸發價']:,.2f} 元（{g['賣出距離%']:+.2f}%）會出現法則 5 或 6")
         lines.append(f"- **趨勢**：{g['趨勢']}")
@@ -438,6 +439,60 @@ with s_col:
         ).properties(height=180), width="stretch")
     try:
         st.page_link("pages/7_每日選股訊號.py", label="到每日選股頁看規則回測", icon="🎯")
+    except Exception:
+        pass
+
+# ===== 動能條件：趨勢模板、52 週新高突破（momentum.py 每天收盤後計算）=====
+@st.cache_data(ttl=3600)
+def load_momentum_row(stock_id):
+    since = str(pd.Timestamp.today().date() - pd.Timedelta(days=20))
+    df = get_rows_for_stocks("momentum_signals", [stock_id], since=since)
+    return df.iloc[-1].to_dict() if not df.empty else None
+
+st.markdown("---")
+st.subheader("🚀 動能條件（趨勢模板＋52 週新高）")
+mrow = load_momentum_row(stock_id)
+if mrow is None:
+    st.info("還沒有這檔股票的動能資料（每天收盤後計算，新上市不滿一年的股票沒有 52 週資料）。")
+else:
+    conds = conditions(mrow)
+    n_ok = sum(1 for ok, _, _ in conds if ok)
+    liquid_m = bool(mrow.get("liquid"))
+    if not liquid_m:
+        tt_text, tt_note = f"{n_ok}/8", "20 日均量不到 500 張，不列入判斷"
+    elif mrow.get("trend_template"):
+        tt_text, tt_note = "✅ 符合", "今天剛符合" if mrow.get("trend_new") else "8 個條件全部符合"
+    else:
+        tt_text, tt_note = f"{n_ok}/8", "還差 " + str(8 - n_ok) + " 個條件"
+    hi = pd.to_numeric(mrow.get("high_52w"), errors="coerce")
+    c_m = pd.to_numeric(mrow.get("close_price"), errors="coerce")
+    vr = pd.to_numeric(mrow.get("vol_ratio"), errors="coerce")
+    if mrow.get("breakout"):
+        bo_text, bo_note = "✅ 今天突破", f"量比 {vr:.2f} 倍"
+    elif mrow.get("new_high"):
+        bo_text, bo_note = "創新高", f"量比 {vr:.2f} 倍，" + ("10 日內已突破過" if vr >= 1.5 else "量不夠（要 1.5 倍）")
+    else:
+        bo_text = f"{(c_m / hi - 1) * 100:+.1f}%" if pd.notna(hi) and hi > 0 else "—"
+        bo_note = f"離 52 週高點 {hi:,.2f}" if pd.notna(hi) else "資料不滿一年"
+    rs_m = mrow.get("rs_rating")
+    stop_m = stop_price(float(c_m), pd.to_numeric(mrow.get("atr14"), errors="coerce")) if pd.notna(c_m) else None
+    render_metric_cards([
+        ("趨勢模板", tt_text, tt_note, None),
+        ("52 週新高突破", bo_text, bo_note, None),
+        ("相對強度 RS", f"{int(rs_m)}" if rs_m is not None and pd.notna(rs_m) else "—", "0～99，贏過多少 % 的股票", None),
+        ("停損價（以收盤買進）", f"{stop_m:,.2f}" if stop_m else "—",
+         f"一張最多約虧 {(c_m - stop_m) * 1000:,.0f} 元" if stop_m else "", None),
+    ])
+    left, right = st.columns(2)
+    for k, (ok, label, detail) in enumerate(conds):
+        icon = "✅" if ok else "—" if ok is None else "❌"
+        (left if k < 4 else right).markdown(f"{icon} **{label}**：{detail}")
+    st.caption(f"資料日期：{mrow.get('date')}。停損價是{STOP_RULE.replace('預計買進價', '收盤價')}。")
+    with st.expander("📖 條件說明與回測結果"):
+        st.markdown(RULES_MD)
+        st.markdown(BACKTEST_MD)
+    try:
+        st.page_link("pages/7_每日選股訊號.py", label="到每日選股頁看今天符合條件的股票", icon="🚀")
     except Exception:
         pass
 

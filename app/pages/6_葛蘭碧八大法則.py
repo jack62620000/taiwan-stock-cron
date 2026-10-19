@@ -9,9 +9,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import get_stock_list, get_recent_closes, get_recent_ins, get_watchlist, get_paper_trades
 from utils.granville import (
     RULES, STABLE_RULES, CONFIRMS, HOLD_HINT, WATCH_DAYS, WATCH_STATUS, LATE_STATUS, CHOP_DAYS, CHOP_CROSSES,
-    STOP_LOSS_PCT, RS_DAYS, granville_signals, ma_cross_counts, next_day_triggers, relative_strength, rule1_watchlist, rule_frames, watch_note,
+    STOP_LOSS_PCT, STOP_RULE, ATR_MULT, ATR_DAYS, RS_DAYS, stop_price, granville_signals, ma_cross_counts, next_day_triggers, relative_strength, rule1_watchlist, rule_frames, watch_note,
 )
 from utils.watch import add_watch_form
+from utils.analysis import load_atr
 from utils.groups import current_group
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
 require_login()
@@ -469,8 +470,11 @@ with tab_plan:
 - **準備買進**：先出現法則 1（股價突破剛轉折的均線，而且外資買超、MACD 翻正、成交量放大），之後股價回檔跌破均線、
   再站回均線，就是法則 2 的買點。回測是法則 2 出現的**隔天開盤買進，持有 {lo}～{hi} 個交易日**。
 - **觸發價**：用最近的收盤價算出來。例如「明天收盤 ≥ 52.02 元」，代表明天收盤只要在 52.02 元以上，法則 2 就成立，後天開盤就是買點。
-- **停損價**：買進價往下 {STOP_LOSS_PCT:g}%。回測法則 2 持有 {lo}～{hi} 日，不停損最差一筆虧 38%，停損 {STOP_LOSS_PCT:g}% 最差約虧 17%，
+- **停損價**：{STOP_RULE}。回測法則 2 持有 {lo}～{hi} 日，不停損最差一筆虧 38%，停損 {STOP_LOSS_PCT:g}% 最差約虧 17%，
   平均報酬只少一點（+0.86% → +0.66%）；停損設太緊（例如 5%）反而有一半的交易被洗出場。
+  ATR 是近 {ATR_DAYS} 日每天平均的波動幅度：波動小的股票用 {ATR_MULT:g} 倍 ATR，停損會比 {STOP_LOSS_PCT:g}% 貼近；
+  波動大的股票仍以 {STOP_LOSS_PCT:g}% 為上限，大虧的上限不變。
+- **每張風險**：買在預計價、跌到停損價出場，一張（1000 股）會虧多少元。可以用「每筆最多願意虧的錢 ÷ 每張風險」決定買幾張。
 - **比大盤強弱**：近 {RS_DAYS} 個交易日漲跌幅減去全部股票的平均，正的代表比大盤強；同一個狀態裡，強於大盤的排前面。
 - **賣出警示**：均線已經走平或往下，明天收盤跌破觸發價就會出現賣出訊號（法則 5、6）。手上有的股票可以先記下這個價位。
 - **過熱（法則 8）**：只對自選股與持有中的模擬持股提醒。回測顯示離均線越遠、之後平均還是續漲，所以不建議急著賣，
@@ -500,6 +504,7 @@ with tab_plan:
             ma_now = df.set_index("stock_id")["ma"]
             crosses = ma_cross_counts(prices, ma_days)
             rs = relative_strength(prices)
+            atrs = load_atr(tuple(sorted(cand["stock_id"])))
             rows = []
             for r in cand.itertuples():
                 left = WATCH_DAYS - int(r.days_since)
@@ -530,9 +535,10 @@ with tab_plan:
                 n_cross = int(crosses.get(r.stock_id, 0))
                 rs_v = rs.get(r.stock_id, float("nan"))
                 # 停損價以預計買進價計算：等待法則2 用觸發價，其餘用最新收盤（明天開盤價未知）
-                stop = round((price if price is not None else float(r.close_price)) * (1 - STOP_LOSS_PCT / 100), 2)
+                ref = price if price is not None else float(r.close_price)
+                stop = stop_price(ref, atrs.get(r.stock_id))
                 rows.append({"order": order, "狀態": state, "代號": r.stock_id, "名稱": r.stock_name,
-                             "比大盤%": rs_v, "停損價": stop,
+                             "比大盤%": rs_v, "停損價": stop, "每張風險": round((ref - stop) * 1000),
                              "趨勢": "🌊 盤整" if n_cross >= CHOP_CROSSES else "📈 明確", "穿越均線": n_cross,
                              "產業": r.industry, "最新收盤": r.close_price, "觸發價": price, "距離%": pct,
                              "法則1日期": r.setup_date, "說明": note})
@@ -541,7 +547,7 @@ with tab_plan:
             buy_df["weak"] = ~(buy_df["比大盤%"] > 0)
             buy_df["neg_rs"] = -buy_df["比大盤%"]
             buy_df = buy_df.sort_values(["order", "weak", "abs_pct", "neg_rs", "代號"])[
-                ["狀態", "代號", "名稱", "產業", "最新收盤", "觸發價", "距離%", "停損價", "比大盤%",
+                ["狀態", "代號", "名稱", "產業", "最新收盤", "觸發價", "距離%", "停損價", "每張風險", "比大盤%",
                  "趨勢", "穿越均線", "法則1日期", "說明"]]
             m1, m2, m3 = st.columns(3)
             m1.metric("明天開盤可買", f"{(buy_df['狀態'] == '✅ 明天開盤可買').sum()} 檔")
@@ -550,6 +556,7 @@ with tab_plan:
             st.dataframe(
                 buy_df.style
                     .format("{:,.2f}", subset=["最新收盤", "觸發價", "停損價"], na_rep="")
+                    .format("{:,.0f}", subset=["每張風險"], na_rep="")
                     .format("{:+.2f}", subset=["距離%", "比大盤%"], na_rep="")
                     .map(style_sign, subset=["距離%", "比大盤%"]),
                 hide_index=True, width="stretch", height=min(500, 38 + 35 * len(buy_df)),
@@ -559,7 +566,9 @@ with tab_plan:
                                "比大盤%": st.column_config.Column(
                                    help=f"近 {RS_DAYS} 個交易日漲跌幅減去全部股票平均，正的代表比大盤強"),
                                "停損價": st.column_config.Column(
-                                   help=f"預計買進價往下 {STOP_LOSS_PCT:g}%，收盤跌破就出場"),
+                                   help=STOP_RULE + "，收盤跌破就出場"),
+                               "每張風險": st.column_config.Column(
+                                   help="（預計買進價 − 停損價）× 1000 股，單位：元"),
                                "穿越均線": st.column_config.NumberColumn(
                                    help=f"近 {CHOP_DAYS} 個交易日收盤價站上或跌破均線的次數，越少代表趨勢越明確"),
                                "說明": st.column_config.TextColumn(width="large")},
