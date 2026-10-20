@@ -52,3 +52,45 @@ $$;
 -- Supabase 安全檢查建議：函式固定 search_path
 alter function public.signal_performance(integer, integer) set search_path = public;
 alter function public.prune_daily_signals(integer, integer, integer) set search_path = public;
+
+-- 每日選股訊號頁的回測統計：每個評分日的前 top_n 名，horizon 個交易日後的平均報酬（已還原權值）
+-- 2026-10 改寫取評分日的方式：逐一跳到下一個日期（走日期索引），不必讀整張表，結果與原本完全相同
+create or replace function public.signal_performance(top_n integer default 20, horizon integer default 5)
+returns table(date date, fwd_date date, top_return numeric, market_return numeric, top_count integer)
+language sql stable
+set search_path = public
+as $function$
+  with recursive d(date) as (
+    (select min(x.date) from public.daily_signals x)
+    union all
+    select (select min(x.date) from public.daily_signals x where x.date > d.date)
+    from d where d.date is not null
+  ), dd as (
+    select d.date, lead(d.date, horizon) over (order by d.date) as fwd_date from d where d.date is not null
+  ), adj as (
+    select a.stock_id, dd.date, exp(sum(ln(a.factor))) as factor
+    from dd
+    join public.price_adjustments a on a.date > dd.date and a.date <= dd.fwd_date
+    group by a.stock_id, dd.date
+  )
+  select s.date,
+         dd.fwd_date,
+         round(avg(f.close_price / s.close_price / coalesce(adj.factor, 1) - 1) filter (where s.rank <= top_n) * 100, 2) as top_return,
+         round(avg(f.close_price / s.close_price / coalesce(adj.factor, 1) - 1) * 100, 2) as market_return,
+         (count(*) filter (where s.rank <= top_n))::int as top_count
+  from public.daily_signals s
+  join dd on dd.date = s.date and dd.fwd_date is not null
+  join public.daily_signals f on f.stock_id = s.stock_id and f.date = dd.fwd_date
+  left join adj on adj.stock_id = s.stock_id and adj.date = s.date
+  where s.liquid and s.close_price > 0
+  group by s.date, dd.fwd_date
+  order by s.date;
+$function$;
+
+-- 每日評分表每天更新，預設要變動 20% 才自動整理（VACUUM），期間索引查詢得回表確認、變慢。
+-- 調成 2%，大約每天整理一次（2026-10 調整，當時也手動跑過一次 vacuum analyze）
+alter table public.daily_signals set (
+    autovacuum_vacuum_scale_factor = 0.02,
+    autovacuum_vacuum_insert_scale_factor = 0.02,
+    autovacuum_analyze_scale_factor = 0.02
+);
