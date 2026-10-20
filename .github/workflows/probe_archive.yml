@@ -1,0 +1,22 @@
+name: 暫時試跑封存
+on:
+  pull_request:
+    paths: [probe_archive.py, .github/workflows/probe_archive.yml]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: 只封存（假設今天是 2026-11-30：融資會封存 10 天）
+        run: ARCHIVE_ONLY=1 CLEANUP_DATE=2026-11-30 python cleanup_old_data.py
+      - name: 只封存（假設今天是 2027-01-10：股價會封存約 6 天）
+        run: ARCHIVE_ONLY=1 CLEANUP_DATE=2027-01-10 python cleanup_old_data.py
+      - run: python probe_archive.py
