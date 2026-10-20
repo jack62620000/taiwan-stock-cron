@@ -132,7 +132,7 @@ if not trades.empty:
         ("已賣出勝率", f"{win:.0f}%" if win is not None else "—", "賺錢筆數 ÷ 已賣出筆數", 0),
     ])
 
-    def show(df, cols, height_rows=None):
+    def show(df, cols):
         table = df[list(cols)].rename(columns=cols)
         money = [c for c in ["損益(元)", "成本(元)"] if c in table.columns]
         prices = [c for c in ["買進價", "最新收盤", "賣出價"] if c in table.columns]

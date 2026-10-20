@@ -1,0 +1,8 @@
+# Python 暫存檔
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 金鑰與帳密（只放在本機或 GitHub／Streamlit 的 secrets，不進版控）
+.env
+.streamlit/secrets.toml
