@@ -117,7 +117,7 @@ class Query:
         if self.action == "delete":
             hit = [r for r in rows if self._match(r)]
             rows[:] = [r for r in rows if not self._match(r)]
-            return Result(hit)
+            return Result(hit, len(hit))
 
         out = [r for r in rows if self._match(r)]
         for col, desc in reversed(self.orders):
@@ -152,10 +152,42 @@ class RPC:
         return Result(self.data)
 
 
+class FakeBucket:
+    """假的 Storage 桶：檔案存在 dict 裡"""
+    def __init__(self, files):
+        self.files = files
+
+    def upload(self, path, data, file_options=None):
+        upsert = str((file_options or {}).get("upsert", "")).lower() == "true"
+        if path in self.files and not upsert:
+            raise RuntimeError(f"{path} 已存在")
+        self.files[path] = bytes(data)
+        return {"path": path}
+
+    def download(self, path, *_, **__):
+        if path not in self.files:
+            raise RuntimeError(f"{path} 不存在")
+        return self.files[path]
+
+    def list(self, path=None, options=None):
+        prefix = (path or "").rstrip("/") + "/"
+        names = sorted(p[len(prefix):] for p in self.files if p.startswith(prefix) and "/" not in p[len(prefix):])
+        return [{"name": n} for n in names]
+
+
+class FakeStorage:
+    def __init__(self):
+        self.buckets = {}
+
+    def from_(self, bucket):
+        return FakeBucket(self.buckets.setdefault(bucket, {}))
+
+
 class FakeClient:
     def __init__(self, tables=None, rpcs=None):
         self.tables = tables if tables is not None else {}
         self.rpcs = rpcs or {}
+        self.storage = FakeStorage()
         self.ids = itertools.count(100)  # 假資料裡的 id 從 1 開始，新增的從 100 開始
 
     def table(self, name):

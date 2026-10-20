@@ -13,8 +13,11 @@
 每張表每次最多刪 MAX_DAYS_PER_RUN 天。平常每天只會刪到剛過期的一天；
 排程停了很久也會分幾天慢慢刪完，不會一次刪太多而逾時。
 刪除後空間會由資料庫自動重複使用，不需要手動處理。
+刪除前會先把那一天的資料封存成壓縮檔放到 Supabase Storage（見 archive.py），確認封存成功才刪除，
+所以舊資料不會遺失，需要時可以用 archive.load_archive 讀回來。
 設 DRY_RUN=1 只印出會刪除的筆數，不刪除；再設 CLEANUP_DATE（YYYY-MM-DD）可以假設今天是那一天，
 用來預先確認之後會刪到哪些資料。
+設 ARCHIVE_ONLY=1 只封存、不刪除（可搭配 CLEANUP_DATE 預先封存之後才會過期的資料）。
 """
 import os
 import sys
@@ -23,6 +26,8 @@ from datetime import date, datetime, timezone
 
 from supabase import create_client
 from dotenv import load_dotenv
+
+from archive import archive_day
 
 load_dotenv()
 
@@ -56,8 +61,8 @@ def _execute(make_request, retries=4):
             time.sleep(3 * attempt)
 
 
-def cleanup(sb, table, col, years, today, dry_run):
-    """刪掉 table 超過 years 年的資料，一次刪一天。回傳刪除筆數"""
+def cleanup(sb, table, col, years, today, dry_run, archive_only=False):
+    """table 超過 years 年的資料先封存、再刪除，一次處理一天。回傳刪除（或封存）筆數"""
     cutoff = years_ago(today, years).isoformat()
     days = [r[col] for r in _execute(
         lambda: sb.table(table).select(col).eq("stock_id", ANCHOR_STOCK)
@@ -66,10 +71,15 @@ def cleanup(sb, table, col, years, today, dry_run):
     for d in days:
         if dry_run:
             res = _execute(lambda d=d: sb.table(table).select(col, count="exact", head=True).eq(col, d))
-        else:
-            res = _execute(lambda d=d: sb.table(table).delete(count="exact", returning="minimal").eq(col, d))
+            total += res.count or 0
+            continue
+        archived = archive_day(sb, table, col, d)  # 封存失敗會丟出錯誤，這天就不會被刪
+        if archive_only:
+            total += archived
+            continue
+        res = _execute(lambda d=d: sb.table(table).delete(count="exact", returning="minimal").eq(col, d))
         total += res.count or 0
-    action = "會刪除" if dry_run else "刪除"
+    action = "會刪除" if dry_run else "封存" if archive_only else "封存並刪除"
     span = f"{days[0]}～{days[-1]}（{len(days)} 天）" if days else "沒有過期資料"
     print(f"  {table}：保留 {years} 年（{cutoff} 起），{span}，{action} {total:,} 筆")
     return total
@@ -77,14 +87,15 @@ def cleanup(sb, table, col, years, today, dry_run):
 
 def main():
     dry_run = os.getenv("DRY_RUN") == "1"
+    archive_only = os.getenv("ARCHIVE_ONLY") == "1"
     override = os.getenv("CLEANUP_DATE", "").strip()
     today = date.fromisoformat(override) if override else datetime.now(timezone.utc).date()
-    print(f"========== 清除過期資料：{today}{'（只檢查，不刪除）' if dry_run else ''} ==========")
+    print(f"========== 清除過期資料：{today}{'（只檢查，不刪除）' if dry_run else '（只封存，不刪除）' if archive_only else ''} ==========")
     sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
     failed = 0
     for table, col, years in RETENTION:
         try:
-            cleanup(sb, table, col, years, today, dry_run)
+            cleanup(sb, table, col, years, today, dry_run, archive_only)
         except Exception as e:
             print(f"❌ {table} 清除失敗：{e}")
             failed += 1
