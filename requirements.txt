@@ -1,8 +1,11 @@
-requests>=2.31,<3
-supabase>=2.0,<3
-python-dotenv>=1.0,<2
-pandas>=2.2,<4
-# 網頁的排版 CSS 依賴 Streamlit 內部元件名稱，升級前要先測試，所以鎖定版本
+# 套件版本全部固定成測試過的版本，避免套件改版讓網站或排程突然壞掉。
+# 要升級時：改這裡的版本 → 跑 pytest 和網頁測試都通過再合併。
+requests==2.34.2
+supabase==2.33.0
+httpx==0.28.1
+python-dotenv==1.2.4
+pandas==3.0.6
+# 網頁的排版 CSS 依賴 Streamlit 內部元件名稱，升級前要先測試
 streamlit==1.66.0
-numpy>=1.26,<3
-groq>=0.9,<2
+numpy==2.5.4
+groq==1.7.0
