@@ -116,6 +116,13 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python cleanup_old_data.py
+      # 最後檢查最近幾天每張表的筆數，少於平常九成就讓這次排程顯示失敗（前面步驟失敗也照樣檢查）
+      - name: Check data counts
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python check_data.py
 
   update-holder-only:
     if: github.event.schedule == '06 1 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only == 'true')

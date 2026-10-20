@@ -35,7 +35,7 @@ class Query:
         self.payload = None
 
     # ----- 讀取 -----
-    def select(self, columns="*", count=None):
+    def select(self, columns="*", count=None, **_):
         self.columns, self.count = columns, count
         return self
 
