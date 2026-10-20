@@ -155,6 +155,23 @@ def tpex_date_matches(data, today_str, label):
     return True
 
 
+def fields_match(fields, expected, label):
+    """
+    [E] 核對欄位名稱：程式用欄位位置取值，來源改版、欄位位置變了就會讀到錯的數字。
+    expected 是 {欄位位置: 欄名要包含的文字}；對不上就印出原因並回傳 False，呼叫端不寫入。
+    回應裡沒有欄名（fields）時無法核對，照舊處理。
+    """
+    if not fields:
+        return True
+    names = [str(x).replace("<br>", "").strip() for x in fields]
+    bad = [f"第 {i} 欄應為「{text}」，實際是「{names[i] if i < len(names) else '（沒有這欄）'}」"
+           for i, text in expected.items() if i >= len(names) or text not in names[i]]
+    if bad:
+        print(f"❌ {label}：欄位和程式預期不同（來源可能改版），不寫入。" + "；".join(bad))
+        return False
+    return True
+
+
 # ==================== 1. 個股基本資訊抓取 ====================
 def fetch_listed():
     try:
@@ -279,6 +296,9 @@ def fetch_twse_daily_all(today_str, valid_stocks):
         )
         if not price_table:
             print("找不到每日收盤行情表"); return []
+        if not fields_match(price_table.get("fields"), {0: "證券代號", 2: "成交股數", 5: "開盤價", 6: "最高價",
+                                                        7: "最低價", 8: "收盤價"}, "上市行情"):
+            return []
 
         records = []
         for row in price_table.get("data", []):
@@ -309,6 +329,9 @@ def fetch_tpex_otc_daily(today_str, valid_stocks):
             print("上櫃股價今日尚未更新或查無資料"); return []
         if not tpex_date_matches(data, today_str, "上櫃行情"):
             return []
+        if not fields_match(tables[0].get("fields"), {0: "代號", 2: "收盤", 4: "開盤", 5: "最高", 6: "最低",
+                                                      7: "成交股數"}, "上櫃行情"):
+            return []
 
         records = []
         for row in tables[0]["data"]:
@@ -338,6 +361,9 @@ def fetch_twse_stock_ins(today_str, valid_stocks):
         data = get_json(url, timeout=15)
         if data.get("stat") != "OK":
             print(f"上市法人尚未更新: {data.get('stat')}"); return []
+        if not fields_match(data.get("fields"), {0: "證券代號", 4: "外陸資買賣超", 7: "外資自營商買賣超",
+                                                 10: "投信買賣超", 11: "自營商買賣超"}, "上市法人"):
+            return []
 
         records = []
         for row in data.get("data", []):
@@ -381,6 +407,10 @@ def fetch_tpex_stock_ins(today_str, valid_stocks):
             print("上櫃法人今日尚未更新或查無資料"); return []
         if not tpex_date_matches(data, today_str, "上櫃法人"):
             return []
+        # 上櫃法人的欄名每組都叫買進／賣出／買賣超，只能核對位置上是不是「買賣超」
+        if not fields_match(tables[0].get("fields"), {0: "代號", 10: "買賣超", 13: "買賣超", 22: "買賣超",
+                                                      23: "合計"}, "上櫃法人"):
+            return []
 
         records = []
         for row in tables[0]["data"]:
@@ -421,6 +451,9 @@ def fetch_twse_margin(today_str, valid_stocks):
         )
         if not table:
             print("找不到融資融券彙總表"); return []
+        if not fields_match(table.get("fields"), {0: "代號", 6: "今日餘額", 7: "限額", 12: "今日餘額",
+                                                  13: "限額"}, "上市融資融券"):
+            return []
 
         records = []
         for row in table.get("data", []):
@@ -459,6 +492,9 @@ def fetch_tpex_margin(today_str, valid_stocks):
         if not tables or not tables[0].get("data"):
             print("上櫃融資融券今日尚未更新或查無資料"); return []
         if not tpex_date_matches(data, today_str, "上櫃融資融券"):
+            return []
+        if not fields_match(tables[0].get("fields"), {0: "代號", 6: "資餘額", 8: "資使用率", 9: "資限額",
+                                                      14: "券餘額", 16: "券使用率"}, "上櫃融資融券"):
             return []
 
         records = []
