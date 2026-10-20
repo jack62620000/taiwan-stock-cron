@@ -156,20 +156,46 @@ def get_recent_closes(calendar_days=40, columns="stock_id, date, close_price", a
     40 個日曆天約 25 個交易日，遇到長假也夠算 RSI(14)。
     adjust=True 時回傳還原權值後的價格（見 apply_adjustments）。
     """
-    df = _recent_snapshots("daily_prices", calendar_days, columns)
+    df = _recent_series("daily_prices", calendar_days, columns)
     if adjust and not df.empty:
         df = apply_adjustments(df, get_price_adjustments(None, df["date"].min()))
     return df
 
 def get_recent_ins(calendar_days=10, columns="stock_id, date, foreign_net_shares"):
     """取所有股票最近 calendar_days 天（日曆天）的法人買賣超，給葛蘭碧頁的籌碼確認條件用"""
-    return _recent_snapshots("stock_ins_daily", calendar_days, columns)
+    return _recent_series("stock_ins_daily", calendar_days, columns)
 
-def _recent_snapshots(table, calendar_days, columns):
-    """全市場最近 calendar_days 天（日曆天）的逐日資料"""
+# 資料庫函式（sql/functions.sql）一次回傳「每檔股票一列、近期每天的值放在陣列裡」，
+# 約 2 千列，比逐日查全市場（十幾萬列）快很多。陣列欄位 → 原本的欄位名稱
+_SERIES_FUNCTIONS = {
+    "daily_prices": ("recent_prices", {"closes": "close_price", "volumes": "volume"}),
+    "stock_ins_daily": ("recent_ins", {"foreign_net": "foreign_net_shares", "sitca_net": "sitca_net_shares"}),
+}
+
+def _recent_series(table, calendar_days, columns):
+    """全市場最近 calendar_days 天（日曆天）的逐日資料，依日期、股票代號排序"""
     latest_date = get_latest_date(table, "date")
     if latest_date is None:
         return pd.DataFrame()
+    fn, arrays = _SERIES_FUNCTIONS[table]
+    wanted = [c.strip() for c in columns.split(",")]
+    if not set(wanted) <= {"stock_id", "date", *arrays.values()}:
+        return _recent_snapshots(table, latest_date, calendar_days, columns)  # 函式沒有的欄位改用逐日查詢
+    start = (pd.to_datetime(latest_date) - pd.Timedelta(days=calendar_days)).strftime("%Y-%m-%d")
+    try:
+        rows = _fetch_all(lambda: supabase.rpc(fn, {"start_date": start}))
+    except Exception:
+        return _recent_snapshots(table, latest_date, calendar_days, columns)  # 函式還沒建立或暫時失敗
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows).rename(columns={"dates": "date", **arrays})
+    df = df.explode(["date", *arrays.values()], ignore_index=True)
+    for col in arrays.values():
+        df[col] = pd.to_numeric(df[col], errors="coerce")  # 展開後是 object，轉回數字
+    return df.sort_values(["date", "stock_id"], ignore_index=True)[wanted]
+
+def _recent_snapshots(table, latest_date, calendar_days, columns):
+    """逐日查詢全市場資料（_recent_series 的備用做法）"""
     latest_date = pd.to_datetime(latest_date)
     # 週末不會有資料，直接略過
     days = [
