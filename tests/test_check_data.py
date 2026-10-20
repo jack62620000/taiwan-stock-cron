@@ -38,3 +38,28 @@ def test_older_days_not_rechecked():
     # 超過最近 3 天的缺漏之前就檢查過了，不再重複報錯
     _, problems = check_data.check(db({("margin_utilization", "2026-10-12"): 10}))
     assert problems == []
+
+
+def size_db(mb):
+    return FakeClient(rpcs={"database_size": lambda client: int(mb * 1024 * 1024)})
+
+
+def test_size_below_warning_passes():
+    text, problems = check_data.check_size(size_db(378))
+    assert problems == []
+    assert "378 MB / 500 MB" in text
+
+
+def test_size_over_warning_is_reported():
+    _, problems = check_data.check_size(size_db(460))
+    assert len(problems) == 1 and "460 MB" in problems[0]
+
+
+def test_size_unreadable_is_not_failure(monkeypatch):
+    class Broken(FakeClient):
+        def rpc(self, name, params=None):
+            raise RuntimeError("函式不存在")
+    monkeypatch.setattr(check_data.time, "sleep", lambda s: None)
+    text, problems = check_data.check_size(Broken())
+    assert problems == []
+    assert "讀取失敗" in text
