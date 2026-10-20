@@ -1,12 +1,16 @@
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+import httpx
 import pandas as pd
-from supabase import create_client
+from supabase import ClientOptions, create_client
 from dotenv import load_dotenv
 
 load_dotenv()
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+# 預設的 HTTP/2 是同一條連線多工，好幾個執行緒同時查詢時會互相卡住，偶爾還會出錯（KeyError、Server disconnected）。
+# 改用 HTTP/1.1 連線池：每個執行緒各用一條連線，同時查詢才真的同時進行。
+_http = httpx.Client(http2=False, timeout=120, follow_redirects=True, limits=httpx.Limits(max_connections=10))
+supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"), options=ClientOptions(httpx_client=_http))
 
 
 # ===== 共用工具 =====
@@ -25,12 +29,23 @@ def _latest_rows(table, stock_id, order_cols, limit):
     return df.sort_values(order_cols).reset_index(drop=True)
 
 
+def _execute(query, retries=2):
+    """送出查詢；連線被 Supabase 中途關掉（Server disconnected 等）時重試，不讓整頁出錯"""
+    for attempt in range(retries + 1):
+        try:
+            return query.execute()
+        except httpx.TransportError:
+            if attempt == retries:
+                raise
+            time.sleep(0.5 * (attempt + 1))
+
+
 def _fetch_all(make_query, page_size=1000):
     """分頁取回查詢的全部資料。make_query 每次呼叫要回傳一個新的查詢。"""
     rows = []
     start = 0
     while True:
-        res = make_query().range(start, start + page_size - 1).execute()
+        res = _execute(make_query().range(start, start + page_size - 1))
         if not res.data:
             break
         rows.extend(res.data)
@@ -75,9 +90,12 @@ def get_snapshot(table, date_col, value, columns="*"):
             .order("stock_id", desc=False)
     ))
 
+_SNAPSHOT_WORKERS = 6  # 同時查幾天；每天一個查詢只要幾十毫秒，主要花在網路往返
+
 def get_snapshots(table, dates, columns="*", date_col="date"):
-    """取全市場在多個日期的資料，依日期逐一查詢後合併"""
-    frames = [get_snapshot(table, date_col, d, columns) for d in dates]
+    """取全市場在多個日期的資料，每天一個查詢、少量同時送出後合併"""
+    with ThreadPoolExecutor(max_workers=_SNAPSHOT_WORKERS) as pool:
+        frames = list(pool.map(lambda d: get_snapshot(table, date_col, d, columns), dates))
     frames = [f for f in frames if not f.empty]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
@@ -153,19 +171,13 @@ def _recent_snapshots(table, calendar_days, columns):
     if latest_date is None:
         return pd.DataFrame()
     latest_date = pd.to_datetime(latest_date)
-    # 一天一個查詢（走主鍵索引，每次只要幾十毫秒），少量同時送出；週末不會有資料，直接略過
+    # 週末不會有資料，直接略過
     days = [
         d.strftime("%Y-%m-%d")
         for d in pd.date_range(end=latest_date, periods=calendar_days + 1)
         if d.weekday() < 5
     ]
-
-    def fetch_day(day):
-        return get_snapshot(table, "date", day, columns)
-
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        frames = [f for f in pool.map(fetch_day, days) if not f.empty]
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    return get_snapshots(table, days, columns)
 
 # ===== 還原權值 =====
 # price_adjustments 每筆事件（除權息、減資、變更面額）記錄 factor = 參考價 ÷ 事件前收盤價。
