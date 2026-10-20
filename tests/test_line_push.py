@@ -33,7 +33,9 @@ def test_push_all_groups(use_db):
     bubbles = [b for m in msgs[1:] for b in m["contents"]["contents"]]
     assert len(bubbles) == len(ids)
     text = json.dumps(bubbles, ensure_ascii=False)
-    assert "葛蘭碧" in text and "分" in text
+    for section in ("52 週股價區間", "基本面", "營收表現", "籌碼面", "資金面", "技術面燈號", "葛蘭碧分析", "每日選股評分", "動能條件"):
+        assert section in text
+    assert all(len(json.dumps(m, ensure_ascii=False).encode()) <= line_push.CAROUSEL_MAX_BYTES for m in msgs[1:])
     assert all(c["to"] == "U123" and len(c["messages"]) <= 5 for c in post.calls)
 
 
@@ -57,11 +59,15 @@ def test_failed_push_not_marked(use_db):
     assert line_push.last_pushed(sb) is None
 
 
-def test_carousel_split_at_12():
+def test_carousel_split():
+    """一則輪播最多 12 張，而且 JSON 不能超過上限"""
+    a = {"info": {"stock_name": "測試"}, "m": None, "gran": None, "hist": None, "mom": None}
     ids = [str(1000 + k) for k in range(15)]
-    import pandas as pd
-    msgs = line_push.build_messages([("大分組", ids)], {}, "2026-10-20", pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
+    msgs = line_push.build_messages([("大分組", ids)], "2026-10-20", {sid: a for sid in ids})
     assert [len(m["contents"]["contents"]) for m in msgs[1:]] == [12, 3]
+    big = {"type": "bubble", "body": {"type": "box", "layout": "vertical",
+                                      "contents": [{"type": "text", "text": "x" * 10_000}]}}
+    assert [len(c) for c in line_push._carousels([big] * 6)] == [4, 2]
 
 
 def test_no_secrets_skips(monkeypatch):
