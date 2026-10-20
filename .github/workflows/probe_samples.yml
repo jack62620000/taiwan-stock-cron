@@ -1,0 +1,13 @@
+name: 暫時抓測試樣本
+on:
+  pull_request:
+    paths: [probe_samples.py, .github/workflows/probe_samples.yml]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt && SUPABASE_URL=http://x SUPABASE_KEY=x python probe_samples.py
