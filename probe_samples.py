@@ -14,7 +14,10 @@ KEEP = {"2330", "2317", "1101", "6488", "3105", "8069"}
 def trim_rows(rows):
     return [r for r in rows if isinstance(r, list) and r and str(r[0]).strip() in KEEP]
 for name, url in URLS.items():
-    data = requests.get(url, timeout=30).json()
+    try:
+        data = f.get_json(url, timeout=60, retries=4, wait=10)
+    except Exception as e:
+        print("@@" + name + "@@ERROR " + repr(e)); continue
     if "data" in data:
         data["data"] = trim_rows(data["data"])
     for t in data.get("tables", []):
