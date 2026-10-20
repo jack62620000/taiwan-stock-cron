@@ -23,6 +23,37 @@ def load_atr(stock_ids):
     return atr(apply_adjustments(raw, get_price_adjustments(None, since)))
 
 
+def load_watch_inputs(ids, score_days=60):
+    """
+    自選股分析用的資料（自選股頁與 LINE 推播共用，兩邊結果才會一致）。
+    評分取最近 score_days 個評分日（看分數走勢）；股價取約 110 個日曆天（葛蘭碧要算季線），
+    法人取約 70 個日曆天（法則 1 的外資條件與往回看的觀察期）。
+    回傳 (sig_dates 由新到舊, signals, prices 還原權值, ins, revenue)
+    """
+    from utils.db import get_signal_dates, get_rows_for_stocks, get_price_adjustments, apply_adjustments
+    ids = list(ids)
+    sig_dates = get_signal_dates(score_days)
+    signals = get_rows_for_stocks(
+        "daily_signals", ids, since=min(sig_dates),
+        columns="stock_id, date, total_score, rank, chip_score, margin_score, fund_score, tech_score, "
+                "close_price, change_5d, change_20d, reasons, warnings",
+    ) if sig_dates else pd.DataFrame()
+    anchor = date.fromisoformat(sig_dates[0]) if sig_dates else date.today()
+    since_prices = (anchor - timedelta(days=110)).isoformat()
+    prices = get_rows_for_stocks("daily_prices", ids, since=since_prices, columns="stock_id, date, high_price, low_price, close_price, volume")
+    if not prices.empty:
+        prices = apply_adjustments(prices, get_price_adjustments(None, prices["date"].min()))
+    ins = get_rows_for_stocks(
+        "stock_ins_daily", ids, since=(anchor - timedelta(days=70)).isoformat(),
+        columns="stock_id, date, foreign_net_shares, sitca_net_shares, foreign_hold_ratio",
+    )
+    revenue = get_rows_for_stocks(
+        "monthly_revenue", ids, date_col="year_month", since=(anchor - timedelta(days=120)).strftime("%Y-%m"),
+        columns="stock_id, year_month, yoy_growth",
+    )
+    return sig_dates, signals, prices, ins, revenue
+
+
 def granville_status(ids, prices, ins, names=None):
     """
     每檔股票的葛蘭碧狀態（參數同葛蘭碧頁的預設值）：今天符合的法則、法則 1 之後的狀態、

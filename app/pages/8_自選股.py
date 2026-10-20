@@ -3,15 +3,14 @@ import pandas as pd
 import altair as alt
 import sys
 import os
-from datetime import date, timedelta
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import (
-    get_stock_list, get_signal_dates, get_rows_for_stocks, get_price_adjustments, apply_adjustments,
+    get_stock_list,
     get_watchlist, add_to_watchlist, update_watchlist_note, remove_from_watchlist,
 )
 from utils.granville import STOP_RULE, CHOP_DAYS, CHOP_CROSSES
-from utils.analysis import granville_status
+from utils.analysis import granville_status, load_watch_inputs
 from utils.paper import add_form
 from utils.groups import group_picker, group_manager
 from utils.ui import require_login, style_sign
@@ -45,32 +44,8 @@ TOP_N = 20        # 「進前幾名」
 
 @st.cache_data(ttl=3600)
 def load_watch_data(ids):
-    """
-    自選股最近的評分、股價、法人與營收。ids 是 tuple，清單改變就重新載入。
-    評分取最近 SCORE_DAYS 個評分日（看分數走勢）；股價取約 110 個日曆天（葛蘭碧要算季線），
-    法人取約 70 個日曆天（法則 1 的外資條件與往回看的觀察期）。
-    """
-    ids = list(ids)
-    sig_dates = get_signal_dates(SCORE_DAYS)
-    signals = get_rows_for_stocks(
-        "daily_signals", ids, since=min(sig_dates),
-        columns="stock_id, date, total_score, rank, chip_score, margin_score, fund_score, tech_score, "
-                "close_price, change_5d, change_20d, reasons, warnings",
-    ) if sig_dates else pd.DataFrame()
-    anchor = date.fromisoformat(sig_dates[0]) if sig_dates else date.today()
-    since_prices = (anchor - timedelta(days=110)).isoformat()
-    prices = get_rows_for_stocks("daily_prices", ids, since=since_prices, columns="stock_id, date, high_price, low_price, close_price, volume")
-    if not prices.empty:
-        prices = apply_adjustments(prices, get_price_adjustments(None, prices["date"].min()))
-    ins = get_rows_for_stocks(
-        "stock_ins_daily", ids, since=(anchor - timedelta(days=70)).isoformat(),
-        columns="stock_id, date, foreign_net_shares, sitca_net_shares, foreign_hold_ratio",
-    )
-    revenue = get_rows_for_stocks(
-        "monthly_revenue", ids, date_col="year_month", since=(anchor - timedelta(days=120)).strftime("%Y-%m"),
-        columns="stock_id, year_month, yoy_growth",
-    )
-    return sig_dates, signals, prices, ins, revenue
+    """自選股最近的評分、股價、法人與營收（和 LINE 推播共用 utils.analysis.load_watch_inputs）。ids 是 tuple，清單改變就重新載入"""
+    return load_watch_inputs(list(ids), SCORE_DAYS)
 
 
 def build_table(ids, sig_dates, signals, prices, ins, revenue):

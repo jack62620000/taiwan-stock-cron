@@ -110,6 +110,17 @@ jobs:
           MOMENTUM_START: ${{ github.event.inputs.target_date || needs.update-daily-data.outputs.start }}
           MOMENTUM_END: ${{ github.event.inputs.target_date }}
         run: python momentum.py
+      # 把所有分組的自選股分析推到 LINE（分析和網頁自選股頁相同；沒設定 LINE 金鑰就跳過，同一個評分日只推一次）
+      # 推播失敗不擋後面的清除與檢查，最後一步再讓這次排程顯示失敗
+      - name: Push watchlist analysis to LINE
+        id: line
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: python line_push.py
       # 評分完再清除超過保留期限的舊資料（期限見 cleanup_old_data.py）
       - name: Clean up expired data
         env:
@@ -123,6 +134,11 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python check_data.py
+      - name: Report LINE push failure
+        if: always() && steps.line.outcome == 'failure'
+        run: |
+          echo "::error title=LINE 推播失敗::自選股分析沒有推到 LINE，請看 Push watchlist analysis to LINE 這一步的紀錄"
+          exit 1
 
   update-holder-only:
     if: github.event.schedule == '06 1 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only == 'true')
