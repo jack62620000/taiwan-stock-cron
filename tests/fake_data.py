@@ -115,3 +115,25 @@ def signal_performance(client, top_n=20, horizon=5):
     dates = sorted({r["date"] for r in client.tables.get("daily_signals", [])})
     return [{"date": d, "fwd_date": d, "top_return": 1.5, "market_return": 0.8, "top_count": top_n}
             for d in dates[:-horizon]]
+
+
+def _recent_series(client, table, start_date, fields):
+    """假的 recent_prices／recent_ins RPC：每檔股票一列，日期與數值放在陣列裡"""
+    series = {}
+    for r in sorted(client.tables.get(table, []), key=lambda r: (r["stock_id"], r["date"])):
+        if r["date"] >= start_date:
+            row = series.setdefault(r["stock_id"], {"stock_id": r["stock_id"], "dates": [],
+                                                    **{name: [] for name in fields}})
+            row["dates"].append(r["date"])
+            for name, col in fields.items():
+                row[name].append(r.get(col))
+    return [series[k] for k in sorted(series)]
+
+
+def recent_prices(client, start_date):
+    return _recent_series(client, "daily_prices", start_date, {"closes": "close_price", "volumes": "volume"})
+
+
+def recent_ins(client, start_date):
+    return _recent_series(client, "stock_ins_daily", start_date,
+                          {"foreign_net": "foreign_net_shares", "sitca_net": "sitca_net_shares"})

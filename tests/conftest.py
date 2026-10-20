@@ -28,7 +28,11 @@ def make_client(empty=False):
     tables = fake_data.build_tables()
     if empty:
         tables = {"stock_info": tables["stock_info"]}
-    return FakeClient(tables, rpcs={"signal_performance": fake_data.signal_performance})
+    return FakeClient(tables, rpcs={
+        "signal_performance": fake_data.signal_performance,
+        "recent_prices": fake_data.recent_prices,
+        "recent_ins": fake_data.recent_ins,
+    })
 
 
 @pytest.fixture

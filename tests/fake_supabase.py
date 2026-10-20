@@ -143,6 +143,11 @@ class RPC:
     def __init__(self, data):
         self.data = data
 
+    def range(self, start, end):
+        if isinstance(self.data, list):
+            return RPC(self.data[start:end + 1])
+        return self
+
     def execute(self):
         return Result(self.data)
 
