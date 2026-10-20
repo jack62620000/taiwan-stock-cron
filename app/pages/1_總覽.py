@@ -4,6 +4,7 @@ import numpy as np
 import sys
 import os
 import altair as alt
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.ui import (
@@ -63,8 +64,7 @@ def load_latest_rsi(closes, period=14):
 
 @st.cache_data(ttl=3600)
 def load_overview_data():
-    # 依序查詢，不要同時送出：這幾張表的 date 欄位沒有索引，「找最新日期」要掃整張表，
-    # 同時查會讓 Supabase 超過 statement timeout（3 秒）而被取消
+    # 「找最新日期」改查權值股後很快，這幾張表可以同時查，不必一張等一張
     loaders = [
         get_stock_list,
         get_latest_prices,
@@ -77,8 +77,8 @@ def load_overview_data():
         # 類股輪動要算成交值，所以多取 volume
         lambda: get_recent_closes(columns="stock_id, date, close_price, volume"),
     ]
-    with st.spinner("正在載入資料..."):
-        data = [f() for f in loaders]
+    with st.spinner("正在載入資料..."), ThreadPoolExecutor(max_workers=4) as pool:
+        data = list(pool.map(lambda f: f(), loaders))
     data.append(load_latest_rsi(data[-1]))
     return tuple(data)
 

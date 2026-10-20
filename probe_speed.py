@@ -66,3 +66,4 @@ for p, t, e in sorted(results, key=lambda x: -x[1]):
 print("\n===== 每頁各資料表查詢（次數、秒） =====")
 for (p, table), (n, secs) in sorted(STATS.items(), key=lambda x: -x[1][1])[:40]:
     print(f"{secs:6.1f}s {n:5d}次  {p}  {table}")
+# 第二次：比較改善後
