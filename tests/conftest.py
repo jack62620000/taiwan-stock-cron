@@ -18,7 +18,8 @@ import fake_data  # noqa: E402
 
 # utils.db 一載入就會連 Supabase，所以在載入前換成假的
 _fake_module = types.ModuleType("supabase")
-_fake_module.create_client = lambda url, key: FakeClient()
+_fake_module.create_client = lambda url, key, options=None: FakeClient()
+_fake_module.ClientOptions = lambda **kwargs: None
 sys.modules["supabase"] = _fake_module
 
 

@@ -3,11 +3,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pandas as pd
-from supabase import create_client
+from supabase import ClientOptions, create_client
 from dotenv import load_dotenv
 
 load_dotenv()
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+# 預設的 HTTP/2 是同一條連線多工，好幾個執行緒同時查詢時會互相卡住，偶爾還會出錯（KeyError、Server disconnected）。
+# 改用 HTTP/1.1 連線池：每個執行緒各用一條連線，同時查詢才真的同時進行。
+_http = httpx.Client(http2=False, timeout=120, follow_redirects=True, limits=httpx.Limits(max_connections=10))
+supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"), options=ClientOptions(httpx_client=_http))
 
 
 # ===== 共用工具 =====
