@@ -3,7 +3,7 @@ on:
   schedule:
     # 平日（週一到五）台灣時間晚上9:08（UTC 13:08）- 期貨專用
     - cron: '08 13 * * 1-5'
-    # 隔日台灣時間早上6:30（UTC 22:30）- 期貨補抓，避免晚上那次抓到的還是前一天
+    # 隔日台灣時間早上6:30（UTC 22:30）- 期貨補抓，同時檢查股價/法人/融資券有沒有缺，缺了就補
     - cron: '30 22 * * 1-5'
     # 平日（週一到五）台灣時間晚上11:11（UTC 15:11）- 股價/法人/融資券
     - cron: '11 15 * * 1-5'
@@ -42,9 +42,20 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python auto_fetch_futures.py
 
+  # 晚上 11:11 抓當天；早上 6:30 再檢查一次，晚上那次延遲、失敗或沒跑的日子會補上
   update-daily-data:
-    if: github.event.schedule == '11 15 * * 1-5' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only != 'true')
+    if: >-
+      github.event.schedule == '11 15 * * 1-5' ||
+      github.event.schedule == '30 22 * * 1-5' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only != 'true')
     runs-on: ubuntu-latest
+    # 晚上那次拖到早上才跑時，兩次不要同時抓
+    concurrency:
+      group: daily-data
+      cancel-in-progress: false
+    outputs:
+      fetched: ${{ steps.fetch.outputs.fetched }}
+      start: ${{ steps.fetch.outputs.start }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -55,6 +66,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Run daily fetch script
+        id: fetch
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -63,9 +75,15 @@ jobs:
 
   # 每日資料抓完後，幫全市場股票打分數（寫進 daily_signals）
   # 就算抓資料那一步回報不完整（例如少了某個市場），已經抓到的資料仍然可以評分
+  # 這次沒有抓到任何新的交易日（fetched=0，例如早上檢查時資料早已存齊）就不重算
   update-signals:
     needs: update-daily-data
-    if: always() && needs.update-daily-data.result != 'skipped' && needs.update-daily-data.result != 'cancelled'
+    if: >-
+      always() && needs.update-daily-data.result != 'skipped' && needs.update-daily-data.result != 'cancelled' &&
+      needs.update-daily-data.outputs.fetched != '0'
+    concurrency:
+      group: daily-signals
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -80,7 +98,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          SIGNALS_START: ${{ github.event.inputs.target_date }}
+          # 從這次補抓的第一天開始評分到最新交易日（手動指定日期時只評那天）
+          SIGNALS_START: ${{ github.event.inputs.target_date || needs.update-daily-data.outputs.start }}
           SIGNALS_END: ${{ github.event.inputs.target_date }}
         run: python signals.py
       # 動能選股：趨勢模板、52 週新高突破（寫進 momentum_signals）
@@ -88,7 +107,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          MOMENTUM_START: ${{ github.event.inputs.target_date }}
+          MOMENTUM_START: ${{ github.event.inputs.target_date || needs.update-daily-data.outputs.start }}
           MOMENTUM_END: ${{ github.event.inputs.target_date }}
         run: python momentum.py
       # 評分完再清除超過保留期限的舊資料（期限見 cleanup_old_data.py）
