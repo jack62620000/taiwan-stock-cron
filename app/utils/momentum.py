@@ -71,3 +71,34 @@ def conditions(r):
         (_ok(rs, RS_MIN, ge), f"相對強度 RS ≥ {RS_MIN}",
          "RS " + ("—（成交量太小，不列入排名）" if rs is None or pd.isna(rs) else f"{int(rs)}")),
     ]
+
+
+def momentum_summary(mrow):
+    """
+    一檔股票動能資料（momentum_signals 一列）的摘要：趨勢模板、52 週新高突破、RS、停損價。
+    個股分析卡與 LINE 推播共用。
+    """
+    from utils.granville import stop_price
+    conds = conditions(mrow)
+    n_ok = sum(1 for ok, _, _ in conds if ok)
+    liquid_m = bool(mrow.get("liquid"))
+    if not liquid_m:
+        tt_text, tt_note = f"{n_ok}/8", "20 日均量不到 500 張，不列入判斷"
+    elif mrow.get("trend_template"):
+        tt_text, tt_note = "✅ 符合", "今天剛符合" if mrow.get("trend_new") else "8 個條件全部符合"
+    else:
+        tt_text, tt_note = f"{n_ok}/8", "還差 " + str(8 - n_ok) + " 個條件"
+    hi = pd.to_numeric(mrow.get("high_52w"), errors="coerce")
+    c_m = pd.to_numeric(mrow.get("close_price"), errors="coerce")
+    vr = pd.to_numeric(mrow.get("vol_ratio"), errors="coerce")
+    if mrow.get("breakout"):
+        bo_text, bo_note = "✅ 今天突破", f"量比 {vr:.2f} 倍"
+    elif mrow.get("new_high"):
+        bo_text, bo_note = "創新高", f"量比 {vr:.2f} 倍，" + ("10 日內已突破過" if vr >= 1.5 else "量不夠（要 1.5 倍）")
+    else:
+        bo_text = f"{(c_m / hi - 1) * 100:+.1f}%" if pd.notna(hi) and hi > 0 else "—"
+        bo_note = f"離 52 週高點 {hi:,.2f}" if pd.notna(hi) else "資料不滿一年"
+    rs_m = mrow.get("rs_rating")
+    stop_m = stop_price(float(c_m), pd.to_numeric(mrow.get("atr14"), errors="coerce")) if pd.notna(c_m) else None
+    return {"conds": conds, "n_ok": n_ok, "tt_text": tt_text, "tt_note": tt_note,
+            "bo_text": bo_text, "bo_note": bo_note, "rs": rs_m, "close": c_m, "stop": stop_m}

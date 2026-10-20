@@ -1,0 +1,30 @@
+name: LINE 自選股推播（手動）
+# 設定好 LINE 金鑰後，用這個手動推一次測試；平常每晚的推播在「每日台股資料同步」評分完之後自動執行
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '今天已經推過也再推一次'
+        type: boolean
+        default: true
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Push watchlist analysis to LINE
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          LINE_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
+        run: python line_push.py

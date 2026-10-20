@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
@@ -7,15 +7,13 @@ import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import (
-    get_stock_info, get_daily_prices, get_quarterly,
-    get_revenue, get_stock_ins, get_margin, get_holder,
-    get_margin_utilization, get_stock_list, get_market_index,
+    get_stock_list,
     get_watchlist, add_to_watchlist, remove_from_watchlist, get_signal_history, get_rows_for_stocks,
 )
 from utils.analysis import granville_status
-from utils.granville import STOP_RULE, stop_price
-from utils.momentum import BACKTEST_MD, RULES_MD, conditions
-from utils.indicators import calc_all, get_latest_signals
+from utils.card import card_metrics, load_card_data as _load_card_data
+from utils.granville import STOP_RULE
+from utils.momentum import BACKTEST_MD, RULES_MD, momentum_summary
 from utils.groups import current_group
 from utils.ui import require_login, render_metric_cards, UP_COLOR, DOWN_COLOR, ACCENT, GLOW
 require_login()
@@ -57,18 +55,7 @@ elif st.button(f"⭐ 加入自選股「{watch_group}」"):
 # ===== 載入資料 =====
 @st.cache_data(ttl=3600)
 def load_card_data(stock_id):
-    info        = get_stock_info(stock_id)
-    prices      = get_daily_prices(stock_id, limit=250)
-    quarterly   = get_quarterly(stock_id, limit=8)
-    revenue     = get_revenue(stock_id, limit=12)
-    ins         = get_stock_ins(stock_id, limit=250)  # 買賣超圖用 60 日、外資持股走勢最多 250 日，卡片取最後 10 日
-    margin      = get_margin(stock_id, limit=1)
-    holder      = get_holder(stock_id, limit=1)
-    utilization = get_margin_utilization(stock_id, limit=60)  # ✅ 新增
-    # 上櫃股票和櫃買指數比，其餘和加權指數比
-    index_code  = "TPEX" if (info or {}).get("market") == "上櫃" else "TAIEX"
-    index_df    = get_market_index(index_code, limit=250)
-    return info, prices, quarterly, revenue, ins, margin, holder, utilization, index_df
+    return _load_card_data(stock_id)
 
 info, prices, quarterly, revenue, ins, margin, holder, utilization, index_df = load_card_data(stock_id)
 
@@ -81,134 +68,17 @@ if prices.empty:
     st.stop()
 
 # ===== 計算數據 =====
-prices_ta = calc_all(prices.copy())
-signals   = get_latest_signals(prices_ta)
-
-# 停牌或沒有成交的日子已在 calc_all 補成股價不變，並以 no_trade 標記
-latest    = prices_ta.iloc[-1]
-prev      = prices_ta.iloc[-2] if len(prices_ta) > 1 else latest
-no_trade_days = prices_ta[prices_ta["no_trade"]]["date"].astype(str).tolist()
-close     = latest["close_price"]
-prev_close = prev["close_price"]
-change    = close - prev_close
-change_pct = (change / prev_close * 100) if prev_close else 0
-
-high_52w  = prices["high_price"].max()
-low_52w   = prices["low_price"].min()
-position_pct = ((close - low_52w) / (high_52w - low_52w) * 100) if high_52w != low_52w else 50
-
-latest_q      = quarterly.iloc[-1] if not quarterly.empty else {}
-latest_rev    = revenue.iloc[-1] if not revenue.empty else {}
-latest_margin = margin.iloc[-1] if not margin.empty else {}
-latest_holder = holder.iloc[-1] if not holder.empty else {}
-latest_util   = utilization.iloc[-1] if not utilization.empty else {}  # ✅ 新增
-
-ins_10d      = ins.tail(10)
-foreign_10d  = ins_10d["foreign_net_shares"].sum() if not ins.empty else 0
-sitca_10d    = ins_10d["sitca_net_shares"].sum() if not ins.empty else 0
-dealers_10d  = ins_10d["dealers_net_shares"].sum() if not ins.empty else 0
-
-# 外資持股比率：最新值與近 20 個交易日的變化（百分點）
-hold_ratio = pd.to_numeric(ins["foreign_hold_ratio"], errors="coerce").dropna() \
-    if "foreign_hold_ratio" in ins.columns else pd.Series(dtype=float)
-hold_latest = hold_ratio.iloc[-1] if not hold_ratio.empty else None
-hold_chg_20 = hold_latest - hold_ratio.iloc[-21] if len(hold_ratio) > 20 else None
-
-# 現金流量（千元，年初累計）→ 億元
-def to_yi(v):
-    return v / 1e5 if v is not None and pd.notna(v) else None
-
-op_cf   = to_yi(latest_q.get("operating_cf"))
-inv_cf  = to_yi(latest_q.get("investing_cf"))
-free_cf = to_yi(latest_q.get("free_cf"))
-
-# ===== 計算本益比 =====
-# 季報的 EPS 是「年初至該季」的累計值，不是單季數字：
-#   - 第 4 季的累計就是全年 EPS
-#   - 有去年資料時算近四季：本期累計 + 去年全年 − 去年同期累計
-#   - 否則用累計值年化：EPS × 4 ÷ 季別
-pe_ratio = None
-pe_note  = ""
-q_label  = ""
-if not quarterly.empty:
-    q_sorted = quarterly.sort_values(["year", "quarter"])
-    last_q   = q_sorted.iloc[-1]
-    q_year   = int(last_q["year"])
-    q_num    = int(last_q["quarter"])
-    q_label  = f"{q_year} 年前 {q_num} 季累計"
-    eps_now  = last_q.get("eps")
-
-    annual_eps = None
-    if eps_now is not None and pd.notna(eps_now) and q_num > 0:
-        prev_full = q_sorted[(q_sorted["year"] == q_year - 1) & (q_sorted["quarter"] == 4)]["eps"].dropna()
-        prev_same = q_sorted[(q_sorted["year"] == q_year - 1) & (q_sorted["quarter"] == q_num)]["eps"].dropna()
-        if q_num == 4:
-            annual_eps = eps_now
-            pe_note    = "全年"
-        elif not prev_full.empty and not prev_same.empty:
-            annual_eps = eps_now + prev_full.iloc[-1] - prev_same.iloc[-1]
-            pe_note    = "近4季"
-        else:
-            annual_eps = eps_now * 4 / q_num
-            pe_note    = f"前{q_num}季年化"
-    if annual_eps and annual_eps > 0 and close:
-        pe_ratio = round(close / annual_eps, 2)
-
-# ===== P/B 用最新收盤價現算（資料庫存的是抓季報當下的股價）=====
-book_value = latest_q.get("book_value")
-if book_value is not None and pd.notna(book_value) and book_value > 0 and close:
-    pb_now = round(close / book_value, 2)
-else:
-    pb_now = latest_q.get("pb_ratio")
+m = card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization)
+prices_ta, signals, latest, prev, no_trade_days, close = (m["prices_ta"], m["signals"], m["latest"], m["prev"], m["no_trade_days"], m["close"])
+prev_close, change, change_pct, high_52w, low_52w, position_pct = (m["prev_close"], m["change"], m["change_pct"], m["high_52w"], m["low_52w"], m["position_pct"])
+latest_q, latest_rev, latest_margin, latest_holder, latest_util, foreign_10d = (m["latest_q"], m["latest_rev"], m["latest_margin"], m["latest_holder"], m["latest_util"], m["foreign_10d"])
+sitca_10d, dealers_10d, hold_latest, hold_chg_20, op_cf, inv_cf = (m["sitca_10d"], m["dealers_10d"], m["hold_latest"], m["hold_chg_20"], m["op_cf"], m["inv_cf"])
+free_cf, pe_ratio, pe_note, q_label, book_value, pb_now = (m["free_cf"], m["pe_ratio"], m["pe_note"], m["q_label"], m["book_value"], m["pb_now"])
+rsi_val, rsi_status, kd_k, kd_d, kd_status, macd_hist = (m["rsi_val"], m["rsi_status"], m["kd_k"], m["kd_d"], m["kd_status"], m["macd_hist"])
+ma5, ma20, ma60, vol_ratio, extra_tech, hold_ratio = (m["ma5"], m["ma20"], m["ma60"], m["vol_ratio"], m["extra_tech"], m["hold_ratio"])
 
 up_color = UP_COLOR if change >= 0 else DOWN_COLOR
 up_arrow = "▲" if change >= 0 else "▼"
-
-rsi_val    = signals.get("RSI", {}).get("value")
-rsi_status = signals.get("RSI", {}).get("status", "N/A")
-kd_k       = signals.get("KD", {}).get("K")
-kd_d       = signals.get("KD", {}).get("D")
-kd_status  = signals.get("KD", {}).get("status", "N/A")
-macd_hist  = signals.get("MACD", {}).get("hist")
-
-# ===== 其他技術面燈號：均線排列、乖離率、布林通道、量能 =====
-# 燈號顏色沿用上面：偏多（紅）、過熱或偏空（綠）、中性（金）
-def _num(v):
-    v = pd.to_numeric(v, errors="coerce")
-    return None if pd.isna(v) else float(v)
-
-ma5, ma20, ma60 = (_num(latest.get(c)) for c in ("MA5", "MA20", "MA60"))
-bb_up, bb_low = _num(latest.get("BB_UP")), _num(latest.get("BB_LOW"))
-vol_s = pd.to_numeric(prices_ta["volume"], errors="coerce")
-vol_avg20 = vol_s.iloc[-21:-1].mean() if len(vol_s) > 20 else None
-vol_ratio = float(vol_s.iloc[-1] / vol_avg20) if vol_avg20 else None
-
-extra_tech = []
-if None not in (ma5, ma20, ma60):
-    if ma5 > ma20 > ma60:
-        extra_tech.append(("均線排列", "多頭排列", "bull", "5 日 > 20 日 > 60 日"))
-    elif ma5 < ma20 < ma60:
-        extra_tech.append(("均線排列", "空頭排列", "bear", "5 日 < 20 日 < 60 日"))
-    else:
-        extra_tech.append(("均線排列", "均線糾結", "neu", "5、20、60 日線交錯"))
-if ma20:
-    bias = (close / ma20 - 1) * 100
-    extra_tech.append(("乖離率（20 日）", f"{bias:+.1f}%",
-                       "bear" if bias > 10 else "bull" if bias < -10 else "neu",
-                       "正乖離過大，短線過熱" if bias > 10 else "負乖離過大，可能超跌" if bias < -10 else
-                       "站上 20 日線" if bias >= 0 else "跌破 20 日線"))
-if bb_up is not None and bb_low is not None and bb_up > bb_low:
-    bb_pos = (close - bb_low) / (bb_up - bb_low) * 100
-    extra_tech.append(("布林通道", f"{bb_pos:.0f}%",
-                       "bear" if bb_pos >= 80 else "bull" if bb_pos <= 20 else "neu",
-                       "突破上軌" if bb_pos > 100 else "靠近上軌" if bb_pos >= 80 else
-                       "跌破下軌" if bb_pos < 0 else "靠近下軌" if bb_pos <= 20 else "通道中段"))
-if vol_ratio is not None:
-    if vol_ratio >= 1.5:
-        extra_tech.append(("量能", f"{vol_ratio:.1f} 倍", "bull" if change >= 0 else "bear",
-                           "價漲量增" if change >= 0 else "價跌量增"))
-    else:
-        extra_tech.append(("量能", f"{vol_ratio:.1f} 倍", "neu", "量縮" if vol_ratio < 0.7 else "量能正常"))
 
 extra_tech_html = "".join(
     f'<div class="tb"><div class="tlb">{label}</div><div class="tbdg {cls}">{value}</div>'
@@ -501,27 +371,9 @@ mrow = load_momentum_row(stock_id)
 if mrow is None:
     st.info("還沒有這檔股票的動能資料（每天收盤後計算，新上市不滿一年的股票沒有 52 週資料）。")
 else:
-    conds = conditions(mrow)
-    n_ok = sum(1 for ok, _, _ in conds if ok)
-    liquid_m = bool(mrow.get("liquid"))
-    if not liquid_m:
-        tt_text, tt_note = f"{n_ok}/8", "20 日均量不到 500 張，不列入判斷"
-    elif mrow.get("trend_template"):
-        tt_text, tt_note = "✅ 符合", "今天剛符合" if mrow.get("trend_new") else "8 個條件全部符合"
-    else:
-        tt_text, tt_note = f"{n_ok}/8", "還差 " + str(8 - n_ok) + " 個條件"
-    hi = pd.to_numeric(mrow.get("high_52w"), errors="coerce")
-    c_m = pd.to_numeric(mrow.get("close_price"), errors="coerce")
-    vr = pd.to_numeric(mrow.get("vol_ratio"), errors="coerce")
-    if mrow.get("breakout"):
-        bo_text, bo_note = "✅ 今天突破", f"量比 {vr:.2f} 倍"
-    elif mrow.get("new_high"):
-        bo_text, bo_note = "創新高", f"量比 {vr:.2f} 倍，" + ("10 日內已突破過" if vr >= 1.5 else "量不夠（要 1.5 倍）")
-    else:
-        bo_text = f"{(c_m / hi - 1) * 100:+.1f}%" if pd.notna(hi) and hi > 0 else "—"
-        bo_note = f"離 52 週高點 {hi:,.2f}" if pd.notna(hi) else "資料不滿一年"
-    rs_m = mrow.get("rs_rating")
-    stop_m = stop_price(float(c_m), pd.to_numeric(mrow.get("atr14"), errors="coerce")) if pd.notna(c_m) else None
+    mm = momentum_summary(mrow)
+    conds, n_ok, tt_text, tt_note, bo_text, bo_note = (mm["conds"], mm["n_ok"], mm["tt_text"], mm["tt_note"], mm["bo_text"], mm["bo_note"])
+    rs_m, c_m, stop_m = mm["rs"], mm["close"], mm["stop"]
     render_metric_cards([
         ("趨勢模板", tt_text, tt_note, None),
         ("52 週新高突破", bo_text, bo_note, None),
