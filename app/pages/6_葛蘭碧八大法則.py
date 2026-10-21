@@ -14,7 +14,7 @@ from utils.granville import (
 )
 from utils.watch import add_watch_form
 from utils.analysis import (
-    FOLLOW_DAYS, granville_buy_table, granville_followup, load_atr, render_followup, render_market_warning,
+    FOLLOW_DAYS, granville_buy_table, granville_followup, granville_rebound_table, load_atr, render_followup, render_market_warning,
 )
 from utils.groups import current_group
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
@@ -484,6 +484,7 @@ with tab_plan:
   波動大的股票仍以 {STOP_LOSS_PCT:g}% 為上限，大虧的上限不變。
 - **每張風險**：買在預計價、跌到停損價出場，一張（1000 股）會虧多少元。可以用「每筆最多願意虧的錢 ÷ 每張風險」決定買幾張。
 - **比大盤強弱**：近 {RS_DAYS} 個交易日漲跌幅減去全部股票的平均，正的代表比大盤強；同一個狀態裡，強於大盤的排前面。
+- **急跌反彈候選**：法則 4，均線往下、股價跌到離均線很遠。回測隔天開盤買、持有 20 日比平均好約 2%，但勝率只有四成多，一定要設停損。
 - **賣出警示**：均線已經走平或往下，明天收盤跌破觸發價就會出現賣出訊號（法則 5、6）。手上有的股票可以先記下這個價位。
 - **過熱（法則 8）**：只對自選股與持有中的模擬持股提醒。回測顯示離均線越遠、之後平均還是續漲，所以不建議急著賣，
   而是把停損往上移到均線附近，鎖住大部分獲利。
@@ -543,6 +544,37 @@ with tab_plan:
                            "葛蘭碧", latest_date, "granville")
             for r in buy_df.itertuples():
                 chart_labels[r.代號] = f"{r.代號} {r.名稱}｜{r.狀態}"
+
+    # ===== 急跌反彈候選（法則 4）=====
+    with st.container(border=True):
+        st.subheader("🔵 急跌反彈候選（法則 4）")
+        st.caption(f"均線往下、股價跌到離均線 {bias_pct:g}% 以上的股票（負乖離過大）。回測隔天開盤買、持有 20 個交易日，"
+                   "前後兩段都比全部股票平均好（約 +2%），但勝率只有四成多，是靠少數大反彈撐起來，買之前一定要設停損。")
+        if confirms:
+            st.caption("⚠️ 左側勾了買進確認條件，法則 4 也要同時符合；回測法則 4 加上確認條件的樣本太少、結果反而很差，建議不要勾。")
+        reb_df = granville_rebound_table(df, relative_strength(prices))
+        if reb_df.empty:
+            st.info("今天沒有出現法則 4 的股票")
+        else:
+            st.metric("今天出現法則 4", f"{len(reb_df)} 檔")
+            st.dataframe(
+                reb_df.style
+                    .format("{:,.2f}", subset=["最新收盤", "均線"], na_rep="")
+                    .format("{:+.2f}", subset=["乖離%", "比大盤%"], na_rep="")
+                    .format("{:,.0f}", subset=["20日均量"], na_rep="")
+                    .map(style_sign, subset=["乖離%", "比大盤%"]),
+                hide_index=True, width="stretch", height=min(500, 38 + 35 * len(reb_df)),
+                column_config={"代號": st.column_config.TextColumn(pinned=True),
+                               "名稱": st.column_config.TextColumn(pinned=True),
+                               "乖離%": st.column_config.Column(help="收盤價比均線低幾 %，越負代表跌得越深"),
+                               "比大盤%": st.column_config.Column(
+                                   help=f"近 {RS_DAYS} 個交易日漲跌幅減去全部股票平均"),
+                               "20日均量": st.column_config.Column(help="單位：張")},
+            )
+            add_watch_form(reb_df.rename(columns={"代號": "stock_id", "名稱": "stock_name"}),
+                           "葛蘭碧法則4", latest_date, "granville4")
+            for r in reb_df.itertuples():
+                chart_labels.setdefault(r.代號, f"{r.代號} {r.名稱}｜急跌反彈候選")
 
     # ===== 賣出警示 =====
     with st.container(border=True):

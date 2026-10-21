@@ -2,7 +2,8 @@
 LINE 選單「葛蘭碧」「動能股」的回覆 - 和網頁同一套計算，每晚由 line_cards.py 算好存到 Storage
 
     葛蘭碧：葛蘭碧頁「買賣預告 → 準備買進」中狀態為「⏳ 等待法則2」的股票（網頁預設參數、不加篩選），
-            欄位、數字、說明文字和網頁表格相同（utils.analysis.granville_buy_table）
+            欄位、數字、說明文字和網頁表格相同（utils.analysis.granville_buy_table）；
+            後面接「急跌反彈候選」（法則 4，utils.analysis.granville_rebound_table），最多一則輪播
     動能股：每日選股頁「動能選股」的「兩者同時」「52 週新高＋量增」「今天剛符合趨勢模板」三種，
             欄位和網頁表格相同（utils.momentum.momentum_table）
 
@@ -76,11 +77,24 @@ def granville_bubble(r):
     return _bubble(r["代號"], r["名稱"], r["產業"], r["狀態"], rows, note=str(r["說明"]))
 
 
-def granville_messages(date, table):
-    """葛蘭碧回覆：第一則文字（說明與欄位解釋），之後每檔一張卡"""
-    from utils.analysis import GRANVILLE_MIN_VOLUME
+def rebound_bubble(r):
+    rows = [
+        _row("最新收盤", _f(r["最新收盤"])),
+        _row("均線", _f(r["均線"])),
+        _row("乖離%", _f(r["乖離%"], "%"), _sign_color(r["乖離%"])),
+        _row("比大盤%", _f(r["比大盤%"], "%"), _sign_color(r["比大盤%"])),
+        _row("20日均量", _f(r["20日均量"], " 張", 0)),
+    ]
+    return _bubble(r["代號"], r["名稱"], r["產業"], "🔵 急跌反彈候選（法則4）", rows,
+                   note="跌到離均線很遠，回測常有反彈，但勝率只有四成多，買之前一定要設停損")
+
+
+def granville_messages(date, table, rebound=None):
+    """葛蘭碧回覆：第一則文字（說明與欄位解釋），之後每檔一張卡；最後一則輪播是急跌反彈候選（有的話）"""
+    from utils.analysis import GRANVILLE_DEFAULTS, GRANVILLE_MIN_VOLUME
     from utils.granville import CHOP_CROSSES, CHOP_DAYS, HOLD_HINT, RS_DAYS, STOP_RULE, WATCH_DAYS
     waiting = table[table["狀態"] == "⏳ 等待法則2"] if not table.empty else table
+    rebound = rebound if rebound is not None else pd.DataFrame()
     lo, hi = HOLD_HINT
     lines = [
         f"📐 葛蘭碧：等待法則2（{date} 收盤後）",
@@ -101,9 +115,19 @@ def granville_messages(date, table):
     ]
     if waiting.empty:
         lines[1] = "目前沒有等待法則 2 的股票。"
-        return [{"type": "text", "text": "\n".join(lines)[:TEXT_MAX]}]
-    msgs, n_rest = _pack("葛蘭碧：等待法則2", [granville_bubble(r) for _, r in waiting.iterrows()], MAX_MESSAGES - 1)
+    reb_slots = 1 if not rebound.empty else 0
+    msgs, n_rest = _pack("葛蘭碧：等待法則2", [granville_bubble(r) for _, r in waiting.iterrows()],
+                         MAX_MESSAGES - 1 - reb_slots)
     lines += _rest_line(waiting, n_rest, "代號", "名稱")
+    lines += ["", f"【🔵 急跌反彈候選（法則 4）】共 {len(rebound)} 檔",
+              f"均線往下、收盤離均線 {GRANVILLE_DEFAULTS['bias_pct']:g}% 以上（負乖離過大）。回測隔天開盤買、持有 20 個交易日，"
+              "前後兩段都比全部股票平均好約 2%，但勝率只有四成多，買之前一定要設停損。"]
+    if reb_slots:
+        reb_msgs, reb_rest = _pack("葛蘭碧：急跌反彈候選", [rebound_bubble(r) for _, r in rebound.iterrows()], reb_slots)
+        msgs += reb_msgs
+        lines += _rest_line(rebound, reb_rest, "代號", "名稱")
+    else:
+        lines.append("今天沒有出現法則 4 的股票。")
     return [{"type": "text", "text": "\n".join(lines)[:TEXT_MAX]}] + msgs
 
 
@@ -178,12 +202,12 @@ def load_momentum():
 
 def build_lists():
     """回傳 {檔名: 內容}，給 line_cards.upload 一起上傳"""
-    from utils.analysis import granville_buy_default, load_market_regime, market_warning
-    g_date, table = granville_buy_default()
+    from utils.analysis import granville_default, load_market_regime, market_warning
+    g_date, table, rebound = granville_default()
     m_date, m_msgs = momentum_messages(load_momentum())
     warn = market_warning(load_market_regime())
     lists = {
-        "granville.json": {"date": g_date, "messages": granville_messages(g_date, table)},
+        "granville.json": {"date": g_date, "messages": granville_messages(g_date, table, rebound)},
         "momentum.json": {"date": m_date, "messages": m_msgs},
     }
     for content in lists.values():

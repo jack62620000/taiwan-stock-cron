@@ -197,37 +197,57 @@ GRANVILLE_DEFAULTS = {"ma_days": 20, "slope_days": 5, "lookback": 5, "near_pct":
 GRANVILLE_MIN_VOLUME = 500
 
 
-def granville_buy_default():
+REBOUND_COLUMNS = ["代號", "名稱", "產業", "最新收盤", "均線", "乖離%", "比大盤%", "20日均量"]
+
+
+def granville_rebound_table(df, rs):
     """
-    用葛蘭碧頁的預設參數、不加任何篩選，算出「準備買進」表（LINE 查詢用，和網頁打開時看到的相同）。
-    資料同葛蘭碧頁：近 100 個日曆天股價、近 60 個日曆天法人。回傳 (資料日期, 表格)；沒有資料時表格是空的
+    急跌反彈候選：今天出現法則 4（均線往下、負乖離過大）的股票，跌越深排越前面。
+    df 是 granville_signals 合併股票名稱後的表，rs 是 relative_strength。葛蘭碧頁與 LINE 共用。
+    """
+    hit = df[df["rules"].apply(lambda r: 4 in r).astype(bool)] if not df.empty else df
+    if hit.empty:
+        return pd.DataFrame(columns=REBOUND_COLUMNS)
+    return pd.DataFrame({
+        "代號": hit["stock_id"], "名稱": hit["stock_name"], "產業": hit["industry"],
+        "最新收盤": hit["close_price"], "均線": hit["ma"], "乖離%": hit["bias"],
+        "比大盤%": hit["stock_id"].map(rs), "20日均量": hit["avg_volume_20"],
+    }, columns=REBOUND_COLUMNS).sort_values("乖離%").reset_index(drop=True)
+
+
+def granville_default():
+    """
+    用葛蘭碧頁的預設參數、不加任何篩選，算出「準備買進」與「急跌反彈候選」表（LINE 查詢用，和網頁打開時看到的相同）。
+    資料同葛蘭碧頁：近 100 個日曆天股價、近 60 個日曆天法人。回傳 (資料日期, 準備買進表, 急跌反彈候選表)；沒有資料時表格是空的
     """
     from utils.db import get_recent_closes, get_recent_ins, get_stock_list
+    empty_buy, empty_rebound = pd.DataFrame(columns=BUY_COLUMNS), pd.DataFrame(columns=REBOUND_COLUMNS)
     prices = get_recent_closes(calendar_days=100, columns="stock_id, date, close_price, volume")
     if prices.empty:
-        return None, pd.DataFrame(columns=BUY_COLUMNS)
+        return None, empty_buy, empty_rebound
     latest = prices["date"].max()
     ins = get_recent_ins(calendar_days=60)
     stock_list = get_stock_list()
     signals = granville_signals(prices, ins=ins, **GRANVILLE_DEFAULTS)
     df = signals.merge(stock_list[["stock_id", "stock_name", "market", "industry"]], on="stock_id", how="inner")
     df = df[df["avg_volume_20"] >= GRANVILLE_MIN_VOLUME]
+    rs = relative_strength(prices)
+    rebound = granville_rebound_table(df, rs)
     watch = rule1_watchlist(prices, ins=ins, min_volume=GRANVILLE_MIN_VOLUME, **GRANVILLE_DEFAULTS)
     if watch.empty:
-        return latest, pd.DataFrame(columns=BUY_COLUMNS)
+        return latest, empty_buy, rebound
     watch = watch[watch["stock_id"].isin(df["stock_id"])] \
         .merge(stock_list[["stock_id", "stock_name", "industry"]], on="stock_id", how="left")
     cand = watch[watch["status"].isin(["今天出現法則2", "等待法則2"])]
     if cand.empty:
-        return latest, pd.DataFrame(columns=BUY_COLUMNS)
+        return latest, empty_buy, rebound
     waiting = sorted(cand.loc[cand["status"] == "等待法則2", "stock_id"])
     trig = next_day_triggers(prices, (2,), "買進", stock_ids=waiting, **GRANVILLE_DEFAULTS).set_index("stock_id")
     table, _ = granville_buy_table(
         cand, trig, df.set_index("stock_id")["ma"], ma_cross_counts(prices, GRANVILLE_DEFAULTS["ma_days"]),
-        relative_strength(prices), load_atr(tuple(sorted(cand["stock_id"]))),
+        rs, load_atr(tuple(sorted(cand["stock_id"]))),
     )
-    return latest, table
-
+    return latest, table, rebound
 
 # =====================================================================
 # 訊號事後追蹤：最近出現過的訊號，之後實際漲跌多少（葛蘭碧頁、每日選股頁共用）

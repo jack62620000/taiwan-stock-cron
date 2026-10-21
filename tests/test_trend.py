@@ -145,3 +145,13 @@ def test_backtest_lamps():
     assert r["rank"][0] == "bull" and r["streak"][0] == "bull"
     r = revenue_lamps(None, {"yoy3": None, "cum_yoy": None, "rank12": 3, "yoy_streak_days": -1})
     assert r["yoy"][0] == "N/A" and r["rank"][0] == "neu" and r["streak"][0] == "bear"
+
+
+def test_lamp_summary():
+    from utils.card import lamp_summary, margin_hint_lamp
+    s = lamp_summary(["bull", "bull", "neu"])
+    assert (s["red"], s["green"], s["gold"], s["total"], s["lamp"], s["verdict"]) == (2, 0, 1, 3, "bull", "整體偏多")
+    assert lamp_summary(["bull", "bear"])["verdict"] == "多空交錯"
+    assert lamp_summary(["bear", "bear"])["lamp"] == "bear" and lamp_summary([])["total"] == 0
+    assert margin_hint_lamp(100, 5) == "bull" and margin_hint_lamp(100, -5) == "bear"
+    assert margin_hint_lamp(-100, 5) == "neu" and margin_hint_lamp(-100, -5) == "bear" and margin_hint_lamp(None, 5) is None

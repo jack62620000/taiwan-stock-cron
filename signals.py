@@ -17,6 +17,10 @@
   v4（2026-10-21）：改用「隔天開盤買」驗證（2025-02～2026-10），技術面「RSI 50～75」改成「RSI ≥ 70」：
       - RSI 70 以上的股票之後反而比較強（前後兩段都多約 1.2～1.8 個百分點），50～75 的效果最弱
       - 每天總分前 20 名之後 20 日比全體平均多：v3 4.49%，v4 4.83%（前後兩段都比 v3 好）
+  v5（2026-10-22）：同樣用隔天開盤買驗證，大戶持股改看「近 4 週增加 ≥ 1 個百分點」（+7）：
+      - 原本的「大戶週增 0～0.5」（+4）整體和後段都是負效果；看 4 週變化比看 1 週穩定（前後兩段都多 2.5～5 個百分點）
+      - 每天總分前 20 名比全體平均多：v4 4.83%，v5 4.95%；前 10 名 v4 5.40%，v5 5.78%（前後兩段都比 v4 好）
+      - 同時試過券資比改級距、投信連買 5 天再加分，都沒有變好，所以沒有採用
 
 用法：
     python signals.py                                   # 評分資料庫裡最新的交易日
@@ -45,7 +49,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-RULE_VERSION = 4
+RULE_VERSION = 5
 LOOKBACK_DAYS = 30          # 評分日之前要多載入的交易日數（MA20、RSI、20 日漲幅需要）
 LIQUID_MIN_LOTS = 500       # 20 日均量至少 500 張才列入排名
 ANCHOR_STOCKS = ["2330", "2317", "2454"]  # 用權值股找交易日，走主鍵索引比較快
@@ -248,7 +252,7 @@ class Features:
 
         h = data["holder"]
         self.holder = _pivot(h, "big_holder_ratio", index="week_date")
-        self.holder_diff = self.holder.diff()
+        self.holder_diff4 = self.holder.diff(4)  # 近 4 週變化（百分點）
 
         r = data["revenue"]
         self.rev = _pivot(r, "revenue", index="year_month")
@@ -259,11 +263,11 @@ class Features:
         self.stocks = set(data["stocks"]["stock_id"]) if not data["stocks"].empty else set()
 
     def holder_asof(self, d):
-        """評分日之前最新一週的大戶比例與週變化"""
+        """評分日之前最新一週的大戶比例與近 4 週變化"""
         weeks = [w for w in self.holder.index if w < d]
         if not weeks:
             return pd.Series(dtype=float), pd.Series(dtype=float)
-        return self.holder.loc[weeks[-1]], self.holder_diff.loc[weeks[-1]]
+        return self.holder.loc[weeks[-1]], self.holder_diff4.loc[weeks[-1]]
 
     @lru_cache(maxsize=32)
     def revenue_asof(self, d):
@@ -335,10 +339,11 @@ def score_stock(x):
     if x["s_streak"] >= 3:
         chip += 8
         reasons.append(f"投信連買 {int(x['s_streak'])} 天")
-    hd = x["holder_diff"]
-    if _num(hd) and hd > 0:
-        chip += 7 if hd >= 0.5 else 4
-        reasons.append(f"大戶持股週增 {hd:.2f} 個百分點")
+    # v5：大戶看近 4 週變化，增加 1 個百分點以上才加分（週變化小幅增加回測是負效果）
+    hd4 = x["holder_diff4"]
+    if _num(hd4) and hd4 >= 1:
+        chip += 7
+        reasons.append(f"大戶持股 4 週增 {hd4:.2f} 個百分點")
 
     # ---------- 資金面（8）----------
     # v3 拿掉「融資使用率低」「資減價漲」：回測沒有效果，只留券資比
@@ -406,7 +411,7 @@ def score_day(feat, d):
     close_today = feat.close.loc[d]
     close_raw = feat.close_raw.loc[d]
     traded = close_today.dropna().index
-    holder, holder_diff = feat.holder_asof(d)
+    holder, holder_diff4 = feat.holder_asof(d)
     rev = feat.revenue_asof(d)
 
     # 先把每張寬表當天那一列取出來，逐檔查詢時就只是查 dict
@@ -435,7 +440,7 @@ def score_day(feat, d):
             "s_streak": np.nan_to_num(at("s_streak", sid)),
             "mb": at("mb", sid), "sb": at("sb", sid),
             "rate": at("rate", sid), "mb_chg5": at("mb_chg5", sid),
-            "holder_diff": holder_diff.get(sid, np.nan),
+            "holder_diff4": holder_diff4.get(sid, np.nan),
             "yoy": r["yoy"] if r is not None else np.nan,
             "cum_yoy": r["cum_yoy"] if r is not None else np.nan,
             "yoy3": bool(r["yoy3"]) if r is not None else False,

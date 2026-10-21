@@ -207,6 +207,26 @@ def margin_hint(margin_chg20, price_chg20):
            "股價跌、融資也減少：散戶在退場（或被斷頭），回測之後 20 日比平均差"
 
 
+def margin_hint_lamp(margin_chg20, price_chg20):
+    """融資搭配股價解讀的回測燈號：股價漲融資增比平均好、股價跌比平均差、股價漲融資減差不多；沒有解讀回傳 None"""
+    if margin_chg20 is None or price_chg20 is None or margin_chg20 == 0:
+        return None
+    if price_chg20 < 0:
+        return "bear"
+    return "bull" if margin_chg20 > 0 else "neu"
+
+
+def lamp_summary(lamps):
+    """
+    數燈號：紅比綠多 2 個以上是「整體偏多」、綠比紅多 2 個以上是「整體偏弱」，其他是「多空交錯」。
+    回傳 dict：red、green、gold、total、verdict、lamp
+    """
+    red, green = lamps.count("bull"), lamps.count("bear")
+    lamp = "bull" if red - green >= 2 else "bear" if green - red >= 2 else "neu"
+    return {"red": red, "green": green, "gold": len(lamps) - red - green, "total": len(lamps),
+            "verdict": {"bull": "整體偏多", "bear": "整體偏弱", "neu": "多空交錯"}[lamp], "lamp": lamp}
+
+
 def revenue_trend(revenue):
     """
     月營收（千元，由舊到新）→ 營收表現的延伸數據：累計營收與年增率、近 3 月年增率（和前 3 月比）、
@@ -450,14 +470,20 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
     if obv:
         extra_tech.append(("OBV 能量潮", obv[0], obv[1], obv[0], obv[2]))
 
-    # ===== 技術面總結：數 ⑥ 每一格的燈號（只是統計，沒有另外回測）=====
-    lamps = [LAMP.get(rsi_status, "neu"), LAMP.get(kd_status, "neu"),
-             "bull" if (macd_hist or 0) > 0 else "bear", position_level[1]] + [cls for _, _, cls, _, _ in extra_tech]
-    red, green = lamps.count("bull"), lamps.count("bear")
-    gold = len(lamps) - red - green
-    verdict = "整體偏多" if red - green >= 2 else "整體偏弱" if green - red >= 2 else "多空交錯"
-    tech_summary = {"red": red, "green": green, "gold": gold, "verdict": verdict,
-                    "lamp": "bull" if red - green >= 2 else "bear" if green - red >= 2 else "neu"}
+    # ===== 各區總結：數每一格的燈號（只是統計，沒有另外回測）=====
+    tech_summary = lamp_summary([LAMP.get(rsi_status, "neu"), LAMP.get(kd_status, "neu"),
+                                 "bull" if (macd_hist or 0) > 0 else "bear", position_level[1]]
+                                + [cls for _, _, cls, _, _ in extra_tech])
+    # ③～⑤ 只數畫面上有顯示的燈號（算不出來的、沒有標籤的金色不算）
+    shown = lambda *cls: [c for c in cls if c in ("bull", "bear")]  # noqa: E731
+    rev_summary = lamp_summary(
+        [lv[1] for lv in (rev_lamps["yoy"], rev_lamps["yoy3"], rev_lamps["cum"]) if lv[0] != "N/A"]
+        + shown(rev_lamps["rank"][0], rev_lamps["streak"][0]))
+    chip_summary = lamp_summary([chip_lamps[n][0] for n, c in chips.items() if c]
+                                + ([big_lamp[0]] if big_chg is not None else []))
+    hint_lamp = margin_hint_lamp(margin_tr["chg20"] if margin_tr else None, price_chg20)
+    fund_summary = lamp_summary(([short_level[1]] if short_level[0] != "N/A" else [])
+                                + ([hint_lamp] if hint_lamp else []))
 
     return {
         "prices_ta": prices_ta,
@@ -501,6 +527,10 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         "macd_hist": macd_hist,
         "macd_zero": macd_zero_state,
         "tech_summary": tech_summary,
+        "rev_summary": rev_summary,
+        "chip_summary": chip_summary,
+        "fund_summary": fund_summary,
+        "margin_hint_lamp": hint_lamp,
         "ma5": ma5,
         "ma20": ma20,
         "ma60": ma60,

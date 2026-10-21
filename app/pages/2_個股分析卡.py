@@ -145,6 +145,17 @@ def lamp_html(cls, name="", note=""):
     return pill + (f'<div class="kn">{note}</div>' if note else "")
 
 
+def summary_html(label, s, note):
+    """區塊最上面的總結：整體偏多／偏弱／多空交錯，以及幾紅幾綠幾金；沒有任何燈號就不顯示"""
+    if not s or not s["total"]:
+        return ""
+    return (f'<div class="tsum">{label} <span class="tbdg {s["lamp"]}" style="padding:2px 10px;font-size:13px;">{s["verdict"]}</span>'
+            f'<span style="color:var(--rd);font-weight:700;">{s["red"]} 紅</span>・'
+            f'<span style="color:var(--gn);font-weight:700;">{s["green"]} 綠</span>・'
+            f'<span style="color:var(--or);font-weight:700;">{s["gold"]} 金</span>'
+            f'<span style="color:var(--td);font-size:12px;">{note}</span></div>')
+
+
 def chip_box(name):
     """法人一格：近 10 日累計（張），下面是趨勢（由賣轉買、買超加速…）、近 5 日／前 5 日與回測燈號"""
     c = m["chips"].get(name)
@@ -203,7 +214,9 @@ big_cls, big_lamp_note = m["big_lamp"]
 big_note = (f'近 {m["big_weeks"]} 週 <span style="color:{LAMP_COLOR[big_cls]};font-weight:700;">{big_chg:+.2f}</span> 百分點'
             if big_chg is not None else "")
 smr = m["short_margin_ratio"]
-margin_hint_html = f'<div class="kn" style="margin-top:10px;font-size:12.5px;">💡 近 20 日{m["margin_hint"]}（回測僅供參考）</div>' if m["margin_hint"] else ""
+hint_color = LAMP_COLOR.get(m["margin_hint_lamp"], "var(--td)")
+margin_hint_html = (f'<div class="kn" style="margin-top:10px;font-size:12.5px;color:{hint_color};">'
+                    f'💡 近 20 日{m["margin_hint"]}（回測僅供參考）</div>' if m["margin_hint"] else "")
 rl = m["rev_lamps"]
 
 # ===== 建立 HTML 卡片 =====
@@ -330,6 +343,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 
 <div class="sec">
   <div class="st"><span class="sn">③</span> 營收表現（最新月）</div>
+  {summary_html("營收", m["rev_summary"], "（紅＝回測比平均好、綠＝比平均差、金＝差別不大；只是統計下面各格的燈號）")}
   <div class="kg">
     <div class="kb"><div class="kl">營收年月</div><div class="kv">{latest_rev.get('year_month','N/A')}</div></div>
     <div class="kb"><div class="kl">月營收</div><div class="kv">{fmt(latest_rev.get('revenue',0)/1000,'',1) if latest_rev.get('revenue') else 'N/A'}</div><div class="kn">百萬元</div></div>
@@ -348,6 +362,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 
 <div class="sec">
   <div class="st"><span class="sn">④</span> 籌碼面（近 10 日累計＋買賣趨勢）</div>
+  {summary_html("籌碼", m["chip_summary"], "（紅＝回測比平均好、綠＝比平均差、金＝差別不大；只是統計下面各格的燈號）")}
   <div class="kg5">
     {chip_box("外資")}
     {chip_box("投信")}
@@ -359,6 +374,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 
 <div class="sec">
   <div class="st"><span class="sn">⑤</span> 資金面（融資融券）</div>
+  {summary_html("資金", m["fund_summary"], "（券資比和下面 💡 融資搭配股價的回測燈號）")}
   <div class="kg5">
     {balance_box("融資餘額", latest_margin.get('margin_balance'), m["margin_tr"])}
     <div class="kb"><div class="kl">融資使用率</div><div class="kv kv-or">{fmt(latest_util.get('margin_rate'),'%') if latest_util.get('margin_rate') is not None else 'N/A'}</div></div>
@@ -372,9 +388,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 
 <div class="sec">
   <div class="st"><span class="sn">⑥</span> 技術面燈號</div>
-  <div class="tsum">技術面 <span class="tbdg {ts['lamp']}" style="padding:2px 10px;font-size:13px;">{ts['verdict']}</span>
-    <span style="color:var(--rd);font-weight:700;">{ts['red']} 紅</span>・<span style="color:var(--gn);font-weight:700;">{ts['green']} 綠</span>・<span style="color:var(--or);font-weight:700;">{ts['gold']} 金</span>
-    <span style="color:var(--td);font-size:12px;">（紅＝偏多、綠＝過熱或偏弱、金＝中性；只是統計下面各格的燈號）</span></div>
+  {summary_html("技術面", ts, "（紅＝偏多、綠＝過熱或偏弱、金＝中性；只是統計下面各格的燈號）")}
   <div class="tg4">
     <div class="tb">
       <div class="tlb">RSI</div>

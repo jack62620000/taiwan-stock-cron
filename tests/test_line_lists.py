@@ -48,6 +48,25 @@ def test_granville_many_and_empty():
     assert len(empty) == 1 and "目前沒有" in empty[0]["text"]
 
 
+
+def rebound_table(n):
+    from utils.analysis import REBOUND_COLUMNS
+    rows = [{"代號": str(3000 + k), "名稱": f"跌{k}", "產業": "電子", "最新收盤": 30.0, "均線": 36.0,
+             "乖離%": -15.0 - k, "比大盤%": -8.0, "20日均量": 1200} for k in range(n)]
+    return pd.DataFrame(rows, columns=REBOUND_COLUMNS)
+
+
+def test_granville_rebound():
+    msgs = line_lists.granville_messages("2026-10-20", granville_table(100), rebound_table(20))
+    size_ok(msgs)
+    assert "急跌反彈候選" in msgs[0]["text"] and "3019" in msgs[0]["text"]  # 放不下的列在文字裡
+    last = msgs[-1]["contents"]["contents"]
+    assert "急跌反彈候選" in json.dumps(last[0], ensure_ascii=False) and last[0]["footer"]["contents"][0]["action"]["text"] == "3000"
+    only = line_lists.granville_messages("2026-10-20", granville_table(0), rebound_table(3))
+    size_ok(only)
+    assert len(only) == 2 and "目前沒有等待法則 2" in only[0]["text"]
+
+
 def test_momentum_three_picks(use_db):
     use_db()
     mom = line_lists.load_momentum()
@@ -68,3 +87,13 @@ def test_lists_uploaded(use_db):
     for name in ("granville.json", "momentum.json"):
         content = json.loads(bucket.download(f"{line_cards.PREFIX}/{name}"))
         assert content["messages"] and content["date"]
+
+
+def test_rebound_table_from_signals():
+    from utils.analysis import granville_rebound_table
+    df = pd.DataFrame({"stock_id": ["1", "2", "3"], "stock_name": ["a", "b", "c"], "industry": ["x"] * 3,
+                       "close_price": [10.0, 20.0, 30.0], "ma": [12.0, 25.0, 30.0], "bias": [-16.7, -20.0, 0.0],
+                       "avg_volume_20": [800, 900, 1000], "rules": [[4], [4, 7], []]})
+    t = granville_rebound_table(df, pd.Series({"1": 1.5, "2": -2.0}))
+    assert list(t["代號"]) == ["2", "1"] and t.loc[0, "比大盤%"] == -2.0
+    assert granville_rebound_table(df.iloc[2:], pd.Series(dtype=float)).empty
