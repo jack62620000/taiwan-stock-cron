@@ -130,6 +130,14 @@ def _row(label, value, color=None):
     ]}
 
 
+def _trend_rows(t, key):
+    """技術指標走向的一列；沒有資料回傳空 list"""
+    if not t:
+        return []
+    from utils.card import trend_text
+    return [_row("　└ 走向", trend_text(t, key), {"↑": UP, "↓": DOWN}.get(t[0], GRAY))]
+
+
 def _section(title, rows):
     return [{"type": "separator", "margin": "lg"}, _text(title, size="sm", bold=True, margin="md")] + rows
 
@@ -221,6 +229,10 @@ def stock_bubble(sid, a):
     ]
     lamp = {"bull": UP, "bear": DOWN, "neu": GOLD}
     tech += [_row(label, f"{value}（{note}）", lamp.get(cls)) for label, value, cls, note in m["extra_tech"]]
+    # 每個指標下面一列近 5 日走向（往上紅、往下綠、持平灰）
+    trends = m.get("trends") or {}
+    keys = ["RSI", "KD", "MACD", "股價位階"] + [label for label, *_ in m["extra_tech"]]
+    tech = [r for row, key in zip(tech, keys) for r in [row] + _trend_rows(trends.get(key), key)]
     body += _section("⑥ 技術面燈號", tech)
 
     # 📐 葛蘭碧分析

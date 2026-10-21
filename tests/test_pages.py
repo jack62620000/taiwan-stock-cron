@@ -73,6 +73,8 @@ def test_stock_card_shows_all_sections(use_db):
     assert "這頁在看什麼" in " ".join(i.value for i in at.info)
     labels = [e.label for e in at.expander]
     assert any("這頁怎麼看" in x for x in labels) and any("名詞小辭典" in x for x in labels)
+    html = " ".join(str(getattr(e, "proto", "")) for e in at.main)
+    assert "5 日往" in html or "5 日持平" in html  # 技術指標下面有近 5 日走向
 
 
 def test_add_to_watchlist_from_stock_card(use_db):

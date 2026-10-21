@@ -12,7 +12,7 @@ from utils.db import (
     get_watchlist, add_to_watchlist, remove_from_watchlist, get_signal_history, get_rows_for_stocks,
 )
 from utils.analysis import granville_status
-from utils.card import card_metrics, load_card_data as _load_card_data
+from utils.card import card_metrics, trend_text, load_card_data as _load_card_data
 from utils.granville import STOP_RULE
 from utils.momentum import BACKTEST_MD, RULES_MD, momentum_summary
 from utils.groups import current_group
@@ -82,9 +82,22 @@ ma5, ma20, ma60, vol_ratio, extra_tech, hold_ratio = (m["ma5"], m["ma20"], m["ma
 up_color = UP_COLOR if change >= 0 else DOWN_COLOR
 up_arrow = "▲" if change >= 0 else "▼"
 
+trends = m["trends"]
+
+
+def trend_html(key):
+    """技術指標近 5 日走向：往上紅、往下綠、持平灰"""
+    t = trends.get(key)
+    if not t:
+        return ""
+    color = {"↑": "var(--rd)", "↓": "var(--gn)"}.get(t[0], "var(--ts)")
+    return f'<div class="ttr" style="color:{color}">{trend_text(t, key)}</div>'
+
+
 extra_tech_html = "".join(
     f'<div class="tb"><div class="tlb">{label}</div><div class="tbdg {cls}">{value}</div>'
-    f'<div class="tdd">{note}</div></div>' for label, value, cls, note in extra_tech)
+    f'<div class="tdd">{note}</div>{trend_html(label)}</div>'
+    for label, value, cls, note in extra_tech)
 
 def fmt(v, suffix="", decimals=2):
     if v is None or pd.isna(v):
@@ -153,6 +166,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 .neu{{background:var(--obg);color:var(--or);border:1px solid var(--obr);}}
 .bear{{background:var(--gbg);color:var(--gn);border:1px solid var(--gbr);}}
 .tdd{{font-size:13px;color:var(--ts);margin-top:8px;line-height:1.4;}}
+.ttr{{font-size:12.5px;font-weight:700;margin-top:4px;}}
 .cf{{margin-top:12px;padding:10px 4px;font-size:12px;color:var(--td);line-height:1.6;text-align:center;}}
 </style>
 </head>
@@ -244,22 +258,22 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
     <div class="tb">
       <div class="tlb">RSI</div>
       <div class="tbdg {'bear' if rsi_status=='超買' else ('bull' if rsi_status=='超賣' else 'neu')}">{fmt(rsi_val)}</div>
-      <div class="tdd">{rsi_status}</div>
+      <div class="tdd">{rsi_status}</div>{trend_html("RSI")}
     </div>
     <div class="tb">
       <div class="tlb">KD</div>
       <div class="tbdg {'bear' if kd_status=='超買' else ('bull' if kd_status=='超賣' else 'neu')}">K:{fmt(kd_k,'',0)} D:{fmt(kd_d,'',0)}</div>
-      <div class="tdd">{kd_status}</div>
+      <div class="tdd">{kd_status}</div>{trend_html("KD")}
     </div>
     <div class="tb">
       <div class="tlb">MACD</div>
       <div class="tbdg {'bull' if (macd_hist or 0)>0 else 'bear'}">{fmt(macd_hist)}</div>
-      <div class="tdd">{'柱狀轉強' if (macd_hist or 0)>0 else '柱狀轉弱'}</div>
+      <div class="tdd">{'柱狀轉強' if (macd_hist or 0)>0 else '柱狀轉弱'}</div>{trend_html("MACD")}
     </div>
     <div class="tb">
       <div class="tlb">股價位階</div>
       <div class="tbdg {'bear' if position_pct>70 else ('bull' if position_pct<30 else 'neu')}">{fmt(position_pct,'%',0)}</div>
-      <div class="tdd">{'年區間高位' if position_pct>70 else ('年區間低位' if position_pct<30 else '年區間中段')}</div>
+      <div class="tdd">{'年區間高位' if position_pct>70 else ('年區間低位' if position_pct<30 else '年區間中段')}</div>{trend_html("股價位階")}
     </div>
     {extra_tech_html}
   </div>
