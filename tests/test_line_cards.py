@@ -53,3 +53,13 @@ def test_rebuild_only_when_stale(use_db, monkeypatch):
     monkeypatch.setattr(db, "supabase", sb)
     assert line_cards.main() == 0
     assert not line_cards.is_stale(sb)
+
+
+def test_card_has_trend_rows(use_db):
+    """技術面燈號下面有近 5 日走向列"""
+    sb = use_db()
+    line_cards.run(sb)
+    bucket = sb.storage.from_(line_cards.BUCKET)
+    import json as _json
+    blob = " ".join(v.decode() if isinstance(v, bytes) else str(v) for v in getattr(bucket, "files", {}).values())
+    assert "└ 走向" in blob or "\\u2514 \\u8d70\\u5411" in blob

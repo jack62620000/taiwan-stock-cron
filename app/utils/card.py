@@ -25,6 +25,45 @@ def load_card_data(stock_id):
     return info, prices, quarterly, revenue, ins, margin, holder, utilization, index_df
 
 
+TREND_DAYS = 5  # 技術指標走向：和幾個交易日前比
+
+
+def indicator_trend(series, flat, relative=False):
+    """
+    指標和 TREND_DAYS 個交易日前比，回傳 (箭頭, 變化量)，資料不夠回傳 None。
+    變化小於 flat 算持平；relative=True 時 flat 是相對比例（MACD 柱狀的大小跟股價有關，只能看相對變化）。
+    """
+    s = pd.to_numeric(series, errors="coerce").dropna() if series is not None else pd.Series(dtype=float)
+    if len(s) <= TREND_DAYS:
+        return None
+    now, before = float(s.iloc[-1]), float(s.iloc[-1 - TREND_DAYS])
+    diff = now - before
+    limit = flat * max(abs(now), abs(before)) if relative else flat
+    arrow = "→" if abs(diff) <= limit else "↑" if diff > 0 else "↓"
+    return arrow, diff
+
+
+# 各指標走向的顯示：(小數位數, 前綴, 單位)；百分比類的變化是百分點
+TREND_FORMAT = {
+    "MACD": (2, "", ""),
+    "乖離率（20 日）": (1, "", " 個百分點"),
+    "布林通道": (0, "", " 個百分點"),
+    "股價位階": (0, "", " 個百分點"),
+    "均線排列": (2, "月線", " 元"),
+    "量能": (1, "", " 倍"),
+}
+
+
+def trend_text(t, key=None):
+    """(箭頭, 變化量) → 「5 日往上 ↑ +6.2」；None → 空字串"""
+    if not t:
+        return ""
+    arrow, diff = t
+    decimals, prefix, unit = TREND_FORMAT.get(key, (1, "", ""))
+    word = {"↑": "往上", "↓": "往下", "→": "持平"}[arrow]
+    return f"{prefix}{TREND_DAYS} 日{word} {arrow} {diff:+.{decimals}f}{unit}"
+
+
 def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
     """
     分析卡上的各項數據：52 週區間、基本面（EPS、本益比、ROE、P/B、現金流）、營收、
@@ -130,6 +169,25 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
     vol_avg20 = vol_s.iloc[-21:-1].mean() if len(vol_s) > 20 else None
     vol_ratio = float(vol_s.iloc[-1] / vol_avg20) if vol_avg20 else None
 
+    # ===== 技術指標近 5 個交易日的走向（↑ 往上、↓ 往下、→ 持平）=====
+    def _series(col):
+        return pd.to_numeric(prices_ta[col], errors="coerce") if col in prices_ta.columns else pd.Series(dtype=float)
+
+    ma20_s = _series("MA20")
+    bb_width = _series("BB_UP") - _series("BB_LOW")
+    close_s = _series("close_price")
+    trends = {
+        "RSI": indicator_trend(_series("RSI"), 2),
+        "KD": indicator_trend(_series("K"), 3),
+        "MACD": indicator_trend(_series("MACD_HIST"), 0.05, relative=True),
+        "乖離率（20 日）": indicator_trend((close_s / ma20_s - 1) * 100, 1),
+        "布林通道": indicator_trend((close_s - _series("BB_LOW")) / bb_width.where(bb_width > 0) * 100, 10),
+        "均線排列": indicator_trend(ma20_s, 0.005, relative=True),  # 看 20 日線（月線）本身往上還往下
+        "量能": indicator_trend(vol_s / vol_s.shift(1).rolling(20).mean(), 0.3),
+        "股價位階": indicator_trend((close_s - low_52w) / (high_52w - low_52w) * 100, 3)
+        if high_52w != low_52w else None,
+    }
+
     extra_tech = []
     if None not in (ma5, ma20, ma60):
         if ma5 > ma20 > ma60:
@@ -198,6 +256,7 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         "ma20": ma20,
         "ma60": ma60,
         "vol_ratio": vol_ratio,
+        "trends": trends,
         "extra_tech": extra_tech,
         "hold_ratio": hold_ratio,
     }
