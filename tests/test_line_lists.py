@@ -97,3 +97,13 @@ def test_rebound_table_from_signals():
     t = granville_rebound_table(df, pd.Series({"1": 1.5, "2": -2.0}))
     assert list(t["代號"]) == ["2", "1"] and t.loc[0, "比大盤%"] == -2.0
     assert granville_rebound_table(df.iloc[2:], pd.Series(dtype=float)).empty
+
+
+def test_rule4_events_first_day_only():
+    from utils.granville import rule4_events
+    dates = pd.bdate_range("2026-06-01", periods=90).strftime("%Y-%m-%d")
+    px = [100 - i * 0.2 for i in range(80)] + [80, 70, 65, 62, 66, 70, 72, 74, 75, 76]  # 均線往下後急跌
+    rows = [{"stock_id": "9999", "date": d, "close_price": p, "volume": 1_000_000} for d, p in zip(dates, px)]
+    ev = rule4_events(pd.DataFrame(rows), min_volume=500, days=20)
+    assert len(ev) == 1 and ev.loc[0, "stock_id"] == "9999" and ev.loc[0, "bias"] <= -10
+    assert rule4_events(pd.DataFrame(rows), min_volume=5000, days=20).empty  # 均量不夠

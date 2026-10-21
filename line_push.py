@@ -223,11 +223,15 @@ def stock_bubble(sid, a):
     # ② 基本面
     q = m["latest_q"]
     eps = _num(q.get("eps")) if len(q) else None
+    bl = m["basic_lamps"]
     body += _section(f"② 基本面（{m['q_label'] or '最新季'}）", [
+        *_summary_rows(m.get("basic_summary")),
         _row("EPS（年初累計）", _f(eps, " 元"), UP if (eps or 0) > 0 else DOWN if eps is not None else None),
-        _row(f"本益比（{m['pe_note'] or '—'}）", _f(m["pe_ratio"], " 倍") if m["pe_ratio"] else "N/A"),
-        _row("ROE（年初累計）", _f(q.get("roe") if len(q) else None, "%")),
-        _row("P/B（股價淨值比）", _f(m["pb_now"], " 倍")),
+        _row("　└ 年增率", _f(m["eps_yoy"], "%", 1) + _lv(bl["eps_yoy"]), LAMP_COLOR[bl["eps_yoy"][1]]),
+        _row(f"本益比（{m['pe_note'] or '—'}）", (_f(m["pe_ratio"], " 倍") if m["pe_ratio"] else "N/A") + _lv(bl["pe"]),
+             LAMP_COLOR[bl["pe"][1]]),
+        _row("ROE（年初累計）", _f(q.get("roe") if len(q) else None, "%") + _lv(bl["roe"]), LAMP_COLOR[bl["roe"][1]]),
+        _row("P/B（股價淨值比）", _f(m["pb_now"], " 倍") + _lv(bl["pb"]), LAMP_COLOR[bl["pb"][1]]),
         _row("每股淨值", _f(q.get("book_value") if len(q) else None, " 元")),
         _row("營業現金流", _f(m["op_cf"], " 億", 1), _sign_color(m["op_cf"])),
         _row("投資現金流", _f(m["inv_cf"], " 億", 1)),

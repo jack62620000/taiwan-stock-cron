@@ -11,7 +11,7 @@ W, H = 2500, 843
 FONT = "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
 big, small = ImageFont.truetype(FONT, 130), ImageFont.truetype(FONT, 56)
 WATCH = ("自選股", "我的自選股分析", "#dc2626")
-OTHERS = [("葛蘭碧", "等待法則2", "#b45309"), ("動能股", "動能選股三種", "#16a34a"),
+OTHERS = [("葛蘭碧", "法則2＋急跌反彈", "#b45309"), ("動能股", "動能選股三種", "#16a34a"),
           ("使用說明", "怎麼用這個機器人", "#2563eb")]
 
 

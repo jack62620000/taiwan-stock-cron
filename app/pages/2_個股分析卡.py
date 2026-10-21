@@ -218,6 +218,10 @@ hint_color = LAMP_COLOR.get(m["margin_hint_lamp"], "var(--td)")
 margin_hint_html = (f'<div class="kn" style="margin-top:10px;font-size:12.5px;color:{hint_color};">'
                     f'💡 近 20 日{m["margin_hint"]}（回測僅供參考）</div>' if m["margin_hint"] else "")
 rl = m["rev_lamps"]
+bl = m["basic_lamps"]
+eps_yoy_html = (f'<div class="kn">年增 <span class="{sign_cls(m["eps_yoy"])}" style="font-weight:700;">{m["eps_yoy"]:+.1f}%</span>（和去年同期累計比）</div>'
+                if m["eps_yoy"] is not None else "")
+roe_ann_html = f'<div class="kn">年化約 {m["roe_ann"]:.1f}%</div>' if m["roe_ann"] is not None else ""
 
 # ===== 建立 HTML 卡片 =====
 html = f"""
@@ -327,11 +331,12 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 
 <div class="sec">
   <div class="st"><span class="sn">②</span> 基本面指標（{q_label or "最新季"}）</div>
+  {summary_html("基本面", m["basic_summary"], "（紅＝回測比平均好、綠＝比平均差、金＝差別不大；只是統計下面各格的燈號）")}
   <div class="kg5">
-    <div class="kb"><div class="kl">EPS（年初累計）</div><div class="kv {'kv-rd' if latest_q.get('eps',0) and latest_q.get('eps',0)>0 else 'kv-gn'}">{fmt(latest_q.get('eps'))}</div><div class="kn">元</div></div>
-    <div class="kb"><div class="kl">P/E（本益比・{pe_note}）</div><div class="kv kv-or">{fmt(pe_ratio) if pe_ratio else 'N/A'}</div><div class="kn">倍</div></div>
-    <div class="kb"><div class="kl">ROE（年初累計・未年化）</div><div class="kv kv-or">{fmt(latest_q.get('roe'))}</div><div class="kn">%</div></div>
-    <div class="kb"><div class="kl">P/B（股價淨值比）</div><div class="kv kv-or">{fmt(pb_now)}</div><div class="kn">倍</div></div>
+    <div class="kb"><div class="kl">EPS（年初累計）</div><div class="kv {'kv-rd' if latest_q.get('eps',0) and latest_q.get('eps',0)>0 else 'kv-gn'}">{fmt(latest_q.get('eps'))}</div><div class="kn">元</div>{eps_yoy_html}{lamp_html(bl['eps_yoy'][1], bl['eps_yoy'][0], bl['eps_yoy'][2])}</div>
+    <div class="kb"><div class="kl">P/E（本益比・{pe_note}）</div><div class="kv kv-or">{fmt(pe_ratio) if pe_ratio else 'N/A'}</div><div class="kn">倍</div>{lamp_html(bl['pe'][1], bl['pe'][0], bl['pe'][2])}</div>
+    <div class="kb"><div class="kl">ROE（年初累計・未年化）</div><div class="kv kv-or">{fmt(latest_q.get('roe'))}</div><div class="kn">%</div>{roe_ann_html}{lamp_html(bl['roe'][1], bl['roe'][0], bl['roe'][2])}</div>
+    <div class="kb"><div class="kl">P/B（股價淨值比）</div><div class="kv kv-or">{fmt(pb_now)}</div><div class="kn">倍</div>{lamp_html(bl['pb'][1], bl['pb'][0], bl['pb'][2])}</div>
     <div class="kb"><div class="kl">每股淨值</div><div class="kv">{fmt(latest_q.get('book_value'))}</div><div class="kn">元</div></div>
   </div>
   <div class="kg" style="grid-template-columns:repeat(3,1fr);margin-top:10px;">
@@ -339,6 +344,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
     <div class="kb"><div class="kl">投資現金流（年初累計）</div><div class="kv">{fmt(inv_cf,'',1)}</div><div class="kn">億元（負值代表投入）</div></div>
     <div class="kb"><div class="kl">自由現金流（營業＋投資）</div><div class="kv {'kv-rd' if (free_cf or 0)>0 else 'kv-gn'}">{fmt(free_cf,'',1)}</div><div class="kn">億元</div></div>
   </div>
+  <div class="kn" style="margin-top:10px;">小標籤是回測燈號（季報在法定公布期限後才算、隔天開盤買、持有 20 日和全部股票平均比）。現金流正負回測差別不大，所以不上燈號。</div>
 </div>
 
 <div class="sec">
