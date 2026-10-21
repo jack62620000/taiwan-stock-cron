@@ -36,3 +36,20 @@ def test_dry_run_does_not_upload(use_db, capsys):
 def test_no_signals_skips(use_db):
     sb = use_db(empty=True)
     assert line_cards.run(sb) == 0
+
+
+def test_rebuild_only_when_stale(use_db, monkeypatch):
+    """早上補跑：卡片已是最新就不重算，舊了或沒有才重新產生"""
+    sb = use_db()
+    assert line_cards.is_stale(sb)          # 還沒有卡片
+    line_cards.run(sb)
+    assert not line_cards.is_stale(sb)
+    bucket = sb.storage.from_(line_cards.BUCKET)
+    path = f"{line_cards.PREFIX}/index.json"
+    bucket.files[path] = json.dumps({"date": "2000-01-01", "stocks": {}}).encode()
+    assert line_cards.is_stale(sb)
+    monkeypatch.setenv("LINE_CARDS_IF_STALE", "1")
+    import utils.db as db
+    monkeypatch.setattr(db, "supabase", sb)
+    assert line_cards.main() == 0
+    assert not line_cards.is_stale(sb)
