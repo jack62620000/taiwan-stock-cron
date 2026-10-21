@@ -10,6 +10,8 @@
 //   LINE_CHANNEL_ACCESS_TOKEN：和每日推播相同的 Channel access token
 //   LINE_WATCH_ACCOUNTS（選填）：誰打「自選」可以看哪個網頁帳號的自選股，格式「LINE user ID:網頁帳號」，
 //     多個人用逗號分開。沒列在這裡的人打「自選」會收到說明；LINE user ID 可以在 LINE 打「我的ID」查。
+//     列在這裡的人傳訊息或加好友時，會自動換成有「自選」按鈕的完整選單（line_richmenu.py 建立，別名 watch-full）；
+//     其他人用預設的三格選單。
 // SUPABASE_URL、SUPABASE_SERVICE_ROLE_KEY 是 Supabase 自動提供的，不用設定。
 // 部署時要關掉 JWT 驗證（LINE 不會帶 Supabase 的登入憑證，改用上面的簽章驗證）。
 
@@ -24,6 +26,7 @@ const ACCESS_TOKEN = Deno.env.get("LINE_CHANNEL_ACCESS_TOKEN") ?? "";
 const ACCOUNTS = parseAccounts(Deno.env.get("LINE_WATCH_ACCOUNTS") ?? "");
 const CARDS_URL = `${SUPABASE_URL}/storage/v1/object/archive/_line_cards`;
 const CACHE_MS = 10 * 60 * 1000; // 卡片每晚才換新，暫存 10 分鐘，連續查詢不必每次讀檔
+const FULL_MENU_ALIAS = "watch-full"; // 要和 line_richmenu.py 的 FULL_ALIAS 相同
 
 const cache = new Map<string, { time: number; data: unknown }>();
 
@@ -68,6 +71,29 @@ async function reply(replyToken: string, messages: unknown[]) {
 }
 
 const text = (t: string) => ({ type: "text", text: t });
+
+const linked = new Map<string, number>(); // 最近換過完整選單的人，10 分鐘內不重複呼叫 LINE
+
+/** 有對應網頁帳號的人換成有「自選」按鈕的完整選單；失敗只記錄，不影響回覆 */
+async function linkFullMenu(userId: string | undefined) {
+  if (!userId || !ACCOUNTS[userId]) return;
+  const at = linked.get(userId);
+  if (at && Date.now() - at < CACHE_MS) return;
+  const auth = { Authorization: `Bearer ${ACCESS_TOKEN}` };
+  try {
+    const alias = await fetch(`https://api.line.me/v2/bot/richmenu/alias/${FULL_MENU_ALIAS}`, { headers: auth });
+    if (!alias.ok) throw new Error(`讀取選單別名失敗：${alias.status} ${await alias.text()}`);
+    const { richMenuId } = await alias.json();
+    const res = await fetch(`https://api.line.me/v2/bot/user/${userId}/richmenu/${richMenuId}`, {
+      method: "POST", headers: auth,
+    });
+    if (!res.ok) throw new Error(`換完整選單失敗：${res.status} ${await res.text()}`);
+    await res.body?.cancel();
+    linked.set(userId, Date.now());
+  } catch (e) {
+    console.error(e);
+  }
+}
 
 async function select<T>(path: string): Promise<T[]> {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
@@ -138,6 +164,7 @@ Deno.serve(async (req) => {
   for (const ev of events) {
     if (ev.type === "follow" && ev.replyToken) {
       await reply(ev.replyToken, [text(helpText(await readJson<Index>("index.json").catch(() => null)))]);
+      await linkFullMenu(ev.source?.userId);
     } else if (ev.type === "message" && ev.message?.type === "text" && ev.replyToken) {
       try {
         await reply(ev.replyToken, await answer(ev.message.text, ev.source?.userId));
@@ -145,6 +172,7 @@ Deno.serve(async (req) => {
         console.error(e);
         await reply(ev.replyToken, [text("查詢時發生錯誤，請稍後再試。")]);
       }
+      await linkFullMenu(ev.source?.userId);
     }
   }
   return new Response("ok");
