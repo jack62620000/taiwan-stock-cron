@@ -115,6 +115,8 @@ extra_tech_html = "".join(
     f'<div class="tdd">{name}：{note}</div>{trend_html(label)}</div>'
     for label, value, cls, name, note in extra_tech)
 pos_name, pos_cls, pos_note = m["position_level"]
+macd_zero_html = (f'<div class="ttr" style="color:{ {"bull": "var(--rd)", "bear": "var(--gn)"}.get(m["macd_zero"][1], "var(--or)") }">'
+                  f'DIF {m["macd_zero"][0]}</div>' if m["macd_zero"] else "")
 
 def fmt(v, suffix="", decimals=2):
     if v is None or pd.isna(v):
@@ -366,7 +368,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
     <div class="tb">
       <div class="tlb">MACD</div>
       <div class="tbdg {'bull' if (macd_hist or 0)>0 else 'bear'}">{fmt(macd_hist)}</div>
-      <div class="tdd">{'柱狀為正，偏多' if (macd_hist or 0)>0 else '柱狀為負，偏空'}</div>{cross_html("MACD")}{trend_html("MACD")}
+      <div class="tdd">{'柱狀為正，偏多' if (macd_hist or 0)>0 else '柱狀為負，偏空'}</div>{macd_zero_html}{cross_html("MACD")}{trend_html("MACD")}
     </div>
     <div class="tb">
       <div class="tlb">股價位階</div>
