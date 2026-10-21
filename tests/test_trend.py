@@ -106,3 +106,23 @@ def test_revenue_trend():
     assert r["yoy_streak"] == "連續 6 個月年增"
     assert r["cum_yoy"] == 30 and len(r["bars"]) == 7
     assert revenue_trend(pd.DataFrame())["yoy3"] is None
+
+
+def test_obv_state():
+    from utils.indicators import obv_state
+    up = pd.Series(range(1, 31), dtype=float)
+    assert obv_state(up, up)[:2] == ("量價齊揚", "bull")
+    # OBV 先創 20 日新低、股價還在中間
+    price = pd.Series([10.0] * 25 + [11, 9, 10, 10, 10])
+    obv = pd.Series([float(30 - i) for i in range(30)])
+    assert obv_state(price, obv)[:2] == ("OBV 先破底", "bear")
+    assert obv_state(up, pd.concat([up.iloc[:-1], pd.Series([15.0])], ignore_index=True))[0] == "頂背離"
+    assert obv_state(pd.Series([1.0] * 5), pd.Series([1.0] * 5)) is None
+
+
+def test_macd_zero():
+    from utils.indicators import macd_zero
+    assert macd_zero(1, 0.5) == ("零軸上，多頭", "bull")
+    assert macd_zero(-1, -0.5) == ("零軸下，空頭", "bear")
+    assert macd_zero(0.1, -0.2)[1] == "neu"
+    assert macd_zero(None, 1) is None

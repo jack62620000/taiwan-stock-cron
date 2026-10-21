@@ -271,9 +271,11 @@ def stock_bubble(sid, a):
     # 每個指標下面一列近 5 日走向（往上紅、往下綠、持平灰）
     trends = m.get("trends") or {}
     keys = ["RSI", "KD", "MACD", "股價位階"] + [label for label, *_ in m["extra_tech"]]
+    zero = m.get("macd_zero")
+    zero_rows = {"MACD": [_row("　└ 零軸", f"DIF {zero[0]}", lamp.get(zero[1]))]} if zero else {}
     crosses = m.get("crosses") or {}
     tech = [r for row, key in zip(tech, keys)
-            for r in [row] + _cross_rows(crosses.get(key)) + _trend_rows(trends.get(key), key)]
+            for r in [row] + zero_rows.get(key, []) + _cross_rows(crosses.get(key)) + _trend_rows(trends.get(key), key)]
     body += _section("⑥ 技術面燈號", tech)
 
     # 📐 葛蘭碧分析

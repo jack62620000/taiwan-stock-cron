@@ -7,7 +7,7 @@ from utils.db import (
     get_stock_info, get_daily_prices, get_quarterly, get_revenue, get_stock_ins,
     get_margin, get_holder, get_margin_utilization, get_market_index,
 )
-from utils.indicators import (calc_all, get_latest_signals, level, volume_level,
+from utils.indicators import (calc_all, get_latest_signals, level, volume_level, obv_state, macd_zero,
                               POSITION_LEVELS, BOLL_LEVELS, BIAS_LEVELS)
 
 
@@ -307,6 +307,7 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
     kd_note    = signals.get("KD", {}).get("note", "")
     position_level = level(POSITION_LEVELS, position_pct)  # (名稱, 燈號, 說明)
     macd_hist  = signals.get("MACD", {}).get("hist")
+    macd_zero_state = macd_zero(signals.get("MACD", {}).get("value"), signals.get("MACD", {}).get("signal"))
 
     # ===== 其他技術面燈號：均線排列、乖離率、布林通道、量能 =====
     # 每筆是 (指標, 數值, 燈號, 分級名稱, 說明)；燈號偏多紅、過熱或偏弱綠、中性金，分級見 indicators.py 的回測
@@ -331,6 +332,14 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         "KD": cross_state(_series("K") - _series("D"), "K", "D"),
         "MACD": cross_state(_series("MACD_HIST"), "MACD 線", "訊號線"),
     }
+    # 回測：K 在 80 以上死亡交叉之後反而比一般股票強，20 以下黃金交叉之後也沒有比較好
+    k_now = _num(latest.get("K"))
+    if crosses["KD"] and k_now is not None:
+        arrow, text = crosses["KD"]
+        if arrow == "↓" and k_now >= 80 and "死亡交叉" in text:
+            crosses["KD"] = arrow, text + "；高檔死亡交叉在回測中不代表要跌"
+        elif arrow == "↑" and k_now < 20 and "黃金交叉" in text:
+            crosses["KD"] = arrow, text + "；低檔黃金交叉在回測中不代表會漲"
     trends = {
         "RSI": indicator_trend(_series("RSI"), 2),
         "KD": indicator_trend(_series("K"), 3),
@@ -362,6 +371,9 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
     if vol_ratio is not None:
         name, lamp, note = volume_level(vol_ratio, change)
         extra_tech.append(("量能", f"{vol_ratio:.1f} 倍", lamp, name, note))
+    obv = obv_state(close_s, _series("OBV"))
+    if obv:
+        extra_tech.append(("OBV 能量潮", obv[0], obv[1], obv[0], obv[2]))
 
     return {
         "prices_ta": prices_ta,
@@ -403,6 +415,7 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         "kd_note": kd_note,
         "position_level": position_level,
         "macd_hist": macd_hist,
+        "macd_zero": macd_zero_state,
         "ma5": ma5,
         "ma20": ma20,
         "ma60": ma60,

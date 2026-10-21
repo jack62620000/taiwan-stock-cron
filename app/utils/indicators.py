@@ -140,6 +140,56 @@ def calc_bollinger(df, period=20, std=2):
     df["BB_LOW"] = (df["BB_MID"] - std * bb_std).round(2)
     return df
 
+def calc_obv(df):
+    """能量潮 OBV：收盤上漲當天加上成交量、下跌減去，持平不變，一路累加"""
+    if "volume" not in df.columns:
+        df["OBV"] = None
+        return df
+    direction = np.sign(pd.to_numeric(df["close_price"], errors="coerce").diff()).fillna(0)
+    df["OBV"] = (direction * pd.to_numeric(df["volume"], errors="coerce").fillna(0)).cumsum()
+    return df
+
+
+# OBV 和股價近 20 日的新高、新低（回測：2024-01～2026-10，之後 20 日相對大盤，全部平均約 −1.5%）
+# 量價齊揚 −0.65%、OBV 先破底但股價還沒 −2.5%（前後兩段時間都最差）、頂背離 −0.76%（不是賣訊號）、
+# 底背離 −1.9%（不是買訊號）、量價齊跌 −1.7%、量先價行 −1.25%（差別不大）
+OBV_DAYS = 20
+
+
+def obv_state(close, obv, n=OBV_DAYS):
+    """收盤價和 OBV 序列 → (名稱, 燈號, 說明)；資料不夠回傳 None"""
+    c = pd.to_numeric(close, errors="coerce")
+    o = pd.to_numeric(obv, errors="coerce")
+    if c.notna().sum() <= n or o.notna().sum() <= n:
+        return None
+    p_hi, p_lo = c.iloc[-1] >= c.iloc[-n:].max(), c.iloc[-1] <= c.iloc[-n:].min()
+    o_hi, o_lo = o.iloc[-1] >= o.iloc[-n:].max(), o.iloc[-1] <= o.iloc[-n:].min()
+    if p_hi and o_hi:
+        return "量價齊揚", "bull", "股價和 OBV 都創 20 日新高，回測中之後比一般股票強"
+    if o_lo and not p_lo:
+        return "OBV 先破底", "bear", "成交量先轉弱、股價還沒跌破，回測中之後表現最差，要小心"
+    if p_lo and o_lo:
+        return "量價齊跌", "bear", "股價和 OBV 都創 20 日新低，走勢偏弱"
+    if p_hi:
+        return "頂背離", "neu", "股價創新高但 OBV 沒有；回測中之後並沒有比較差，不是賣訊號"
+    if p_lo:
+        return "底背離", "neu", "股價創新低但 OBV 沒有；回測中之後並沒有比較好，不是買訊號"
+    if o_hi:
+        return "量先價行", "neu", "OBV 先創新高、股價還沒；回測中效果不明顯"
+    return "一般", "neu", "近 20 日股價和 OBV 都沒有創新高或新低"
+
+
+def macd_zero(dif, signal):
+    """MACD 零軸位置 → (名稱, 燈號)。回測：DIF、訊號線都在零軸上 −1.1%，都在零軸下 −1.8%（全部平均約 −1.5%）"""
+    if dif is None or signal is None or pd.isna(dif) or pd.isna(signal):
+        return None
+    if dif > 0 and signal > 0:
+        return "零軸上，多頭", "bull"
+    if dif < 0 and signal < 0:
+        return "零軸下，空頭", "bear"
+    return "正在穿越零軸", "neu"
+
+
 def fill_no_trade(df):
     """
     停牌或當天沒有成交時，資料庫的開高低收是空值。依交易所慣例視為股價不變：
@@ -169,6 +219,7 @@ def calc_all(df):
     df = calc_macd(df)
     df = calc_kd(df)
     df = calc_bollinger(df)
+    df = calc_obv(df)
     return df
 
 def get_latest_signals(df):
