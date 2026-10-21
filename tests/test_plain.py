@@ -47,3 +47,30 @@ def test_plain_summary_weak_stock_and_missing_data():
     assert sum(icon == DOWN for icon, _ in out) >= 5
     # 沒有資料時不出錯，也不亂講
     assert plain_summary(_metrics([100.0]), None) == []
+
+
+def test_card_ai_summary_and_fallback(use_db, monkeypatch):
+    from test_pages import APP, errors, run_page
+    from utils import plain
+    use_db()
+    seen = {}
+
+    def fake_ai(stock_id, date, context):
+        seen.update(stock_id=stock_id, context=context)
+        return "整體偏普通。\n- 股價在季線之上\n要留意：營收成長不多。"
+
+    monkeypatch.setattr(plain, "_cached", fake_ai)
+    at = run_page(APP / "pages" / "2_個股分析卡.py", card_stock_id="3583")
+    assert errors(at) == []
+    texts = " ".join(md.value for md in at.markdown)
+    assert "AI 白話總結" in texts and "要留意：營收成長不多" in texts
+    assert seen["stock_id"] == "3583" and "系統依規則整理的重點" in seen["context"] and "收盤價" in seen["context"]
+
+    def broken(*_):
+        raise RuntimeError("quota")
+
+    monkeypatch.setattr(plain, "_cached", broken)
+    at = run_page(APP / "pages" / "2_個股分析卡.py", card_stock_id="3583")
+    assert errors(at) == []
+    assert "股價在" in " ".join(md.value for md in at.markdown)
+    assert any("AI 暫時無法使用（RuntimeError）" in c.value for c in at.caption)

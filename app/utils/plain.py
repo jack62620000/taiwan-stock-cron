@@ -1,6 +1,7 @@
 """
-個股分析卡的「白話總結」：依卡片上的數字，用固定規則寫成幾句白話，給不太懂股票的人看。
-不用 AI，同樣的數字一定寫出同樣的句子；只描述現況，不給買賣建議。
+個股分析卡的「AI 白話總結」，寫給不太懂股票的人看。
+先用固定規則把卡片上的數字整理成重點（plain_summary），再交給 AI 用口語寫成一段總結；
+AI 只能用這些整理好的數字，不能自己編。AI 無法使用時（沒有金鑰、額度用完、連線失敗），改顯示規則版的重點。
 """
 import pandas as pd
 
@@ -126,12 +127,80 @@ def plain_summary(m, index_df=None, index_name="大盤"):
     return out
 
 
-def render_plain_summary(m, index_df=None, index_name="大盤"):
+AI_SYSTEM = (
+    "你是幫完全不懂股票的朋友看股票的人。請用繁體中文、口語白話來寫，像在跟朋友聊天。"
+    "規則：1) 只能使用提供的數字與重點，不可以自己編數字或消息；"
+    "2) 盡量不用專有名詞，非用不可時在後面用括號簡單解釋；"
+    "3) 不可以給買進、賣出、目標價或任何操作建議；"
+    "4) 紅色代表上漲、綠色代表下跌是台股習慣，不要寫反。"
+)
+AI_QUESTION = (
+    "請寫一段給新手看的「白話總結」，格式如下：\n"
+    "第一段：用一句話說這檔股票現在整體是偏強、偏弱還是普通。\n"
+    "接著用 3～5 個條列，每條一句，說明最重要的好消息和壞消息（股價走勢、和大盤比、公司生意、大戶法人、風險）。\n"
+    "最後一行以「要留意：」開頭，提醒一件最該注意的事。總長度 250 字以內。"
+)
+
+
+def ai_context(m, info, stock_id, index_df=None, index_name="大盤"):
+    """給 AI 的資料：規則整理的重點，加上卡片上的主要數字"""
+    def f(v, suffix="", d=2):
+        v = _num(v)
+        return "無資料" if v is None else f"{v:,.{d}f}{suffix}"
+
+    facts = "\n".join(f"- {t}" for _, t in plain_summary(m, index_df, index_name)) or "- 無"
+    latest = m["latest"]
+    return (
+        f"股票：{info.get('stock_name', '')}（{stock_id}，{info.get('market', '')}，{info.get('industry', '')}）\n"
+        f"資料日期：{latest['date']} 收盤後\n"
+        f"收盤價 {f(m['close'])} 元，今天漲跌 {f(m['change_pct'], '%')}；"
+        f"一年區間位置 {f(m['position_pct'], '%', 0)}（0% 是一年最低價、100% 是一年最高價）\n"
+        f"20 日均線（月線）{f(m.get('ma20'))}、60 日均線（季線）{f(m.get('ma60'))}\n"
+        f"RSI {f(m.get('rsi_val'), '', 0)}、KD 的 K 值 {f(m.get('kd_k'), '', 0)}、今天成交量是平常的 {f(m.get('vol_ratio'), ' 倍', 1)}\n"
+        f"最新月營收年增 {f(_field(m, 'latest_rev', 'yoy_growth'), '%')}、月增 {f(_field(m, 'latest_rev', 'mom_growth'), '%')}\n"
+        f"{m.get('q_label') or '最新財報'} 每股盈餘 {f(_field(m, 'latest_q', 'eps'), ' 元')}、本益比 {f(m.get('pe_ratio'), ' 倍', 1)}\n"
+        f"近 10 天外資 {f((_num(m.get('foreign_10d')) or 0) / LOTS, ' 張', 0)}、投信 {f((_num(m.get('sitca_10d')) or 0) / LOTS, ' 張', 0)}（正的是買、負的是賣）\n"
+        f"大戶（400 張以上）持股 {f(_field(m, 'latest_holder', 'big_holder_ratio'), '%')}、融資使用率 {f(_field(m, 'latest_util', 'margin_rate'), '%')}\n"
+        f"\n系統依規則整理的重點：\n{facts}"
+    )
+
+
+def render_plain_summary(m, info, stock_id, index_df=None, index_name="大盤"):
+    """AI 白話總結；AI 無法使用時改顯示規則版重點"""
     import streamlit as st
     lines = plain_summary(m, index_df, index_name)
     if not lines:
         return
     with st.container(border=True):
-        st.markdown("**📝 白話總結**")
-        st.markdown("\n".join(f"- {icon} {text}" for icon, text in lines))
-        st.caption("依下方數字自動整理，🔴 偏好、🟢 偏壞、⚪ 中性；只描述現況，不是買賣建議。")
+        st.markdown("**🤖 AI 白話總結**")
+        text, error = None, None
+        try:
+            with st.spinner("AI 正在整理白話總結…"):
+                text = ai_card_summary(stock_id, str(m["latest"]["date"]),
+                                       ai_context(m, info, stock_id, index_df, index_name))
+        except Exception as e:  # 沒有金鑰、額度用完、連線失敗
+            error = e
+        if text:
+            st.markdown(text)
+            st.caption("由 AI 依下方數字整理，可能有誤，請以下方數字為準；不構成投資建議。")
+        else:
+            st.markdown("\n".join(f"- {icon} {t}" for icon, t in lines))
+            st.caption(f"AI 暫時無法使用（{type(error).__name__ if error else '沒有回應'}），先顯示系統依規則整理的重點："
+                       "🔴 偏好、🟢 偏壞、⚪ 中性；不構成投資建議。")
+
+
+def _ai_card_summary(stock_id, date, context):
+    from utils.ai import explain
+    return explain(AI_SYSTEM, f"{context}\n\n{AI_QUESTION}")
+
+
+def ai_card_summary(stock_id, date, context):
+    """同一檔、同一個資料日只請 AI 寫一次（快取 12 小時），省 AI 額度；失敗不快取，下次重試"""
+    import streamlit as st
+    global _cached
+    if _cached is None:
+        _cached = st.cache_data(ttl=12 * 3600, show_spinner=False)(_ai_card_summary)
+    return _cached(stock_id, date, context)
+
+
+_cached = None

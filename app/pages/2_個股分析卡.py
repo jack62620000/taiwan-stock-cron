@@ -276,7 +276,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 </html>
 """
 
-render_plain_summary(m, index_df, "櫃買指數" if info.get("market") == "上櫃" else "加權指數")
+render_plain_summary(m, info, stock_id, index_df, "櫃買指數" if info.get("market") == "上櫃" else "加權指數")
 
 # st.components.v1.html 已被 Streamlit 標為淘汰，改用 st.iframe；高度跟著內容自動調整，不必另外捲動
 st.iframe(html, height="content")
