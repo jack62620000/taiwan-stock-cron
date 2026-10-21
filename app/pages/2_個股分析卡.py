@@ -86,6 +86,15 @@ up_arrow = "▲" if change >= 0 else "▼"
 trends = m["trends"]
 
 
+def cross_html(key):
+    """KD、MACD 快慢線的位置：在上方往上（紅）、在下方往下（綠），以及幾天前交叉"""
+    c = m["crosses"].get(key)
+    if not c:
+        return ""
+    color = "var(--rd)" if c[0] == "↑" else "var(--gn)"
+    return f'<div class="ttr" style="color:{color}">{c[0]} {c[1]}</div>'
+
+
 def zone_cls(status):
     """RSI、KD：強勢區紅、弱勢區綠、正常金"""
     return {STRONG: "bull", WEAK: "bear"}.get(status, "neu")
@@ -270,12 +279,12 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
     <div class="tb">
       <div class="tlb">KD</div>
       <div class="tbdg {zone_cls(kd_status)}">K:{fmt(kd_k,'',0)} D:{fmt(kd_d,'',0)}</div>
-      <div class="tdd">{kd_status}</div>{trend_html("KD")}
+      <div class="tdd">{kd_status}</div>{cross_html("KD")}{trend_html("KD")}
     </div>
     <div class="tb">
       <div class="tlb">MACD</div>
       <div class="tbdg {'bull' if (macd_hist or 0)>0 else 'bear'}">{fmt(macd_hist)}</div>
-      <div class="tdd">{'柱狀為正，偏多' if (macd_hist or 0)>0 else '柱狀為負，偏空'}</div>{trend_html("MACD")}
+      <div class="tdd">{'柱狀為正，偏多' if (macd_hist or 0)>0 else '柱狀為負，偏空'}</div>{cross_html("MACD")}{trend_html("MACD")}
     </div>
     <div class="tb">
       <div class="tlb">股價位階</div>

@@ -35,3 +35,11 @@ def test_rsi_kd_zone():
     assert zone(75, 70, 30) == STRONG == "強勢區"
     assert zone(25, 70, 30) == WEAK == "弱勢區"
     assert zone(50, 70, 30) == NORMAL
+
+
+def test_cross_state():
+    from utils.card import cross_state
+    assert cross_state(pd.Series([-1, -2, 1, 2, 3]), "K", "D") == ("↑", "K 在 D 上方，往上（2 天前黃金交叉）")
+    assert cross_state(pd.Series([1, 2, -1]), "K", "D") == ("↓", "K 在 D 下方，往下（今天死亡交叉）")
+    assert cross_state(pd.Series([1, 2, 3]), "K", "D") == ("↑", "K 在 D 上方，往上")  # 期間內沒交叉過
+    assert cross_state(pd.Series([1.0]), "K", "D") is None

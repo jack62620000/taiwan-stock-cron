@@ -136,6 +136,13 @@ def zone_color(status):
     return {STRONG: UP, WEAK: DOWN}.get(status, GOLD)
 
 
+def _cross_rows(c):
+    """KD、MACD 快慢線位置的一列（往上紅、往下綠）；沒有資料回傳空 list"""
+    if not c:
+        return []
+    return [_row("　└ 方向", f"{c[0]} {c[1]}", UP if c[0] == "↑" else DOWN)]
+
+
 def _trend_rows(t, key):
     """技術指標走向的一列；沒有資料回傳空 list"""
     if not t:
@@ -238,7 +245,9 @@ def stock_bubble(sid, a):
     # 每個指標下面一列近 5 日走向（往上紅、往下綠、持平灰）
     trends = m.get("trends") or {}
     keys = ["RSI", "KD", "MACD", "股價位階"] + [label for label, *_ in m["extra_tech"]]
-    tech = [r for row, key in zip(tech, keys) for r in [row] + _trend_rows(trends.get(key), key)]
+    crosses = m.get("crosses") or {}
+    tech = [r for row, key in zip(tech, keys)
+            for r in [row] + _cross_rows(crosses.get(key)) + _trend_rows(trends.get(key), key)]
     body += _section("⑥ 技術面燈號", tech)
 
     # 📐 葛蘭碧分析

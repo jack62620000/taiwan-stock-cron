@@ -64,6 +64,23 @@ def trend_text(t, key=None):
     return f"{prefix}{TREND_DAYS} 日{word} {arrow} {diff:+.{decimals}f}{unit}"
 
 
+def cross_state(diff, fast, slow):
+    """
+    快線減慢線（diff）的最新狀態：快線在上面是往上、在下面是往下，並算出幾天前交叉。
+    回傳 (箭頭, 說明)；資料不夠回傳 None。例如 ("↑", "K 在 D 上方，往上（3 天前黃金交叉）")
+    """
+    s = pd.to_numeric(diff, errors="coerce").dropna() if diff is not None else pd.Series(dtype=float)
+    if len(s) < 2 or s.iloc[-1] == 0:
+        return None
+    up = s.iloc[-1] > 0
+    side = (s > 0) if up else (s < 0)
+    days = int(side[::-1].cumprod().sum())  # 連續幾天在同一邊
+    cross = "黃金交叉" if up else "死亡交叉"
+    when = "今天" if days == 1 else f"{days - 1} 天前"
+    note = f"（{when}{cross}）" if days < len(s) else ""
+    return ("↑" if up else "↓"), f"{fast} 在 {slow} {'上方，往上' if up else '下方，往下'}{note}"
+
+
 def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
     """
     分析卡上的各項數據：52 週區間、基本面（EPS、本益比、ROE、P/B、現金流）、營收、
@@ -176,6 +193,10 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
     ma20_s = _series("MA20")
     bb_width = _series("BB_UP") - _series("BB_LOW")
     close_s = _series("close_price")
+    crosses = {
+        "KD": cross_state(_series("K") - _series("D"), "K", "D"),
+        "MACD": cross_state(_series("MACD_HIST"), "MACD 線", "訊號線"),
+    }
     trends = {
         "RSI": indicator_trend(_series("RSI"), 2),
         "KD": indicator_trend(_series("K"), 3),
@@ -257,6 +278,7 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         "ma60": ma60,
         "vol_ratio": vol_ratio,
         "trends": trends,
+        "crosses": crosses,
         "extra_tech": extra_tech,
         "hold_ratio": hold_ratio,
     }
