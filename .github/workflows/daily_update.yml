@@ -154,6 +154,31 @@ jobs:
           echo "::error title=LINE 查詢卡片更新失敗::LINE 打字查詢會回覆前一天的卡片，請看 Build LINE lookup cards 這一步的紀錄"
           exit 1
 
+  # 早上 6:30 沒有補到資料（不會重新評分）時，檢查 LINE 查詢卡片是不是最新的，
+  # 前一晚產生卡片那一步失敗過的話在這裡補上；卡片已是最新就什麼都不做
+  refresh-line-cards:
+    needs: [update-daily-data, update-signals]
+    if: always() && github.event.schedule == '30 22 * * 1-5' && needs.update-signals.result == 'skipped'
+    concurrency:
+      group: daily-signals
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Rebuild LINE lookup cards if outdated
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          LINE_CARDS_IF_STALE: "1"
+        run: python line_cards.py
+
   update-holder-only:
     if: github.event.schedule == '06 1 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only == 'true')
     runs-on: ubuntu-latest

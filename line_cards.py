@@ -151,6 +151,23 @@ def upload(sb, shards, index):
     return sum(sizes)
 
 
+def stored_date(sb):
+    """Storage 裡現有卡片的評分日；還沒有卡片時回傳 None"""
+    try:
+        return json.loads(sb.storage.from_(BUCKET).download(f"{PREFIX}/index.json")).get("date")
+    except Exception:
+        return None
+
+
+def is_stale(sb):
+    """卡片的評分日比最新評分日舊（例如前一晚產生卡片那一步失敗）"""
+    from utils.db import get_signal_dates
+    latest = (get_signal_dates(1) or [None])[0]
+    current = stored_date(sb)
+    print(f"最新評分日 {latest}，現有卡片 {current or '無'}")
+    return latest is not None and current != latest
+
+
 def run(sb, dry_run=False):
     data = load_all()
     if data is None:
@@ -172,6 +189,10 @@ def run(sb, dry_run=False):
 
 def main():
     from utils.db import supabase
+    # 早上的補抓排程沒有重新評分時用：卡片已經是最新的就不重算
+    if os.getenv("LINE_CARDS_IF_STALE") == "1" and not is_stale(supabase):
+        print("卡片已是最新，不用重新產生")
+        return 0
     run(supabase, dry_run=os.getenv("LINE_DRY_RUN") == "1")
     return 0
 
