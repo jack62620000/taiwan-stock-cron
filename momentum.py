@@ -107,7 +107,8 @@ def compute(prices, adjust, targets):
 
     def num(frame, d, sid, digits=2):
         v = frame.at[d, sid] if sid in frame.columns else np.nan
-        return None if v is None or (isinstance(v, float) and math.isnan(v)) else round(float(v), digits)
+        # 前 50 日都沒成交的股票量比會是無限大，JSON 存不進去，和缺值一樣留空
+        return None if v is None or not math.isfinite(float(v)) else round(float(v), digits)
 
     rows = []
     for d in targets:

@@ -90,3 +90,18 @@ def test_momentum_prune_keeps_signal_rows():
     assert set(left[left["stock_id"].isin(["A", "C"])]["date"]) == set(recent)
     assert set(left[left["stock_id"] == "B"]["date"]) == set(events)
     assert set(left[left["stock_id"] == "D"]["date"]) == set(events)
+
+
+def test_momentum_compute_no_infinite_values():
+    """前 50 日都沒成交、今天才有量的股票，量比不能是無限大（寫進資料庫會失敗）"""
+    import json
+    import momentum
+    days = [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2025-01-01", periods=300)]
+    rows = []
+    for i, d in enumerate(days):
+        rows.append({"stock_id": "1234", "date": d, "high_price": 10.5, "low_price": 9.5, "close_price": 10.0,
+                     "volume": 0 if i < 299 else 1_000_000})
+    out = momentum.compute(pd.DataFrame(rows), pd.DataFrame(columns=["stock_id", "date", "event_type", "factor"]),
+                           days[-1:])
+    assert out and out[0]["vol_ratio"] is None
+    json.dumps(out, allow_nan=False)
