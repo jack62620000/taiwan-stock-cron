@@ -96,7 +96,7 @@ def cross_html(key):
 
 
 def zone_cls(status):
-    """RSI、KD 狀態的燈號：偏多紅、過熱或偏空綠、中性金"""
+    """RSI、KD 五級的燈號：強勢紅、超買或超賣綠、偏強偏弱金"""
     return LAMP.get(status, "neu")
 
 
@@ -112,8 +112,9 @@ def trend_html(key):
 
 extra_tech_html = "".join(
     f'<div class="tb"><div class="tlb">{label}</div><div class="tbdg {cls}">{value}</div>'
-    f'<div class="tdd">{note}</div>{trend_html(label)}</div>'
-    for label, value, cls, note in extra_tech)
+    f'<div class="tdd">{name}：{note}</div>{trend_html(label)}</div>'
+    for label, value, cls, name, note in extra_tech)
+pos_name, pos_cls, pos_note = m["position_level"]
 
 def fmt(v, suffix="", decimals=2):
     if v is None or pd.isna(v):
@@ -279,7 +280,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
     <div class="tb">
       <div class="tlb">KD</div>
       <div class="tbdg {zone_cls(kd_status)}">K:{fmt(kd_k,'',0)} D:{fmt(kd_d,'',0)}</div>
-      <div class="tdd">{kd_status}</div>{cross_html("KD")}{trend_html("KD")}
+      <div class="tdd">{kd_status}：{m["kd_note"]}</div>{cross_html("KD")}{trend_html("KD")}
     </div>
     <div class="tb">
       <div class="tlb">MACD</div>
@@ -288,8 +289,8 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
     </div>
     <div class="tb">
       <div class="tlb">股價位階</div>
-      <div class="tbdg {'bear' if position_pct>70 else ('bull' if position_pct<30 else 'neu')}">{fmt(position_pct,'%',0)}</div>
-      <div class="tdd">{'年區間高位' if position_pct>70 else ('年區間低位' if position_pct<30 else '年區間中段')}</div>{trend_html("股價位階")}
+      <div class="tbdg {pos_cls}">{fmt(position_pct,'%',0)}</div>
+      <div class="tdd">{pos_name}：{pos_note}</div>{trend_html("股價位階")}
     </div>
     {extra_tech_html}
   </div>

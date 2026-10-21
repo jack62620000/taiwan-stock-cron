@@ -131,7 +131,7 @@ def _row(label, value, color=None):
 
 
 def zone_color(status):
-    """RSI、KD 狀態的顏色：偏多紅、過熱或偏空綠、中性金（同網頁分析卡）"""
+    """RSI、KD 五級的顏色：強勢紅、超買或超賣綠、偏強偏弱金（同網頁分析卡）"""
     from utils.indicators import LAMP
     return {"bull": UP, "bear": DOWN}.get(LAMP.get(status), GOLD)
 
@@ -230,6 +230,8 @@ def stock_bubble(sid, a):
     ])
     # ⑥ 技術面燈號（顏色同分析卡：偏多紅、偏空或過熱綠、中性金）
     pos = _num(m["position_pct"]) or 0
+    pos_name, pos_cls, _ = m["position_level"]
+    lamp = {"bull": UP, "bear": DOWN, "neu": GOLD}
     tech = [
         _row("RSI", f"{_f(m['rsi_val'])}（{m['rsi_status']}）",
              zone_color(m["rsi_status"])),
@@ -237,11 +239,9 @@ def stock_bubble(sid, a):
              zone_color(m["kd_status"])),
         _row("MACD 柱狀", f"{_f(m['macd_hist'])}（{'轉強' if (_num(m['macd_hist']) or 0) > 0 else '轉弱'}）",
              UP if (_num(m["macd_hist"]) or 0) > 0 else DOWN),
-        _row("股價位階", f"{pos:.0f}%（{'年區間高位' if pos > 70 else '年區間低位' if pos < 30 else '年區間中段'}）",
-             DOWN if pos > 70 else UP if pos < 30 else GOLD),
+        _row("股價位階", f"{pos:.0f}%（{pos_name}）", lamp.get(pos_cls)),
     ]
-    lamp = {"bull": UP, "bear": DOWN, "neu": GOLD}
-    tech += [_row(label, f"{value}（{note}）", lamp.get(cls)) for label, value, cls, note in m["extra_tech"]]
+    tech += [_row(label, f"{value}（{name}）", lamp.get(cls)) for label, value, cls, name, _ in m["extra_tech"]]
     # 每個指標下面一列近 5 日走向（往上紅、往下綠、持平灰）
     trends = m.get("trends") or {}
     keys = ["RSI", "KD", "MACD", "股價位階"] + [label for label, *_ in m["extra_tech"]]
