@@ -102,7 +102,7 @@ def zone_cls(status):
 
 
 def trend_html(key):
-    """技術指標近 5 日走向：往上紅、往下綠、持平灰"""
+    """技術指標和 5 個交易日前比：變多紅、變少綠、差不多灰"""
     t = trends.get(key)
     if not t:
         return ""
@@ -120,6 +120,78 @@ def fmt(v, suffix="", decimals=2):
     if v is None or pd.isna(v):
         return "N/A"
     return f"{v:.{decimals}f}{suffix}"
+
+
+def sign_cls(v):
+    """正數紅、負數綠、沒有資料或 0 不上色"""
+    if v is None or pd.isna(v) or v == 0:
+        return ""
+    return "kv-rd" if v > 0 else "kv-gn"
+
+
+def arrow_color(arrow):
+    return {"↑": "var(--rd)", "↓": "var(--gn)"}.get(arrow, "var(--ts)")
+
+
+def chip_box(name):
+    """法人一格：近 10 日累計（張），下面是趨勢（由賣轉買、買超加速…）與近 5 日／前 5 日"""
+    c = m["chips"].get(name)
+    if not c:
+        return f'<div class="kb"><div class="kl">{name}買賣超</div><div class="kv">N/A</div></div>'
+    streak = f"・{c['streak']}" if c["streak"] else ""
+    return (f'<div class="kb"><div class="kl">{name}買賣超（近 10 日）</div>'
+            f'<div class="kv {sign_cls(c["sum10"])}">{c["sum10"]:+,.0f}</div><div class="kn">張</div>'
+            f'<div class="ttr" style="color:{arrow_color(c["arrow"])}">{c["arrow"]} {c["label"]}{streak}</div>'
+            f'<div class="kn">近 5 日 {c["last5"]:+,.0f}／前 5 日 {c["prev5"]:+,.0f} 張</div></div>')
+
+
+def balance_box(label, value, tr):
+    """融資或融券餘額一格：餘額，下面是近 5 日、20 日增減與連續增減天數"""
+    if value is None or pd.isna(value):
+        return f'<div class="kb"><div class="kl">{label}</div><div class="kv">N/A</div></div>'
+    rows = ""
+    if tr:
+        for n, c, pct in ((5, tr["chg5"], tr["pct5"]), (20, tr["chg20"], tr["pct20"])):
+            if c is not None:
+                p_txt = f"（{pct:+.1f}%）" if pct is not None else ""
+                rows += (f'<div class="ttr" style="color:{arrow_color("↑" if c > 0 else "↓" if c < 0 else "→")}">'
+                         f'近 {n} 日 {c:+,.0f} 張{p_txt}</div>')
+        if tr["streak"]:
+            rows += f'<div class="kn">{tr["streak"]}</div>'
+    return f'<div class="kb"><div class="kl">{label}</div><div class="kv">{value:,.0f}</div><div class="kn">張</div>{rows}</div>'
+
+
+def revenue_bars(bars):
+    """近 12 個月營收小長條圖：高度是營收、紅色是年增、綠色是年減"""
+    vals = [v for _, v, _ in bars if v is not None and pd.notna(v)]
+    if len(vals) < 2:
+        return ""
+    top = max(vals)
+    cols = ""
+    for ym, v, g in bars:
+        h = 0 if v is None or pd.isna(v) else max(4, v / top * 100)
+        color = "var(--ts)" if g is None or pd.isna(g) else "var(--rd)" if g > 0 else "var(--gn)"
+        tip = f"{ym}：{v / 1000:,.0f} 百萬（年增 {g:+.1f}%）" if h and g is not None and pd.notna(g) else ym
+        cols += (f'<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;" title="{tip}">'
+                 f'<div style="width:70%;height:{h:.0f}%;background:{color};opacity:.75;border-radius:2px 2px 0 0;"></div>'
+                 f'<div style="font-size:10px;color:var(--td);margin-top:3px;">{ym[-2:]}</div></div>')
+    return (f'<div class="kl" style="margin-top:12px;">近 12 個月營收（紅＝年增、綠＝年減）</div>'
+            f'<div style="display:flex;gap:3px;height:80px;">{cols}</div>')
+
+
+rv = m["rev_tr"]
+yoy3, yoy3_prev = rv["yoy3"], rv["yoy3_prev"]
+if yoy3 is not None and yoy3_prev is not None:
+    yoy3_arrow = "↑" if yoy3 > yoy3_prev else "↓" if yoy3 < yoy3_prev else "→"
+    yoy3_note = f'<div class="ttr" style="color:{arrow_color(yoy3_arrow)}">{yoy3_arrow} 前 3 月 {yoy3_prev:+.1f}%，成長{"加速" if yoy3_arrow == "↑" else "放緩" if yoy3_arrow == "↓" else "持平"}</div>'
+else:
+    yoy3_note = ""
+rank_txt = ("近 12 月新高" if rv["rank12"] == 1 else f"第 {rv['rank12']} 高") if rv["rank12"] else "N/A"
+big_chg = m["big_chg"]
+big_note = (f'近 {m["big_weeks"]} 週 <span style="color:{"var(--rd)" if big_chg > 0 else "var(--gn)" if big_chg < 0 else "var(--ts)"};font-weight:700;">{big_chg:+.2f}</span> 百分點'
+            if big_chg is not None else "")
+smr = m["short_margin_ratio"]
+margin_hint_html = f'<div class="kn" style="margin-top:10px;font-size:12.5px;">💡 近 20 日{m["margin_hint"]}（市場常見看法，僅供參考）</div>' if m["margin_hint"] else ""
 
 # ===== 建立 HTML 卡片 =====
 html = f"""
@@ -246,27 +318,36 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
     <div class="kb"><div class="kl">年增率</div><div class="kv {'kv-rd' if (latest_rev.get('yoy_growth') or 0)>0 else 'kv-gn'}">{fmt(latest_rev.get('yoy_growth'),'%')}</div></div>
     <div class="kb"><div class="kl">月增率</div><div class="kv {'kv-rd' if (latest_rev.get('mom_growth') or 0)>0 else 'kv-gn'}">{fmt(latest_rev.get('mom_growth'),'%')}</div></div>
   </div>
+  <div class="kg" style="margin-top:10px;">
+    <div class="kb"><div class="kl">今年累計營收</div><div class="kv">{fmt(rv['cum_rev']/1e5 if rv['cum_rev'] is not None and pd.notna(rv['cum_rev']) else None,'',1)}</div><div class="kn">億元・累計年增 <span class="{sign_cls(rv['cum_yoy'])}" style="font-weight:700;">{fmt(rv['cum_yoy'],'%',1)}</span></div></div>
+    <div class="kb"><div class="kl">近 3 月年增率</div><div class="kv {sign_cls(yoy3)}">{fmt(yoy3,'%',1)}</div>{yoy3_note}</div>
+    <div class="kb"><div class="kl">本月營收在近 12 月</div><div class="kv kv-or">{rank_txt}</div><div class="kn">{f"共 {rv['n12']} 個月" if rv['n12'] else ''}</div></div>
+    <div class="kb"><div class="kl">年增連續月數</div><div class="kv">{rv['yoy_streak'] or '—'}</div></div>
+  </div>
+  {revenue_bars(rv['bars'])}
 </div>
 
 <div class="sec">
-  <div class="st"><span class="sn">④</span> 籌碼面（近10日累計＋最新）</div>
+  <div class="st"><span class="sn">④</span> 籌碼面（近 10 日累計＋買賣趨勢）</div>
   <div class="kg5">
-    <div class="kb"><div class="kl">外資買賣超</div><div class="kv {'kv-rd' if foreign_10d>0 else 'kv-gn'}">{foreign_10d:,.0f}</div><div class="kn">股</div></div>
-    <div class="kb"><div class="kl">投信買賣超</div><div class="kv {'kv-rd' if sitca_10d>0 else 'kv-gn'}">{sitca_10d:,.0f}</div><div class="kn">股</div></div>
-    <div class="kb"><div class="kl">自營商買賣超</div><div class="kv {'kv-rd' if dealers_10d>0 else 'kv-gn'}">{dealers_10d:,.0f}</div><div class="kn">股</div></div>
-    <div class="kb"><div class="kl">大戶持股比例</div><div class="kv kv-or">{fmt(latest_holder.get('big_holder_ratio'))}</div><div class="kn">%</div></div>
+    {chip_box("外資")}
+    {chip_box("投信")}
+    {chip_box("自營商")}
+    <div class="kb"><div class="kl">大戶持股比例</div><div class="kv kv-or">{fmt(latest_holder.get('big_holder_ratio'))}</div><div class="kn">%・{big_note}</div></div>
     <div class="kb"><div class="kl">外資持股比率</div><div class="kv kv-or">{fmt(hold_latest)}</div><div class="kn">%・近20日 <span style="color:{'#dc2626' if (hold_chg_20 or 0)>0 else '#16a34a'};font-weight:700;">{f"{hold_chg_20:+.2f}" if hold_chg_20 is not None else 'N/A'}</span> 百分點</div></div>
   </div>
 </div>
 
 <div class="sec">
   <div class="st"><span class="sn">⑤</span> 資金面（融資融券）</div>
-  <div class="kg">
-    <div class="kb"><div class="kl">融資餘額</div><div class="kv">{f"{latest_margin.get('margin_balance'):,.0f}" if latest_margin.get('margin_balance') else 'N/A'}</div><div class="kn">張</div></div>
+  <div class="kg5">
+    {balance_box("融資餘額", latest_margin.get('margin_balance'), m["margin_tr"])}
     <div class="kb"><div class="kl">融資使用率</div><div class="kv kv-or">{fmt(latest_util.get('margin_rate'),'%') if latest_util.get('margin_rate') is not None else 'N/A'}</div></div>
-    <div class="kb"><div class="kl">融券餘額</div><div class="kv">{f"{latest_margin.get('short_balance'):,.0f}" if latest_margin.get('short_balance') else 'N/A'}</div><div class="kn">張</div></div>
+    {balance_box("融券餘額", latest_margin.get('short_balance'), m["short_tr"])}
     <div class="kb"><div class="kl">融券使用率</div><div class="kv kv-or">{fmt(latest_util.get('short_rate'),'%') if latest_util.get('short_rate') is not None else 'N/A'}</div></div>
+    <div class="kb"><div class="kl">券資比</div><div class="kv kv-or">{fmt(smr,'%',1)}</div><div class="kn">融券 ÷ 融資</div></div>
   </div>
+  {margin_hint_html}
 </div>
 
 <div class="sec">

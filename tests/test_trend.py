@@ -10,8 +10,8 @@ from utils.card import TREND_DAYS, indicator_trend, trend_text  # noqa: E402
 
 
 def test_up_down_flat():
-    assert indicator_trend(pd.Series([30, 31, 32, 33, 34, 40]), 2) == ("↑", 10)
-    assert indicator_trend(pd.Series([70, 68, 66, 64, 62, 60]), 2) == ("↓", -10)
+    assert indicator_trend(pd.Series([30, 31, 32, 33, 34, 40]), 2) == ("↑", 10, 30, 40)
+    assert indicator_trend(pd.Series([70, 68, 66, 64, 62, 60]), 2) == ("↓", -10, 70, 60)
     assert indicator_trend(pd.Series([50, 51, 49, 50, 52, 51]), 2)[0] == "→"
 
 
@@ -23,9 +23,11 @@ def test_relative_flat_and_short_data():
 
 
 def test_trend_text():
-    assert trend_text(("↑", 6.24)) == f"{TREND_DAYS} 日往上 ↑ +6.2"
-    assert trend_text(("↓", -0.123), "MACD") == f"{TREND_DAYS} 日往下 ↓ -0.12"
-    assert trend_text(("↑", 1.5), "均線排列") == f"月線{TREND_DAYS} 日往上 ↑ +1.50 元"
+    """寫清楚是「現在的值」和 5 日前的值比，並列出前後數值"""
+    assert trend_text(("↓", -15.8, 60.2, 44.4)) == f"↓ 比 {TREND_DAYS} 日前少 15.8（60.2 → 44.4）"
+    assert trend_text(("↑", 6.24, 30, 36.24), "布林通道") == f"↑ 比 {TREND_DAYS} 日前多 6 個百分點（30% → 36%）"
+    assert trend_text(("↑", 1.5, 100, 101.5), "均線排列") == f"↑ 月線比 {TREND_DAYS} 日前多 1.50 元（100.00 → 101.50）"
+    assert trend_text(("→", 0.1, 50, 50.1)) == f"→ 和 {TREND_DAYS} 日前差不多（50.0 → 50.1）"
     assert trend_text(None) == ""
 
 
@@ -65,3 +67,42 @@ def test_other_levels():
     assert volume_level(2, 1)[:2] == ("價漲量增", "bull")
     assert volume_level(2, -1)[:2] == ("價跌量增", "neu")
     assert volume_level(0.5, 1)[0] == "量縮" and volume_level(1, 1)[0] == "量能正常"
+
+
+def test_chip_trend():
+    from utils.card import chip_trend
+    c = chip_trend(pd.Series([-1000] * 5 + [-500, 2000, 3000, 1000, 4000]))  # 前 5 日賣、近 5 日轉買
+    assert (c["label"], c["arrow"], c["streak"]) == ("由賣轉買", "↑", "連買 4 天")
+    assert c["last5"] == 9.5 and c["prev5"] == -5 and c["sum10"] == 4.5
+    assert chip_trend(pd.Series([1000] * 5 + [3000] * 5))["label"] == "買超加速"
+    assert chip_trend(pd.Series([3000] * 5 + [1000] * 5))["label"] == "買超減緩"
+    assert chip_trend(pd.Series([2000] * 5 + [-1000] * 5))["label"] == "由買轉賣"
+    assert chip_trend(pd.Series([-1000] * 5 + [-3000] * 5))["label"] == "賣超加速"
+
+
+def test_balance_trend_and_hint():
+    from utils.card import balance_trend, margin_hint
+    t = balance_trend(pd.Series(range(100, 130)))  # 每天多 1 張
+    assert t["chg5"] == 5 and t["chg20"] == 20 and t["streak"] == "連增 29 天"
+    assert balance_trend(pd.Series([100])) is None
+    assert margin_hint(100, -5).startswith("股價跌、融資卻增加")
+    assert margin_hint(-100, 5).startswith("股價漲、融資減少")
+    assert margin_hint(None, 5) == ""
+
+
+def test_revenue_trend():
+    from utils.card import revenue_trend
+    df = pd.DataFrame({
+        "year_month": [f"2026-{m:02d}" for m in range(1, 8)],
+        "revenue": [100, 110, 120, 130, 140, 150, 160],
+        "last_year_revenue": [100, 100, 100, 100, 100, 100, 100],
+        "yoy_growth": [-1, 10, 20, 30, 40, 50, 60],
+        "cumulative_revenue": [None] * 6 + [910],
+        "cumulative_yoy_growth": [None] * 6 + [30],
+    })
+    r = revenue_trend(df)
+    assert round(r["yoy3"], 2) == 50 and round(r["yoy3_prev"], 2) == 20
+    assert r["rank12"] == 1 and r["n12"] == 7
+    assert r["yoy_streak"] == "連續 6 個月年增"
+    assert r["cum_yoy"] == 30 and len(r["bars"]) == 7
+    assert revenue_trend(pd.DataFrame())["yoy3"] is None

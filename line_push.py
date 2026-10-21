@@ -144,11 +144,28 @@ def _cross_rows(c):
 
 
 def _trend_rows(t, key):
-    """技術指標走向的一列；沒有資料回傳空 list"""
+    """技術指標和 5 個交易日前比的一列；沒有資料回傳空 list"""
     if not t:
         return []
     from utils.card import trend_text
     return [_row("　└ 走向", trend_text(t, key), {"↑": UP, "↓": DOWN}.get(t[0], GRAY))]
+
+
+def _chip_rows(name, c):
+    """法人近 10 日買賣超（張）與趨勢（由賣轉買、買超加速…）兩列"""
+    if not c:
+        return [_row(f"{name}買賣超", "N/A")]
+    streak = f"・{c['streak']}" if c["streak"] else ""
+    return [_row(f"{name}（10 日）", f"{c['sum10']:+,.0f} 張", _sign_color(c["sum10"])),
+            _row("　└ 趨勢", f"{c['arrow']} {c['label']}{streak}", {"↑": UP, "↓": DOWN}.get(c["arrow"], GRAY))]
+
+
+def _balance_rows(tr):
+    """融資或融券餘額近 5 日、20 日增減一列"""
+    if not tr or tr["chg5"] is None:
+        return []
+    text = f"5日 {tr['chg5']:+,.0f}" + (f"／20日 {tr['chg20']:+,.0f}" if tr["chg20"] is not None else "") + " 張"
+    return [_row("　└ 增減", text, _sign_color(tr["chg5"]))]
 
 
 def _section(title, rows):
@@ -203,20 +220,25 @@ def stock_bubble(sid, a):
     ])
     # ③ 營收
     r = m["latest_rev"]
+    rv = m["rev_tr"]
     rev = _num(r.get("revenue")) if len(r) else None
     body += _section(f"③ 營收表現（{r.get('year_month', '最新月') if len(r) else '最新月'}）", [
         _row("月營收", _f(rev / 1000 if rev else None, " 百萬", 1)),
         _row("年增率", _f(r.get("yoy_growth") if len(r) else None, "%"), _sign_color(r.get("yoy_growth") if len(r) else None)),
         _row("月增率", _f(r.get("mom_growth") if len(r) else None, "%"), _sign_color(r.get("mom_growth") if len(r) else None)),
-    ])
+        _row("累計年增率", _f(rv["cum_yoy"], "%", 1), _sign_color(rv["cum_yoy"])),
+        _row("近 3 月年增率", _f(rv["yoy3"], "%", 1) +
+             (f"（前 3 月 {rv['yoy3_prev']:+.1f}%）" if rv["yoy3"] is not None and rv["yoy3_prev"] is not None else ""),
+             _sign_color(rv["yoy3"])),
+        _row("在近 12 月", ("新高" if rv["rank12"] == 1 else f"第 {rv['rank12']} 高") if rv["rank12"] else "N/A"),
+    ] + ([_row("年增", rv["yoy_streak"])] if rv["yoy_streak"] else []))
     # ④ 籌碼面（分析卡顯示股數，這裡換算成張比較好讀）
     h = m["latest_holder"]
     hold_chg = m["hold_chg_20"]
-    body += _section("④ 籌碼面（近 10 日累計＋最新）", [
-        _row("外資買賣超", _f(m["foreign_10d"] / 1000, " 張", 0), _sign_color(m["foreign_10d"])),
-        _row("投信買賣超", _f(m["sitca_10d"] / 1000, " 張", 0), _sign_color(m["sitca_10d"])),
-        _row("自營商買賣超", _f(m["dealers_10d"] / 1000, " 張", 0), _sign_color(m["dealers_10d"])),
-        _row("大戶持股比例", _f(h.get("big_holder_ratio") if len(h) else None, "%")),
+    body += _section("④ 籌碼面（近 10 日累計＋買賣趨勢）", [
+        *[r for name in ("外資", "投信", "自營商") for r in _chip_rows(name, m["chips"].get(name))],
+        _row("大戶持股比例", _f(h.get("big_holder_ratio") if len(h) else None, "%") +
+             (f"（{m['big_weeks']}週 {m['big_chg']:+.2f}）" if m["big_chg"] is not None else ""), _sign_color(m["big_chg"])),
         _row("外資持股比率", _f(m["hold_latest"], "%") +
              (f"（20日 {hold_chg:+.2f}）" if hold_chg is not None else ""), _sign_color(hold_chg)),
     ])
@@ -224,10 +246,13 @@ def stock_bubble(sid, a):
     mg, u = m["latest_margin"], m["latest_util"]
     body += _section("⑤ 資金面（融資融券）", [
         _row("融資餘額", _f(mg.get("margin_balance") if len(mg) else None, " 張", 0)),
+        *_balance_rows(m["margin_tr"]),
         _row("融資使用率", _f(u.get("margin_rate") if len(u) else None, "%")),
         _row("融券餘額", _f(mg.get("short_balance") if len(mg) else None, " 張", 0)),
+        *_balance_rows(m["short_tr"]),
         _row("融券使用率", _f(u.get("short_rate") if len(u) else None, "%")),
-    ])
+        _row("券資比", _f(m["short_margin_ratio"], "%", 1)),
+    ] + ([_text(f"💡 近 20 日{m['margin_hint']}", size="xs", color=GRAY, margin="sm")] if m["margin_hint"] else []))
     # ⑥ 技術面燈號（顏色同分析卡：偏多紅、偏空或過熱綠、中性金）
     pos = _num(m["position_pct"]) or 0
     pos_name, pos_cls, _ = m["position_level"]
@@ -241,7 +266,8 @@ def stock_bubble(sid, a):
              UP if (_num(m["macd_hist"]) or 0) > 0 else DOWN),
         _row("股價位階", f"{pos:.0f}%（{pos_name}）", lamp.get(pos_cls)),
     ]
-    tech += [_row(label, f"{value}（{name}）", lamp.get(cls)) for label, value, cls, name, _ in m["extra_tech"]]
+    tech += [_row(label, f"{value}（{note if name == value else name}）", lamp.get(cls))
+             for label, value, cls, name, note in m["extra_tech"]]
     # 每個指標下面一列近 5 日走向（往上紅、往下綠、持平灰）
     trends = m.get("trends") or {}
     keys = ["RSI", "KD", "MACD", "股價位階"] + [label for label, *_ in m["extra_tech"]]
