@@ -613,11 +613,15 @@ with tab_follow:
     st.caption(f"最近 {FOLLOW_DAYS} 個交易日出現過的法則 2 買點（「準備買進」表裡「今天出現法則2」的股票），"
                f"之後實際漲跌多少，用來看最近的訊號準不準。固定用預設參數（20 日均線、20 日均量 ≥ 500 張），"
                f"不受左側設定影響。回測建議持有 {HOLD_HINT[0]}～{HOLD_HINT[1]} 個交易日。")
-    try:
-        f_date, follow = load_followup()
-    except Exception:
-        f_date, follow = None, None
-        st.warning("事後追蹤資料暫時讀取失敗，請稍後按「強制重新整理」再看一次。")
+    # 要重算近 160 個日曆天的買點，第一次約 15 秒，按了才算（之後一小時內直接顯示）
+    f_date, follow = None, None
+    if st.toggle("顯示事後追蹤", key="granville_followup",
+                 help="第一次要重算最近的買點，約 15 秒；之後一小時內直接顯示"):
+        try:
+            with st.spinner("計算最近的法則 2 買點…"):
+                f_date, follow = load_followup()
+        except Exception:
+            st.warning("事後追蹤資料暫時讀取失敗，請稍後按「強制重新整理」再看一次。")
     if follow is not None and follow.empty:
         st.info(f"最近 {FOLLOW_DAYS} 個交易日沒有出現法則 2 買點。")
     elif follow is not None:
