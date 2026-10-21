@@ -406,3 +406,42 @@ def render_followup(df, extra_cols=None):
         },
     )
     st.caption(FOLLOW_NOTE)
+
+
+# =====================================================================
+# 大盤季線提醒：加權指數收盤在 60 日均線之下時提醒（葛蘭碧頁、每日選股頁、LINE 清單共用）
+# 回測（2025-02～2026-10，持有 20 日）：季線下的買進訊號平均明顯較差，所以提醒但不擋訊號
+# =====================================================================
+MARKET_MA = 60
+
+
+def market_regime(index_df, ma_days=MARKET_MA):
+    """加權指數最新收盤和 ma_days 日均線，回傳 {date, close, ma, gap, below}；資料不足回傳 None"""
+    if index_df is None or index_df.empty:
+        return None
+    close = pd.to_numeric(index_df.sort_values("date")["close"], errors="coerce").dropna()
+    if len(close) < ma_days:
+        return None
+    last, ma = float(close.iloc[-1]), float(close.tail(ma_days).mean())
+    return {"date": str(index_df["date"].max())[:10], "close": last, "ma": ma,
+            "gap": (last / ma - 1) * 100, "below": last < ma}
+
+
+@st.cache_data(ttl=3600)
+def load_market_regime():
+    from utils.db import get_market_index
+    return market_regime(get_market_index("TAIEX", limit=MARKET_MA + 5))
+
+
+def market_warning(regime):
+    """大盤在季線下時的提醒文字，其他情況回傳 None"""
+    if not regime or not regime["below"]:
+        return None
+    return (f"⚠️ 大盤在季線下：加權指數 {regime['close']:,.0f}，低於 {MARKET_MA} 日均線 {regime['ma']:,.0f}"
+            f"（{regime['gap']:+.1f}%，{regime['date']}）。回測顯示這段期間的買進訊號勝率較低，請降低部位或等站回季線。")
+
+
+def render_market_warning():
+    text = market_warning(load_market_regime())
+    if text:
+        st.warning(text)

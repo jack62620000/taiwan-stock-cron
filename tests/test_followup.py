@@ -105,3 +105,29 @@ def test_momentum_compute_no_infinite_values():
                            days[-1:])
     assert out and out[0]["vol_ratio"] is None
     json.dumps(out, allow_nan=False)
+
+
+# ===== 大盤季線提醒 =====
+def _index(closes):
+    return pd.DataFrame({"date": pd.bdate_range("2026-01-01", periods=len(closes)).strftime("%Y-%m-%d"),
+                         "close": closes})
+
+
+def test_market_regime_below_and_above():
+    from utils.analysis import MARKET_MA, market_regime, market_warning
+    down = market_regime(_index([100.0] * (MARKET_MA - 1) + [90.0]))
+    assert down["below"] and down["gap"] < 0
+    assert "季線下" in market_warning(down)
+    up = market_regime(_index([100.0] * (MARKET_MA - 1) + [110.0]))
+    assert not up["below"] and market_warning(up) is None
+    assert market_regime(_index([100.0] * 10)) is None
+    assert market_regime(pd.DataFrame()) is None and market_warning(None) is None
+
+
+def test_line_lists_add_warning():
+    from line_lists import add_warning
+    msgs = [{"type": "text", "text": "標題"}, {"type": "flex"}]
+    add_warning(msgs, None)
+    assert msgs[0]["text"] == "標題"
+    add_warning(msgs, "⚠️ 大盤在季線下")
+    assert msgs[0]["text"].startswith("⚠️ 大盤在季線下\n\n標題")

@@ -178,13 +178,23 @@ def load_momentum():
 
 def build_lists():
     """回傳 {檔名: 內容}，給 line_cards.upload 一起上傳"""
-    from utils.analysis import granville_buy_default
+    from utils.analysis import granville_buy_default, load_market_regime, market_warning
     g_date, table = granville_buy_default()
     m_date, m_msgs = momentum_messages(load_momentum())
-    return {
+    warn = market_warning(load_market_regime())
+    lists = {
         "granville.json": {"date": g_date, "messages": granville_messages(g_date, table)},
         "momentum.json": {"date": m_date, "messages": m_msgs},
     }
+    for content in lists.values():
+        add_warning(content["messages"], warn)
+    return lists
+
+
+def add_warning(messages, warn):
+    """大盤在季線下時，把提醒加在第一則文字訊息最前面（同網頁葛蘭碧頁、每日選股頁頂端的提醒）"""
+    if warn and messages and messages[0].get("type") == "text":
+        messages[0]["text"] = (warn + "\n\n" + messages[0]["text"])[:TEXT_MAX]
 
 
 if __name__ == "__main__":

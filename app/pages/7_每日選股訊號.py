@@ -13,7 +13,9 @@ from utils.db import (
 from utils.watch import add_watch_form, add_watch_button
 from utils.granville import STOP_RULE
 from utils.momentum import BACKTEST_MD, RULES_MD, momentum_choices, momentum_table
-from utils.analysis import FOLLOW_DAYS, MOMENTUM_FOLLOW_PICKS, TRADE_COST_PCT, momentum_followup, render_followup
+from utils.analysis import (
+    FOLLOW_DAYS, MOMENTUM_FOLLOW_PICKS, TRADE_COST_PCT, momentum_followup, render_followup, render_market_warning,
+)
 from utils.ui import require_login, render_metric_cards, style_sign, UP_COLOR, DOWN_COLOR
 require_login()
 
@@ -29,6 +31,8 @@ if st.button("🔄 強制重新整理資料"):
     st.cache_data.clear()
     get_stock_list.cache_clear()
     st.rerun()
+
+render_market_warning()
 
 DIMENSIONS = {
     "chip_score": "籌碼",

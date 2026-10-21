@@ -12,7 +12,9 @@ from utils.granville import (
     STOP_LOSS_PCT, STOP_RULE, ATR_MULT, ATR_DAYS, RS_DAYS, granville_signals, ma_cross_counts, next_day_triggers, relative_strength, rule1_watchlist, rule_frames, watch_note,
 )
 from utils.watch import add_watch_form
-from utils.analysis import FOLLOW_DAYS, granville_buy_table, granville_followup, load_atr, render_followup
+from utils.analysis import (
+    FOLLOW_DAYS, granville_buy_table, granville_followup, load_atr, render_followup, render_market_warning,
+)
 from utils.groups import current_group
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
 require_login()
@@ -29,6 +31,8 @@ if st.button("🔄 強制重新整理資料"):
     st.cache_data.clear()
     get_stock_list.cache_clear()
     st.rerun()
+
+render_market_warning()
 
 # ===== 載入資料 =====
 @st.cache_data(ttl=3600)
