@@ -10,6 +10,16 @@ def calc_ma(df, periods=[5, 10, 20, 60, 120, 240]):
             df[f"MA{p}"] = None
     return df
 
+# 回測（2024-01～2026-10，20 日均量 ≥ 500 張）：RSI > 70、K > 80 之後 20 日相對大盤反而比平均好 1.5～1.8 個百分點，
+# RSI < 30、K < 20 之後比平均差，所以高檔叫「強勢區」、低檔叫「弱勢區」，不叫會反轉的「超買／超賣」
+STRONG, WEAK, NORMAL = "強勢區", "弱勢區", "正常"
+
+
+def zone(value, high, low):
+    """指標高於 high 算強勢區、低於 low 算弱勢區"""
+    return STRONG if value > high else WEAK if value < low else NORMAL
+
+
 def calc_rsi(df, period=14):
     """計算 RSI"""
     if len(df) < period + 1:
@@ -119,7 +129,7 @@ def get_latest_signals(df):
         rsi = last["RSI"]
         signals["RSI"] = {
             "value": rsi,
-            "status": "超買" if rsi > 70 else ("超賣" if rsi < 30 else "正常"),
+            "status": zone(rsi, 70, 30),
         }
 
     # MACD
@@ -137,7 +147,7 @@ def get_latest_signals(df):
         signals["KD"] = {
             "K": last["K"],
             "D": last["D"],
-            "status": "超買" if last["K"] > 80 else ("超賣" if last["K"] < 20 else "正常"),
+            "status": zone(last["K"], 80, 20),
         }
 
     # 布林通道

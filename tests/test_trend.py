@@ -27,3 +27,11 @@ def test_trend_text():
     assert trend_text(("↓", -0.123), "MACD") == f"{TREND_DAYS} 日往下 ↓ -0.12"
     assert trend_text(("↑", 1.5), "均線排列") == f"月線{TREND_DAYS} 日往上 ↑ +1.50 元"
     assert trend_text(None) == ""
+
+
+def test_rsi_kd_zone():
+    """高檔是強勢區、低檔是弱勢區（回測顯示高檔之後反而比較強）"""
+    from utils.indicators import STRONG, WEAK, NORMAL, zone
+    assert zone(75, 70, 30) == STRONG == "強勢區"
+    assert zone(25, 70, 30) == WEAK == "弱勢區"
+    assert zone(50, 70, 30) == NORMAL

@@ -130,6 +130,12 @@ def _row(label, value, color=None):
     ]}
 
 
+def zone_color(status):
+    """RSI、KD：強勢區紅、弱勢區綠、正常金（同網頁分析卡）"""
+    from utils.indicators import STRONG, WEAK
+    return {STRONG: UP, WEAK: DOWN}.get(status, GOLD)
+
+
 def _trend_rows(t, key):
     """技術指標走向的一列；沒有資料回傳空 list"""
     if not t:
@@ -219,9 +225,9 @@ def stock_bubble(sid, a):
     pos = _num(m["position_pct"]) or 0
     tech = [
         _row("RSI", f"{_f(m['rsi_val'])}（{m['rsi_status']}）",
-             DOWN if m["rsi_status"] == "超買" else UP if m["rsi_status"] == "超賣" else GOLD),
+             zone_color(m["rsi_status"])),
         _row("KD", f"K {_f(m['kd_k'], '', 0)}／D {_f(m['kd_d'], '', 0)}（{m['kd_status']}）",
-             DOWN if m["kd_status"] == "超買" else UP if m["kd_status"] == "超賣" else GOLD),
+             zone_color(m["kd_status"])),
         _row("MACD 柱狀", f"{_f(m['macd_hist'])}（{'轉強' if (_num(m['macd_hist']) or 0) > 0 else '轉弱'}）",
              UP if (_num(m["macd_hist"]) or 0) > 0 else DOWN),
         _row("股價位階", f"{pos:.0f}%（{'年區間高位' if pos > 70 else '年區間低位' if pos < 30 else '年區間中段'}）",
