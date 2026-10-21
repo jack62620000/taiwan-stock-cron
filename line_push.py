@@ -12,6 +12,7 @@ LINE 每日推播 - 每晚資料更新、評分完之後，把所有分組的自
     LINE_CHANNEL_ACCESS_TOKEN：LINE 官方帳號的 Channel access token
     LINE_USER_ID：要推給誰（LINE Developers 後台 Basic settings 的 Your user ID）
 沒設定就跳過，不算失敗。
+    LINE_WATCH_OWNER（選填）：網頁登入帳號，只推這個帳號的分組；沒設定就推所有帳號的分組。
 
 同一個評分日只推一次：推過的日期記在 Storage（archive 桶的 _state/line_push_last.txt），
 早上補抓的排程又跑到這裡時不會重複推。手動重推：設環境變數 LINE_FORCE=1。
@@ -38,9 +39,15 @@ SCORE_RECENT, SCORE_TOP = 20, 20  # 同個股分析卡：近 20 個評分日平�
 
 
 # ===== 讀取自選股與分析 =====
-def load_groups(sb):
-    """所有分組與裡面的股票（依分組建立順序、股票加入順序）；空的分組不推"""
-    groups = sb.table("watch_groups").select("id, name").order("id").execute().data or []
+def load_groups(sb, owner=None):
+    """
+    分組與裡面的股票（依分組建立順序、股票加入順序）；空的分組不推。
+    owner 是網頁登入帳號：有給就只推那個帳號的分組，沒給就推所有帳號的分組。
+    """
+    q = sb.table("watch_groups").select("id, name")
+    if owner:
+        q = q.eq("owner", owner)
+    groups = q.order("id").execute().data or []
     out = []
     for g in groups:
         rows = sb.table("watchlist").select("stock_id, added_at").eq("group_id", g["id"]) \
@@ -334,11 +341,12 @@ def mark_pushed(sb, day):
     sb.storage.from_(STATE_BUCKET).upload(STATE_PATH, day.encode(), {"content-type": "text/plain", "upsert": "true"})
 
 
-def run(sb, token, user_id, force=False, post=requests.post, dry_run=False):
+def run(sb, token, user_id, force=False, post=requests.post, dry_run=False, owner=None):
     """回傳推了幾檔（沒推回傳 0）"""
-    groups = load_groups(sb)
+    groups = load_groups(sb, owner)
     if not groups:
-        print("沒有任何自選股，不推播")
+        print(f"::warning title=沒有推播::帳號 {owner} 底下沒有任何自選股，請確認 LINE_WATCH_OWNER 是網頁的登入帳號"
+              if owner else "沒有任何自選股，不推播")
         return 0
     ids = list(dict.fromkeys(sid for _, g in groups for sid in g))
     from utils.db import get_signal_dates
@@ -380,7 +388,8 @@ def main():
         print("沒有設定 LINE_CHANNEL_ACCESS_TOKEN／LINE_USER_ID，跳過 LINE 推播")
         return 0
     from utils.db import supabase
-    run(supabase, token, user_id, force=os.getenv("LINE_FORCE") == "1", dry_run=dry_run)
+    run(supabase, token, user_id, force=os.getenv("LINE_FORCE") == "1", dry_run=dry_run,
+        owner=(os.getenv("LINE_WATCH_OWNER") or "").strip() or None)
     return 0
 
 
