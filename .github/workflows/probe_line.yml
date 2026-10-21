@@ -1,0 +1,34 @@
+name: probe line cards (temporary)
+on:
+  pull_request:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          LINE_DRY_RUN: "1"
+        run: |
+          python - <<'PY'
+          import json, time
+          import line_cards
+          t = time.time()
+          data = line_cards.load_all()
+          t1 = time.time(); print(f"載入 {t1 - t:.0f} 秒")
+          a = line_cards.analyze_all(data)
+          t2 = time.time(); print(f"分析 {t2 - t1:.0f} 秒，{len(a)} 檔")
+          shards = line_cards.build_shards(a)
+          t3 = time.time(); print(f"組卡片 {t3 - t2:.0f} 秒")
+          sizes = sorted((len(json.dumps(v, ensure_ascii=False, separators=(',', ':')).encode()), k) for k, v in shards.items())
+          print(f"{len(shards)} 個分檔，共 {sum(s for s, _ in sizes) / 1e6:.1f} MB，最大 {sizes[-1]}，最小 {sizes[0]}")
+          cards = [len(json.dumps(c, ensure_ascii=False, separators=(',', ':')).encode()) for v in shards.values() for c in v.values()]
+          print(f"單張卡片最大 {max(cards):,} bytes（LINE 上限 30 KB）")
+          print("沒有分析卡的股票：", len(data['stocks']) - len(a))
+          print(json.dumps(shards['23']['2330'], ensure_ascii=False)[:600])
+          PY
