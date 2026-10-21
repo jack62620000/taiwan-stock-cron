@@ -1,5 +1,5 @@
 """
-LINE 圖文選單 - 聊天室下方的按鈕（自選股、台積電、使用說明），點了就送出對應的文字給機器人
+LINE 圖文選單 - 聊天室下方的按鈕（自選股、葛蘭碧、動能股、使用說明），點了就送出對應的文字給機器人
 
 設定好 LINE 金鑰後，用 GitHub Actions 的「LINE 圖文選單（手動）」執行一次就好，之後不用再跑；
 重新執行會建立新的選單並刪掉舊的同名選單。圖片在 assets/line_richmenu.png（產生方式見 assets/make_richmenu.py）。
@@ -16,8 +16,8 @@ DATA_API = "https://api-data.line.me/v2/bot"
 NAME = "台股分析選單"
 IMAGE = Path(__file__).resolve().parent / "assets" / "line_richmenu.png"
 WIDTH, HEIGHT = 2500, 843
-# 三個按鈕平分寬度，點了送出的文字（和 Edge Function line-webhook 認得的指令相同）
-AREAS = ["自選", "台積電", "說明"]
+# 按鈕平分寬度，點了送出的文字（和 Edge Function line-webhook 認得的指令相同）
+AREAS = ["自選", "葛蘭碧", "動能股", "說明"]
 
 
 def menu_body():

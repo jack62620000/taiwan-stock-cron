@@ -41,6 +41,6 @@ def test_menu_layout():
     body = line_richmenu.menu_body()
     areas = body["areas"]
     assert sum(a["bounds"]["width"] for a in areas) == line_richmenu.WIDTH
-    assert [a["action"]["text"] for a in areas] == ["自選", "台積電", "說明"]
+    assert [a["action"]["text"] for a in areas] == ["自選", "葛蘭碧", "動能股", "說明"]
     from PIL import Image
     assert Image.open(line_richmenu.IMAGE).size == (line_richmenu.WIDTH, line_richmenu.HEIGHT)

@@ -1,7 +1,8 @@
 // LINE 機器人的 webhook：使用者打股票代號或名稱，回覆那檔股票的個股分析卡
 //
 // 卡片由 line_cards.py 每晚算好放在 Storage（archive 桶 _line_cards/），這裡只讀檔回覆；
-// 打「自選」時另外讀資料庫的分組與自選股清單（只讀，不寫入）。
+// 打「自選」時另外讀資料庫的分組與自選股清單（只讀，不寫入）；
+// 「葛蘭碧」「動能股」回覆 line_lists.py 每晚算好的清單（granville.json、momentum.json）。
 // 用 LINE 的回覆訊息（reply）回答，不算每月推播額度。
 //
 // 需要的設定（Supabase → Edge Functions → Secrets）：
@@ -115,6 +116,10 @@ async function answer(input: string, userId?: string): Promise<unknown[]> {
   if (r.kind === "help") return [text(helpText(index))];
   if (r.kind === "myid") return [text(userId ? `你的 LINE user ID：\n${userId}` : "查不到你的 LINE user ID（群組裡請私訊機器人查）")];
   if (r.kind === "watchlist") return await watchlist(userId, index);
+  if (r.kind === "list") {
+    const list = await readJson<{ date: string | null; messages: unknown[] }>(r.file);
+    return list?.messages?.length ? list.messages : [text("清單還沒產生，請等今晚收盤資料更新後再試。")];
+  }
   if (r.kind === "none") return [text(`找不到「${r.query}」，請輸入股票代號（例如 2330）或名稱（例如 台積電）。`)];
   if (r.kind === "choices") return [choicesMessage(r.ids, index)];
   const shard = await readJson<Record<string, unknown>>(`${shardOf(r.id)}.json`);

@@ -42,6 +42,8 @@ test("自選與我的ID", () => {
   assert.deepEqual(lookup("自選", index), { kind: "watchlist" });
   assert.deepEqual(lookup("自選股", index), { kind: "watchlist" });
   assert.deepEqual(lookup("我的ID", index), { kind: "myid" });
+  assert.deepEqual(lookup("葛蘭碧", index), { kind: "list", file: "granville.json" });
+  assert.deepEqual(lookup("動能股", index), { kind: "list", file: "momentum.json" });
 });
 
 test("帳號設定", () => {

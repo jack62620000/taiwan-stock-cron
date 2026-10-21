@@ -9,10 +9,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.db import get_stock_list, get_recent_closes, get_recent_ins, get_watchlist, get_paper_trades
 from utils.granville import (
     RULES, STABLE_RULES, CONFIRMS, HOLD_HINT, WATCH_DAYS, WATCH_STATUS, LATE_STATUS, CHOP_DAYS, CHOP_CROSSES,
-    STOP_LOSS_PCT, STOP_RULE, ATR_MULT, ATR_DAYS, RS_DAYS, stop_price, granville_signals, ma_cross_counts, next_day_triggers, relative_strength, rule1_watchlist, rule_frames, watch_note,
+    STOP_LOSS_PCT, STOP_RULE, ATR_MULT, ATR_DAYS, RS_DAYS, granville_signals, ma_cross_counts, next_day_triggers, relative_strength, rule1_watchlist, rule_frames, watch_note,
 )
 from utils.watch import add_watch_form
-from utils.analysis import load_atr
+from utils.analysis import granville_buy_table, load_atr
 from utils.groups import current_group
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
 require_login()
@@ -505,50 +505,8 @@ with tab_plan:
             crosses = ma_cross_counts(prices, ma_days)
             rs = relative_strength(prices)
             atrs = load_atr(tuple(sorted(cand["stock_id"])))
-            rows = []
-            for r in cand.itertuples():
-                left = WATCH_DAYS - int(r.days_since)
-                price = pct = None
-                if r.status == "今天出現法則2":
-                    state, order = "✅ 明天開盤可買", 0
-                    note = f"今天已出現法則 2，回測建議持有 {lo}～{hi} 個交易日"
-                elif r.stock_id in trig.index:
-                    state, order = "⏳ 等待法則2", 1
-                    price, pct = float(trig.at[r.stock_id, "trigger_price"]), float(trig.at[r.stock_id, "trigger_pct"])
-                    note = (f"明天收盤 ≥ {price:,.2f} 元（漲 {pct:.2f}% 以上）就出現法則 2" if pct > 0 else
-                            f"明天收盤只要不低於 {price:,.2f} 元（跌幅在 {-pct:.2f}% 以內）就出現法則 2")
-                    note += f"（還剩 {left} 個交易日）"
-                    chart_triggers[r.stock_id] = (price, f"收盤 ≥ {price:,.2f} 出現法則2")
-                else:
-                    state, order = "👀 觀察中", 2
-                    if r.r2_c1 != "符合":
-                        note = "均線還沒穩定上揚，明天不會出現法則 2"
-                    elif r.r2_c4 != "符合":
-                        note = "月線還在季線之下，明天不會出現法則 2"
-                    elif r.close_price < ma_now.get(r.stock_id, float("nan")):
-                        note = f"目前在均線（約 {ma_now[r.stock_id]:,.2f} 元）之下，明天漲停也站不回，暫時不會出現法則 2"
-                    elif r.r2_c2 != "符合":
-                        note = f"還沒回檔：要先跌破均線（約 {ma_now.get(r.stock_id, float('nan')):,.2f} 元）再站回，才會出現法則 2"
-                    else:
-                        note = "法則 2 的條件還沒到齊，明天不會出現"
-                    note += f"（還剩 {left} 個交易日）"
-                n_cross = int(crosses.get(r.stock_id, 0))
-                rs_v = rs.get(r.stock_id, float("nan"))
-                # 停損價以預計買進價計算：等待法則2 用觸發價，其餘用最新收盤（明天開盤價未知）
-                ref = price if price is not None else float(r.close_price)
-                stop = stop_price(ref, atrs.get(r.stock_id))
-                rows.append({"order": order, "狀態": state, "代號": r.stock_id, "名稱": r.stock_name,
-                             "比大盤%": rs_v, "停損價": stop, "每張風險": round((ref - stop) * 1000),
-                             "趨勢": "🌊 盤整" if n_cross >= CHOP_CROSSES else "📈 明確", "穿越均線": n_cross,
-                             "產業": r.industry, "最新收盤": r.close_price, "觸發價": price, "距離%": pct,
-                             "法則1日期": r.setup_date, "說明": note})
-            buy_df = pd.DataFrame(rows)
-            buy_df["abs_pct"] = buy_df["距離%"].abs()
-            buy_df["weak"] = ~(buy_df["比大盤%"] > 0)
-            buy_df["neg_rs"] = -buy_df["比大盤%"]
-            buy_df = buy_df.sort_values(["order", "weak", "abs_pct", "neg_rs", "代號"])[
-                ["狀態", "代號", "名稱", "產業", "最新收盤", "觸發價", "距離%", "停損價", "每張風險", "比大盤%",
-                 "趨勢", "穿越均線", "法則1日期", "說明"]]
+            buy_df, buy_triggers = granville_buy_table(cand, trig, ma_now, crosses, rs, atrs)
+            chart_triggers.update(buy_triggers)
             m1, m2, m3 = st.columns(3)
             m1.metric("明天開盤可買", f"{(buy_df['狀態'] == '✅ 明天開盤可買').sum()} 檔")
             m2.metric("有觸發價、等待法則2", f"{(buy_df['狀態'] == '⏳ 等待法則2').sum()} 檔")
