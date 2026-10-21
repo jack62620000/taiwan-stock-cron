@@ -159,6 +159,13 @@ def _lv(lv):
     return f"（{lv[0]}）" if lv and lv[0] != "N/A" else ""
 
 
+def _summary_rows(s):
+    """區塊總結一列：整體偏多／偏弱／多空交錯（幾紅幾綠幾金）；沒有燈號不顯示"""
+    if not s or not s.get("total"):
+        return []
+    return [_row("總結", f"{s['verdict']}（{s['red']} 紅 {s['green']} 綠 {s['gold']} 金）", LAMP_COLOR[s["lamp"]])]
+
+
 def _chip_rows(name, c, lamp):
     """法人近 10 日買賣超（張）與趨勢（由賣轉買、買超加速…）兩列；趨勢顏色是回測燈號"""
     if not c:
@@ -231,6 +238,7 @@ def stock_bubble(sid, a):
     rv, rl = m["rev_tr"], m["rev_lamps"]
     rev = _num(r.get("revenue")) if len(r) else None
     body += _section(f"③ 營收表現（{r.get('year_month', '最新月') if len(r) else '最新月'}）", [
+        *_summary_rows(m.get("rev_summary")),
         _row("月營收", _f(rev / 1000 if rev else None, " 百萬", 1)),
         _row("年增率", _f(r.get("yoy_growth") if len(r) else None, "%") + _lv(rl["yoy"]), _sign_color(r.get("yoy_growth") if len(r) else None)),
         _row("月增率", _f(r.get("mom_growth") if len(r) else None, "%"), _sign_color(r.get("mom_growth") if len(r) else None)),
@@ -244,6 +252,7 @@ def stock_bubble(sid, a):
     h = m["latest_holder"]
     hold_chg = m["hold_chg_20"]
     body += _section("④ 籌碼面（近 10 日累計＋買賣趨勢）", [
+        *_summary_rows(m.get("chip_summary")),
         *[r for name in ("外資", "投信", "自營商") for r in _chip_rows(name, m["chips"].get(name), m["chip_lamps"][name])],
         _row("大戶持股比例", _f(h.get("big_holder_ratio") if len(h) else None, "%") +
              (f"（{m['big_weeks']}週 {m['big_chg']:+.2f}）" if m["big_chg"] is not None else ""), LAMP_COLOR[m["big_lamp"][0]]),
@@ -253,6 +262,7 @@ def stock_bubble(sid, a):
     # ⑤ 資金面
     mg, u = m["latest_margin"], m["latest_util"]
     body += _section("⑤ 資金面（融資融券）", [
+        *_summary_rows(m.get("fund_summary")),
         _row("融資餘額", _f(mg.get("margin_balance") if len(mg) else None, " 張", 0)),
         *_balance_rows(m["margin_tr"]),
         _row("融資使用率", _f(u.get("margin_rate") if len(u) else None, "%")),
@@ -260,7 +270,8 @@ def stock_bubble(sid, a):
         *_balance_rows(m["short_tr"]),
         _row("融券使用率", _f(u.get("short_rate") if len(u) else None, "%")),
         _row("券資比", _f(m["short_margin_ratio"], "%", 1) + _lv(m["short_level"]), LAMP_COLOR[m["short_level"][1]]),
-    ] + ([_text(f"💡 近 20 日{m['margin_hint']}", size="xs", color=GRAY, margin="sm")] if m["margin_hint"] else []))
+    ] + ([_text(f"💡 近 20 日{m['margin_hint']}", size="xs", color=LAMP_COLOR.get(m.get("margin_hint_lamp"), GRAY), margin="sm")]
+         if m["margin_hint"] else []))
     # ⑥ 技術面燈號（顏色同分析卡：偏多紅、偏空或過熱綠、中性金）
     pos = _num(m["position_pct"]) or 0
     pos_name, pos_cls, _ = m["position_level"]
