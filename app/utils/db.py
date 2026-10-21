@@ -392,6 +392,20 @@ def get_momentum_latest():
     """全市場最新一天的趨勢模板、52 週新高突破判斷"""
     return _latest_snapshot("momentum_signals", "date")
 
+def get_momentum_events(since):
+    """since 之後出現過的動能訊號（52 週新高＋量增、剛符合趨勢模板；只有 20 日均量夠的股票），依日期排序。
+    momentum.py 只把有訊號的列多留一個月，給每日選股頁的事後追蹤用"""
+    cols = "stock_id, date, close_price, trend_template, trend_new, breakout"
+    frames = [pd.DataFrame(_fetch_all(lambda c=c: supabase.table("momentum_signals").select(cols)
+                                      .gte("date", since).eq("liquid", True).eq(c, True)
+                                      .order("date").order("stock_id")))
+              for c in ("breakout", "trend_new")]
+    frames = [f for f in frames if not f.empty]
+    if not frames:
+        return pd.DataFrame(columns=[c.strip() for c in cols.split(",")])
+    df = pd.concat(frames, ignore_index=True).drop_duplicates(["stock_id", "date"])
+    return df.sort_values(["date", "stock_id"], ignore_index=True)
+
 # ===== 資料更新狀態 =====
 # (顯示名稱, 資料表, 日期欄位, 頻率)；有 stock_id 的表用權值股查最新日期，其餘直接排序（表都很小）
 DATA_TABLES = [

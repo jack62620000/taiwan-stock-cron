@@ -13,6 +13,7 @@ from utils.db import (
 from utils.watch import add_watch_form, add_watch_button
 from utils.granville import STOP_RULE
 from utils.momentum import BACKTEST_MD, RULES_MD, momentum_choices, momentum_table
+from utils.analysis import FOLLOW_DAYS, MOMENTUM_FOLLOW_PICKS, momentum_followup, render_followup
 from utils.ui import require_login, render_metric_cards, style_sign, UP_COLOR, DOWN_COLOR
 require_login()
 
@@ -66,6 +67,10 @@ def load_momentum():
         df[c] = pd.to_numeric(df[c], errors="coerce")
     info = get_stock_list(include_delisted=True)[["stock_id", "stock_name", "industry", "market"]]
     return df.merge(info, on="stock_id", how="left")
+
+@st.cache_data(ttl=3600)
+def load_momentum_followup():
+    return momentum_followup()
 
 @st.cache_data(ttl=3600)
 def load_performance(top_n, horizon):
@@ -469,6 +474,26 @@ with tab_momentum:
         with st.expander("📖 條件說明與回測結果"):
             st.markdown(RULES_MD)
             st.markdown(BACKTEST_MD)
+
+    # ===== 事後追蹤：最近出現過的動能訊號，之後實際漲跌多少 =====
+    st.subheader("🧾 事後追蹤")
+    st.caption(f"最近 {FOLLOW_DAYS} 個交易日出現過的動能訊號，之後實際漲跌多少，用來看最近的訊號準不準。"
+               "回測看的是 20、60 日，幾天內的漲跌只能當參考。")
+    try:
+        f_date, follow = load_momentum_followup()
+    except Exception:
+        follow = None
+        st.warning("事後追蹤資料暫時讀取失敗，請稍後按「強制重新整理」再看一次。")
+    if follow is not None and follow.empty:
+        st.info(f"最近 {FOLLOW_DAYS} 個交易日還沒有動能訊號紀錄（訊號紀錄從開始保留那天起慢慢累積）。")
+    elif follow is not None:
+        f_pick = st.radio("訊號", MOMENTUM_FOLLOW_PICKS, horizontal=True, key="momentum_follow_pick")
+        f_view = follow[follow["signal"].str.contains(f_pick, regex=False)]
+        if f_view.empty:
+            st.info(f"最近 {FOLLOW_DAYS} 個交易日沒有「{f_pick}」的訊號。")
+        else:
+            st.caption(f"資料日期：{f_date}（收盤後），「{f_pick}」共 {len(f_view)} 個訊號。")
+            render_followup(f_view, {"signal": st.column_config.TextColumn("訊號", width="medium")})
 
 st.markdown("---")
 st.caption("⚠️ 本系統資料僅供參考，不構成投資建議。投資有風險，請謹慎評估。")

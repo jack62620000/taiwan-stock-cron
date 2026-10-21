@@ -12,6 +12,11 @@ on:
         required: false
         type: string
         default: ''
+      target:
+        description: '要回補哪一種（動能選股：趨勢模板、52 週新高突破）'
+        type: choice
+        options: ['評分', '動能選股', '兩者']
+        default: '評分'
 
 concurrency:
   group: signals-backfill
@@ -31,9 +36,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Run signal scoring backfill
+        if: github.event.inputs.target != '動能選股'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SIGNALS_START: ${{ github.event.inputs.start_date }}
           SIGNALS_END: ${{ github.event.inputs.end_date }}
         run: python signals.py
+      - name: Run momentum screening backfill
+        if: github.event.inputs.target != '評分'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          MOMENTUM_START: ${{ github.event.inputs.start_date }}
+          MOMENTUM_END: ${{ github.event.inputs.end_date }}
+        run: python momentum.py

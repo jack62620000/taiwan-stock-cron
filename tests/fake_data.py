@@ -81,7 +81,7 @@ def build_tables():
                 "ma200": c * (0.85 if up else 1.1), "ma200_prev": c * (0.83 if up else 1.12),
                 "high_52w": c * 1.02, "low_52w": c * 0.6, "rs_rating": 90 if up else 30, "vol_ratio": 2.0,
                 "atr14": c * 0.03, "trend_checks": 8 if up else 3, "trend_template": up, "trend_new": up and j == 4,
-                "new_high": up, "breakout": up and j == 4, "liquid": True})
+                "new_high": up, "breakout": up and j in (1, 4), "liquid": True})
     # 測試帳號 tester 的分組、自選股與模擬持股（一筆持有中、一筆已賣出）
     t["watch_groups"].append({"id": 1, "owner": "tester", "name": "我的自選股", "created_at": days[0] + "T03:00:00+00:00"})
     for sid in ("2330", "2317", "3583"):

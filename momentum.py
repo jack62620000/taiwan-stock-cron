@@ -44,6 +44,7 @@ BREAKOUT_VOL = 1.5        # 突破當天成交量至少是前 50 日均量的倍
 BREAKOUT_GAP = 10         # 前幾個交易日內已突破過就不重複算
 ATR_DAYS = 14
 KEEP_DAYS = 5             # 資料表只保留最近這麼多個交易日（網頁只看最新一天；資料庫免費額度 500 MB，盡量省空間）
+EVENT_KEEP_DAYS = 30      # 有訊號的列（新高突破、剛符合趨勢模板）多留這麼多個交易日，給每日選股頁的事後追蹤（每天約十幾～幾十列）
 BATCH_SIZE = 500
 STOCK_PATTERN = r"^[1-9]\d{3}$"   # 一般股票（排除 ETF、權證）
 
@@ -166,6 +167,23 @@ def save(sb, rows):
     return failed
 
 
+def prune(sb, all_dates):
+    """
+    全部股票只保留最近 KEEP_DAYS 個交易日；更早的只留有訊號的列（20 日均量夠，而且新高突破或剛符合趨勢模板），
+    保留到 EVENT_KEEP_DAYS 個交易日，再更早的全部刪除
+    """
+    table = lambda: sb.table("momentum_signals").delete(returning="minimal")  # noqa: E731
+    if len(all_dates) > EVENT_KEEP_DAYS:
+        cutoff = all_dates[-EVENT_KEEP_DAYS]
+        _execute(lambda: table().lt("date", cutoff))
+        print(f"  已刪除 {cutoff} 以前的資料")
+    if len(all_dates) > KEEP_DAYS:
+        cutoff = all_dates[-KEEP_DAYS]
+        _execute(lambda: table().lt("date", cutoff).eq("liquid", False))
+        _execute(lambda: table().lt("date", cutoff).eq("breakout", False).eq("trend_new", False))
+        print(f"  {cutoff} 以前只保留有訊號的列")
+
+
 def main():
     parser = argparse.ArgumentParser(description="動能選股（趨勢模板、52 週新高突破）")
     parser.add_argument("--start", default=os.getenv("MOMENTUM_START", "").strip() or None)
@@ -188,15 +206,11 @@ def main():
         print(f"  {d}：{len(day)} 檔，趨勢模板 {sum(r['trend_template'] for r in day)} 檔"
               f"（剛進入 {sum(r['trend_new'] for r in day)}）、新高突破 {sum(r['breakout'] for r in day)} 檔")
 
-    # 只保留最近 KEEP_DAYS 個交易日
-    if len(all_dates) > KEEP_DAYS:
-        cutoff = all_dates[-KEEP_DAYS]
-        try:
-            _execute(lambda: sb.table("momentum_signals").delete(returning="minimal").lt("date", cutoff))
-            print(f"  已刪除 {cutoff} 以前的資料")
-        except Exception as e:
-            _error(f"刪除舊資料失敗（今天的結果已寫入）：{e}")
-            failed += 1
+    try:
+        prune(sb, all_dates)
+    except Exception as e:
+        _error(f"刪除舊資料失敗（今天的結果已寫入）：{e}")
+        failed += 1
 
     if failed:
         _error(f"有 {failed} 筆寫入失敗")
