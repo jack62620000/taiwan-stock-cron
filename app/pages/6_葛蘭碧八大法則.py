@@ -14,7 +14,7 @@ from utils.granville import (
 )
 from utils.watch import add_watch_form
 from utils.analysis import (
-    FOLLOW_DAYS, granville_buy_table, granville_followup, granville_rebound_table, load_atr, render_followup, render_market_warning,
+    FOLLOW_DAYS, granville_buy_table, granville_followup, granville_rebound_table, rebound_followup, load_atr, render_followup, render_market_warning,
 )
 from utils.groups import current_group
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
@@ -649,6 +649,11 @@ def load_followup():
     return granville_followup()
 
 
+@st.cache_data(ttl=3600)
+def load_rebound_followup():
+    return rebound_followup()
+
+
 with tab_follow:
     st.caption(f"最近 {FOLLOW_DAYS} 個交易日出現過的法則 2 買點（「準備買進」表裡「今天出現法則2」的股票），"
                f"之後實際漲跌多少，用來看最近的訊號準不準。固定用預設參數（20 日均線、20 日均量 ≥ 500 張），"
@@ -667,3 +672,21 @@ with tab_follow:
     elif follow is not None:
         st.caption(f"資料日期：{f_date}（收盤後），共 {len(follow)} 個買點。")
         render_followup(follow, {"industry": st.column_config.TextColumn("產業", width="small")})
+
+    st.divider()
+    st.markdown("**🔵 急跌反彈候選（法則 4）**")
+    st.caption(f"最近 {FOLLOW_DAYS} 個交易日剛出現法則 4（均線往下、收盤離均線 10% 以上）的股票，隔天開盤買進到今天漲跌多少。"
+               "同一檔連續好幾天都符合只算第一天。回測持有 20 個交易日比平均好約 2%，但勝率只有四成多。")
+    r_date, rebound = None, None
+    if st.toggle("顯示急跌反彈的事後追蹤", key="rebound_followup", help="第一次要重算，約幾秒；之後一小時內直接顯示"):
+        try:
+            with st.spinner("計算最近的法則 4…"):
+                r_date, rebound = load_rebound_followup()
+        except Exception:
+            st.warning("事後追蹤資料暫時讀取失敗，請稍後按「強制重新整理」再看一次。")
+    if rebound is not None and rebound.empty:
+        st.info(f"最近 {FOLLOW_DAYS} 個交易日沒有剛出現法則 4 的股票。")
+    elif rebound is not None:
+        st.caption(f"資料日期：{r_date}（收盤後），共 {len(rebound)} 檔。")
+        render_followup(rebound, {"industry": st.column_config.TextColumn("產業", width="small"),
+                                  "bias": st.column_config.NumberColumn("出現時乖離%", format="%+.2f")})

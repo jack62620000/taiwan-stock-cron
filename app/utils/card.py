@@ -123,6 +123,29 @@ CUM_YOY_LEVELS = [  # 今年累計營收年增率（%）
     (0, "持平", "neu", "累計年增 0～20%，回測和平均一樣"),
     (INF, "衰退", "bear", "累計年減，回測比平均差"),
 ]
+# 基本面（季報在法定公布期限後才算可用；2025-02～2026-10，前後兩段都一致才給紅綠燈）
+EPS_YOY_LEVELS = [  # EPS 年增率（年初累計和去年同期比，%）
+    (50, "大幅成長", "bull", "EPS 比去年同期多 50% 以上，回測比平均好"),
+    (0, "成長", "neu", "EPS 年增 0～50%，回測和平均差不多"),
+    (INF, "衰退", "bear", "EPS 比去年同期少，回測比平均差"),
+]
+ROE_LEVELS = [  # ROE 年化（年初累計 × 4 ÷ 季別，%）
+    (15, "高", "bull", "年化 ROE 15% 以上，回測比平均好"),
+    (5, "普通", "neu", "年化 ROE 5～15%，回測和平均差不多"),
+    (INF, "偏低", "bear", "年化 ROE 不到 5%（含虧損），回測比平均差"),
+]
+PE_LEVELS = [  # 本益比（倍）；虧損另外標
+    (40, "很高", "neu", "40 倍以上前段和平均一樣、後段才較好，不穩定"),
+    (25, "偏高", "bull", "25～40 倍回測反而比平均好（市場願意給高本益比的多是成長股）"),
+    (15, "一般", "neu", "15～25 倍回測和平均差不多"),
+    (10, "偏低", "bear", "10～15 倍回測反而比平均差"),
+    (INF, "很低", "bear", "10 倍以下回測明顯比平均差（多是成長停滯或景氣循環股），便宜不代表會漲"),
+]
+PB_LEVELS = [  # 股價淨值比（倍）
+    (6, "很高", "bull", "6 倍以上回測比平均好（市場看好的成長股）"),
+    (1, "一般", "neu", "1～6 倍回測和平均差不多"),
+    (INF, "低於淨值", "bear", "股價低於每股淨值，回測比平均差"),
+]
 SHORT_RATIO_LEVELS = [  # 券資比（%）
     (20, "很高", "bull", "券資比 20% 以上，回測比平均好，但後段時間差距縮小、波動大"),
     (5, "偏高", "bull", "券資比 5～20%，回測明顯比平均好（空單回補的買盤）"),
@@ -385,6 +408,18 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         if annual_eps and annual_eps > 0 and close:
             pe_ratio = round(close / annual_eps, 2)
 
+    # ===== EPS 年增率、年化 ROE（基本面回測燈號用）=====
+    eps_yoy, roe_ann = None, None
+    if not quarterly.empty:
+        eps_now = pd.to_numeric(last_q.get("eps"), errors="coerce")
+        same = pd.to_numeric(q_sorted[(q_sorted["year"] == q_year - 1) & (q_sorted["quarter"] == q_num)]["eps"],
+                             errors="coerce").dropna()
+        if pd.notna(eps_now) and not same.empty and same.iloc[-1] != 0:
+            eps_yoy = float((eps_now - same.iloc[-1]) / abs(same.iloc[-1]) * 100)
+        roe_q = pd.to_numeric(last_q.get("roe"), errors="coerce")
+        if pd.notna(roe_q) and q_num > 0:
+            roe_ann = float(roe_q * 4 / q_num)
+
     # ===== P/B 用最新收盤價現算（資料庫存的是抓季報當下的股價）=====
     book_value = latest_q.get("book_value")
     if book_value is not None and pd.notna(book_value) and book_value > 0 and close:
@@ -476,6 +511,18 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
                                 + [cls for _, _, cls, _, _ in extra_tech])
     # ③～⑤ 只數畫面上有顯示的燈號（算不出來的、沒有標籤的金色不算）
     shown = lambda *cls: [c for c in cls if c in ("bull", "bear")]  # noqa: E731
+    nan = float("nan")
+    if pe_ratio:
+        pe_lv = level(PE_LEVELS, pe_ratio)
+    elif not quarterly.empty and annual_eps is not None and annual_eps <= 0:
+        pe_lv = ("虧損", "bear", "近 4 季虧損、沒有本益比，回測比平均差")
+    else:
+        pe_lv = ("N/A", "neu", "")
+    pb_num = pd.to_numeric(pb_now, errors="coerce") if pb_now is not None else nan
+    basic_lamps = {"eps_yoy": level(EPS_YOY_LEVELS, eps_yoy if eps_yoy is not None else nan),
+                   "roe": level(ROE_LEVELS, roe_ann if roe_ann is not None else nan),
+                   "pe": pe_lv, "pb": level(PB_LEVELS, pb_num if pd.notna(pb_num) else nan)}
+    basic_summary = lamp_summary([lv[1] for lv in basic_lamps.values() if lv[0] != "N/A"])
     rev_summary = lamp_summary(
         [lv[1] for lv in (rev_lamps["yoy"], rev_lamps["yoy3"], rev_lamps["cum"]) if lv[0] != "N/A"]
         + shown(rev_lamps["rank"][0], rev_lamps["streak"][0]))
@@ -516,6 +563,10 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         "q_label": q_label,
         "book_value": book_value,
         "pb_now": pb_now,
+        "eps_yoy": eps_yoy,
+        "roe_ann": roe_ann,
+        "basic_lamps": basic_lamps,
+        "basic_summary": basic_summary,
         "rsi_val": rsi_val,
         "rsi_status": rsi_status,
         "rsi_note": rsi_note,

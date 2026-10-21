@@ -357,6 +357,26 @@ def granville_followup(days=FOLLOW_DAYS):
     return latest, signal_followup(events, px, load_followup_indexes(days + 5))
 
 
+def rebound_followup(days=FOLLOW_DAYS):
+    """
+    葛蘭碧頁「事後追蹤」的急跌反彈：最近 days 個交易日剛出現法則 4 的股票（預設參數、20 日均量 ≥ 500 張），
+    隔天開盤買進到今天的漲跌。回傳 (資料日期, 表格)
+    """
+    from utils.db import get_recent_closes, get_stock_list
+    from utils.granville import rule4_events
+    prices = get_recent_closes(calendar_days=100, columns="stock_id, date, close_price, volume")
+    if prices.empty:
+        return None, pd.DataFrame()
+    events = rule4_events(prices, min_volume=GRANVILLE_MIN_VOLUME, days=days, **GRANVILLE_DEFAULTS)
+    latest = prices["date"].max()
+    if events.empty:
+        return latest, events
+    events = events.merge(get_stock_list()[["stock_id", "stock_name", "industry", "market"]], on="stock_id",
+                          how="inner")
+    px = load_followup_prices(tuple(sorted(events["stock_id"].unique())), events["signal_date"].min())
+    return latest, signal_followup(events, px, load_followup_indexes(days + 5))
+
+
 MOMENTUM_FOLLOW_PICKS = ["兩者同時", "52 週新高＋量增", "剛符合趨勢模板"]
 
 

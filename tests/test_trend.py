@@ -155,3 +155,12 @@ def test_lamp_summary():
     assert lamp_summary(["bear", "bear"])["lamp"] == "bear" and lamp_summary([])["total"] == 0
     assert margin_hint_lamp(100, 5) == "bull" and margin_hint_lamp(100, -5) == "bear"
     assert margin_hint_lamp(-100, 5) == "neu" and margin_hint_lamp(-100, -5) == "bear" and margin_hint_lamp(None, 5) is None
+
+
+def test_basic_levels():
+    from utils.card import EPS_YOY_LEVELS, ROE_LEVELS, PE_LEVELS, PB_LEVELS
+    from utils.indicators import level
+    assert level(EPS_YOY_LEVELS, 60)[1] == "bull" and level(EPS_YOY_LEVELS, 10)[1] == "neu" and level(EPS_YOY_LEVELS, -5)[1] == "bear"
+    assert level(ROE_LEVELS, 18)[1] == "bull" and level(ROE_LEVELS, -3)[1] == "bear"
+    assert [level(PE_LEVELS, v)[1] for v in (8, 12, 20, 30, 50)] == ["bear", "bear", "neu", "bull", "neu"]
+    assert level(PB_LEVELS, 0.8)[1] == "bear" and level(PB_LEVELS, 7)[1] == "bull" and level(PB_LEVELS, float("nan"))[0] == "N/A"

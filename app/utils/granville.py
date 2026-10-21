@@ -322,6 +322,33 @@ def rule2_events(prices, ins=None, min_volume=500, days=20, watch_days=WATCH_DAY
     return out.sort_values(["signal_date", "stock_id"], ascending=[False, True], ignore_index=True)
 
 
+def rule4_events(prices, min_volume=500, days=20, **rule_params):
+    """
+    最近 days 個交易日「剛出現」法則 4（急跌、負乖離過大；前一個交易日還沒有）的股票，給急跌反彈的事後追蹤用。
+    同一檔連續好幾天都符合時只算第一天。20 日均量要 ≥ min_volume 張（同買賣預告）。
+    回傳 stock_id、signal_date、bias（當天乖離率 %），依出現日由新到舊。
+    """
+    cols = ["stock_id", "signal_date", "bias"]
+    if prices.empty:
+        return pd.DataFrame(columns=cols)
+    close = _pivot(prices, "close_price")
+    frames = rule_frames(close, **rule_params)
+    hit = frames["hits"][4]
+    start = hit & ~hit.shift(1, fill_value=False)
+    if "volume" in prices.columns:
+        vol = _pivot(prices, "volume").reindex(index=close.index, columns=close.columns)
+        start &= vol.fillna(0).rolling(20, min_periods=20).mean() / 1000 >= min_volume
+    recent = start.iloc[-days:]
+    out = recent.stack()
+    out = out[out].reset_index()
+    if out.empty:
+        return pd.DataFrame(columns=cols)
+    out.columns = ["signal_date", "stock_id", "_"]
+    bias = frames["bias"]
+    out["bias"] = [round(float(bias.at[d, s]), 2) for d, s in zip(out["signal_date"], out["stock_id"])]
+    return out[cols].sort_values(["signal_date", "stock_id"], ascending=[False, True], ignore_index=True)
+
+
 # =====================================================================
 # 下一個交易日的觸發價：明天收盤到多少，就會出現某條法則
 # =====================================================================
