@@ -53,8 +53,11 @@ $$;
 alter function public.signal_performance(integer, integer) set search_path = public;
 alter function public.prune_daily_signals(integer, integer, integer) set search_path = public;
 
--- 每日選股訊號頁的回測統計：每個評分日的前 top_n 名，horizon 個交易日後的平均報酬（已還原權值）
--- 2026-10 改寫取評分日的方式：逐一跳到下一個日期（走日期索引），不必讀整張表，結果與原本完全相同
+-- 每日選股訊號頁的回測統計：每個評分日的前 top_n 名 vs 全市場（20 日均量夠的股票）平均報酬（已還原權值）
+-- 2026-10 改寫取評分日的方式：逐一跳到下一個日期（走日期索引），不必讀整張表
+-- 2026-10 改成實際做得到的買法：分數收盤後才算得出來，所以「評分隔天收盤買進」，持有 horizon 個交易日後收盤賣出
+--   （原本用評分當天收盤價買，實際買不到）。date 是評分日、fwd_date 是賣出日；交易成本由網頁扣除。
+--   用隔天開盤價要查 daily_prices，全表 8 萬次查詢約 2.5 秒，容易超過 API 逾時，所以用 daily_signals 裡的收盤價（約 0.5 秒）
 create or replace function public.signal_performance(top_n integer default 20, horizon integer default 5)
 returns table(date date, fwd_date date, top_return numeric, market_return numeric, top_count integer)
 language sql stable
@@ -66,20 +69,24 @@ as $function$
     select (select min(x.date) from public.daily_signals x where x.date > d.date)
     from d where d.date is not null
   ), dd as (
-    select d.date, lead(d.date, horizon) over (order by d.date) as fwd_date from d where d.date is not null
+    select d.date,
+           lead(d.date, 1) over (order by d.date) as buy_date,
+           lead(d.date, horizon + 1) over (order by d.date) as fwd_date
+    from d where d.date is not null
   ), adj as (
     select a.stock_id, dd.date, exp(sum(ln(a.factor))) as factor
     from dd
-    join public.price_adjustments a on a.date > dd.date and a.date <= dd.fwd_date
+    join public.price_adjustments a on a.date > dd.buy_date and a.date <= dd.fwd_date
     group by a.stock_id, dd.date
   )
   select s.date,
          dd.fwd_date,
-         round(avg(f.close_price / s.close_price / coalesce(adj.factor, 1) - 1) filter (where s.rank <= top_n) * 100, 2) as top_return,
-         round(avg(f.close_price / s.close_price / coalesce(adj.factor, 1) - 1) * 100, 2) as market_return,
+         round(avg(f.close_price / b.close_price / coalesce(adj.factor, 1) - 1) filter (where s.rank <= top_n) * 100, 2) as top_return,
+         round(avg(f.close_price / b.close_price / coalesce(adj.factor, 1) - 1) * 100, 2) as market_return,
          (count(*) filter (where s.rank <= top_n))::int as top_count
   from public.daily_signals s
   join dd on dd.date = s.date and dd.fwd_date is not null
+  join public.daily_signals b on b.stock_id = s.stock_id and b.date = dd.buy_date and b.close_price > 0
   join public.daily_signals f on f.stock_id = s.stock_id and f.date = dd.fwd_date
   left join adj on adj.stock_id = s.stock_id and adj.date = s.date
   where s.liquid and s.close_price > 0
