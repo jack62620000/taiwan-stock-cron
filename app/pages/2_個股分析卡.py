@@ -13,7 +13,7 @@ from utils.db import (
 )
 from utils.analysis import granville_status
 from utils.card import card_metrics, trend_text, load_card_data as _load_card_data
-from utils.indicators import STRONG, WEAK
+from utils.indicators import LAMP
 from utils.granville import STOP_RULE
 from utils.momentum import BACKTEST_MD, RULES_MD, momentum_summary
 from utils.groups import current_group
@@ -96,8 +96,8 @@ def cross_html(key):
 
 
 def zone_cls(status):
-    """RSI、KD：強勢區紅、弱勢區綠、正常金"""
-    return {STRONG: "bull", WEAK: "bear"}.get(status, "neu")
+    """RSI、KD 狀態的燈號：偏多紅、過熱或偏空綠、中性金"""
+    return LAMP.get(status, "neu")
 
 
 
@@ -274,7 +274,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
     <div class="tb">
       <div class="tlb">RSI</div>
       <div class="tbdg {zone_cls(rsi_status)}">{fmt(rsi_val)}</div>
-      <div class="tdd">{rsi_status}</div>{trend_html("RSI")}
+      <div class="tdd">{rsi_status}：{m["rsi_note"]}</div>{trend_html("RSI")}
     </div>
     <div class="tb">
       <div class="tlb">KD</div>

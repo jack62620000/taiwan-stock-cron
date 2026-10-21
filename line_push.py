@@ -131,9 +131,9 @@ def _row(label, value, color=None):
 
 
 def zone_color(status):
-    """RSI、KD：強勢區紅、弱勢區綠、正常金（同網頁分析卡）"""
-    from utils.indicators import STRONG, WEAK
-    return {STRONG: UP, WEAK: DOWN}.get(status, GOLD)
+    """RSI、KD 狀態的顏色：偏多紅、過熱或偏空綠、中性金（同網頁分析卡）"""
+    from utils.indicators import LAMP
+    return {"bull": UP, "bear": DOWN}.get(LAMP.get(status), GOLD)
 
 
 def _cross_rows(c):

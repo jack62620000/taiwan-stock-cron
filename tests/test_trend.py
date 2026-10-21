@@ -43,3 +43,10 @@ def test_cross_state():
     assert cross_state(pd.Series([1, 2, -1]), "K", "D") == ("↓", "K 在 D 下方，往下（今天死亡交叉）")
     assert cross_state(pd.Series([1, 2, 3]), "K", "D") == ("↑", "K 在 D 上方，往上")  # 期間內沒交叉過
     assert cross_state(pd.Series([1.0]), "K", "D") is None
+
+
+def test_rsi_five_levels():
+    from utils.indicators import LAMP, rsi_level
+    assert [rsi_level(v)[0] for v in (95, 90, 80, 60, 40, 30, 10)] == ["超買", "超買", "強勢", "偏強", "偏弱", "偏弱", "超賣"]
+    assert rsi_level(float("nan")) == ("N/A", "")
+    assert LAMP["超買"] == "bear" and LAMP["強勢"] == "bull" and LAMP["偏強"] == "neu"

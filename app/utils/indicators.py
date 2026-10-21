@@ -20,6 +20,26 @@ def zone(value, high, low):
     return STRONG if value > high else WEAK if value < low else NORMAL
 
 
+# RSI 五級：(下限, 名稱, 燈號, 說明)，由高往低比對。燈號 bull 紅、bear 綠、neu 金
+# 中間三級依回測（20 日相對大盤，基準 −1.45%）：70～80 −0.75%、50～70 −1.42%、30～50 −1.79%、30 以下 −1.68%
+RSI_LEVELS = [
+    (90, "超買", "bear", "漲得太急，短線過熱，小心拉回"),
+    (70, "強勢", "bull", "買盤強，回測中之後常比一般股票強"),
+    (50, "偏強", "neu", "多方稍占上風"),
+    (30, "偏弱", "neu", "空方稍占上風"),
+    (float("-inf"), "超賣", "bear", "跌得很深，但不代表會反彈"),
+]
+LAMP = {STRONG: "bull", WEAK: "bear", **{name: lamp for _, name, lamp, _ in RSI_LEVELS}}
+
+
+def rsi_level(rsi):
+    """RSI → (名稱, 說明)"""
+    for low, name, _, note in RSI_LEVELS:
+        if rsi >= low:
+            return name, note
+    return "N/A", ""  # 算不出來（NaN）
+
+
 def calc_rsi(df, period=14):
     """計算 RSI"""
     if len(df) < period + 1:
@@ -127,9 +147,11 @@ def get_latest_signals(df):
     # RSI
     if last.get("RSI") is not None:
         rsi = last["RSI"]
+        status, note = rsi_level(rsi)
         signals["RSI"] = {
             "value": rsi,
-            "status": zone(rsi, 70, 30),
+            "status": status,
+            "note": note,
         }
 
     # MACD

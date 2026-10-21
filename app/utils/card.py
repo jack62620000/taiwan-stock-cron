@@ -169,6 +169,7 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
 
     rsi_val    = signals.get("RSI", {}).get("value")
     rsi_status = signals.get("RSI", {}).get("status", "N/A")
+    rsi_note   = signals.get("RSI", {}).get("note", "")
     kd_k       = signals.get("KD", {}).get("K")
     kd_d       = signals.get("KD", {}).get("D")
     kd_status  = signals.get("KD", {}).get("status", "N/A")
@@ -269,6 +270,7 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         "pb_now": pb_now,
         "rsi_val": rsi_val,
         "rsi_status": rsi_status,
+        "rsi_note": rsi_note,
         "kd_k": kd_k,
         "kd_d": kd_d,
         "kd_status": kd_status,
