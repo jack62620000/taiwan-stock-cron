@@ -70,9 +70,9 @@ def test_stock_card_shows_all_sections(use_db):
     heads = " ".join(h.value for h in at.subheader)
     for title in ["葛蘭碧分析", "每日選股評分", "動能條件", "股價走勢", "相對大盤強弱", "三大法人買賣超", "外資持股比率"]:
         assert title in heads
-    texts = " ".join(md.value for md in at.markdown)
-    assert "白話總結" in texts and "股價在" in texts
     assert "這頁在看什麼" in " ".join(i.value for i in at.info)
+    labels = [e.label for e in at.expander]
+    assert any("這頁怎麼看" in x for x in labels) and any("名詞小辭典" in x for x in labels)
 
 
 def test_add_to_watchlist_from_stock_card(use_db):

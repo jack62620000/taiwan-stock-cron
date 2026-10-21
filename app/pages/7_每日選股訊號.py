@@ -243,7 +243,7 @@ with tab_rank:
 """)
 
 # =====================================================================
-# 個股分數走勢 + AI 解讀
+# 個股分數走勢
 # =====================================================================
 with tab_stock:
     # 排行榜上的股票排在最前面，其餘依分數
@@ -284,43 +284,13 @@ with tab_stock:
         ).properties(height=320)
         st.altair_chart(chart, width="stretch")
 
-    b1, b2, b3 = st.columns(3)
-    with b3:
+    b1, b2 = st.columns(2)
+    with b2:
         add_watch_button(stock_id, row.get("stock_name", ""), "每日選股", date, "stock")
     with b1:
         if st.button("🗂️ 前往個股分析卡", width="stretch"):
             st.session_state["card_stock_id"] = stock_id
             st.switch_page("pages/2_個股分析卡.py")
-    with b2:
-        ask_ai = st.button("🤖 AI 解讀這檔股票", width="stretch")
-
-    if ask_ai:
-        try:
-            from utils.ai import quick_analysis
-        except Exception as e:
-            st.error(f"AI 功能無法使用（需要 groq 套件與 GROQ_API_KEY）：{e}")
-        else:
-            trend = ""
-            if not hist.empty:
-                recent = hist.tail(10)
-                trend = "、".join(f"{d[5:]}:{s}" for d, s in zip(recent["date"], recent["total_score"]))
-            context = f"""
-以下是 {row.get('stock_name', '')}（{stock_id}，{row.get('industry', '')}）在 {date} 的選股評分：
-- 總分 {row['total_score']} / 100（{rank_text}）
-- 籌碼 {row['chip_score']}/32、資金 {row['margin_score']}/8、基本面 {row['fund_score']}/35、技術 {row['tech_score']}/25
-- 收盤 {row['close_price']}，近5日 {row['change_5d']}%，近20日 {row['change_20d']}%，20日均量 {row['avg_volume_20']} 張
-- 加分理由：{'；'.join(row['reasons']) or '無'}
-- 風險提醒：{'；'.join(row['warnings']) or '無'}
-- 近 10 個評分日總分走勢：{trend or '無'}
-"""
-            question = (
-                "請根據以上評分，用繁體中文說明：1) 這檔股票目前最主要的強項是什麼；"
-                "2) 哪些面向偏弱或有風險；3) 分數走勢代表剛轉強還是已經強一段時間；"
-                "4) 接下來該觀察哪些數據來確認訊號。請精簡，不要給買賣建議。"
-            )
-            with st.spinner("AI 分析中…"):
-                st.markdown(quick_analysis(question, context))
-            st.caption("⚠️ AI 解讀僅供參考，不構成投資建議。")
 
 # =====================================================================
 # 規則回測（單一個股）
