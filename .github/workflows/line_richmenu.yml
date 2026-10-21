@@ -1,0 +1,21 @@
+name: LINE 圖文選單（手動）
+# 設定 LINE 聊天室下方的按鈕（自選股、台積電、使用說明）；執行一次就好，改了圖片或按鈕再執行
+on:
+  workflow_dispatch:
+
+jobs:
+  richmenu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Set LINE rich menu
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: python line_richmenu.py

@@ -24,3 +24,11 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+      # LINE 機器人（Supabase Edge Function）的查詢邏輯
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run LINE webhook tests
+        run: node --test supabase/functions/line-webhook/lookup_test.ts
