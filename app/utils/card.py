@@ -18,8 +18,8 @@ def load_card_data(stock_id):
     revenue     = get_revenue(stock_id, limit=12)
     ins         = get_stock_ins(stock_id, limit=250)  # 買賣超圖用 60 日、外資持股走勢最多 250 日，卡片取最後 10 日
     margin      = get_margin(stock_id, limit=1)
-    holder      = get_holder(stock_id, limit=1)
-    utilization = get_margin_utilization(stock_id, limit=60)  # ✅ 新增
+    holder      = get_holder(stock_id, limit=5)  # 每週一筆，取 5 週算近 4 週變化（LINE 整批卡片 HOLDER_WEEKS 要一樣）
+    utilization = get_margin_utilization(stock_id, limit=21)  # 最新一筆＋近 20 日增減（LINE 整批卡片 MARGIN_DAYS 要一樣）
     # 上櫃股票和櫃買指數比，其餘和加權指數比
     index_code  = "TPEX" if (info or {}).get("market") == "上櫃" else "TAIEX"
     index_df    = get_market_index(index_code, limit=250)
@@ -31,7 +31,7 @@ TREND_DAYS = 5  # 技術指標走向：和幾個交易日前比
 
 def indicator_trend(series, flat, relative=False):
     """
-    指標和 TREND_DAYS 個交易日前比，回傳 (箭頭, 變化量)，資料不夠回傳 None。
+    指標和 TREND_DAYS 個交易日前比，回傳 (箭頭, 變化量, 當時的值, 現在的值)，資料不夠回傳 None。
     變化小於 flat 算持平；relative=True 時 flat 是相對比例（MACD 柱狀的大小跟股價有關，只能看相對變化）。
     """
     s = pd.to_numeric(series, errors="coerce").dropna() if series is not None else pd.Series(dtype=float)
@@ -41,28 +41,136 @@ def indicator_trend(series, flat, relative=False):
     diff = now - before
     limit = flat * max(abs(now), abs(before)) if relative else flat
     arrow = "→" if abs(diff) <= limit else "↑" if diff > 0 else "↓"
-    return arrow, diff
+    return arrow, diff, before, now
 
 
-# 各指標走向的顯示：(小數位數, 前綴, 單位)；百分比類的變化是百分點
+# 各指標走向的顯示：(小數位數, 前綴, 變化量單位, 數值單位)；百分比類的變化是百分點
 TREND_FORMAT = {
-    "MACD": (2, "", ""),
-    "乖離率（20 日）": (1, "", " 個百分點"),
-    "布林通道": (0, "", " 個百分點"),
-    "股價位階": (0, "", " 個百分點"),
-    "均線排列": (2, "月線", " 元"),
-    "量能": (1, "", " 倍"),
+    "MACD": (2, "", "", ""),
+    "乖離率（20 日）": (1, "", " 個百分點", "%"),
+    "布林通道": (0, "", " 個百分點", "%"),
+    "股價位階": (0, "", " 個百分點", "%"),
+    "均線排列": (2, "月線", " 元", ""),
+    "量能": (1, "", " 倍", ""),
 }
 
 
 def trend_text(t, key=None):
-    """(箭頭, 變化量) → 「5 日往上 ↑ +6.2」；None → 空字串"""
+    """
+    (箭頭, 變化量, 當時, 現在) → 「↓ 比 5 日前少 15.8（60.2 → 44.4）」；None → 空字串。
+    變化量是「現在的值」減「5 個交易日前的值」，不是這 5 天股價的漲跌。
+    """
     if not t:
         return ""
-    arrow, diff = t
-    decimals, prefix, unit = TREND_FORMAT.get(key, (1, "", ""))
-    word = {"↑": "往上", "↓": "往下", "→": "持平"}[arrow]
-    return f"{prefix}{TREND_DAYS} 日{word} {arrow} {diff:+.{decimals}f}{unit}"
+    arrow, diff = t[0], t[1]
+    decimals, prefix, unit, vunit = TREND_FORMAT.get(key, (1, "", "", ""))
+    span = f"（{t[2]:.{decimals}f}{vunit} → {t[3]:.{decimals}f}{vunit}）" if len(t) >= 4 else ""
+    if arrow == "→":
+        return f"→ {prefix}和 {TREND_DAYS} 日前差不多{span}"
+    word = "多" if diff > 0 else "少"
+    return f"{arrow} {prefix}比 {TREND_DAYS} 日前{word} {abs(diff):.{decimals}f}{unit}{span}"
+
+
+def _streak(s):
+    """序列最後連續幾天同號（正或負），回傳 (天數, 1 或 -1)；最新一筆是 0 或沒資料回傳 (0, 0)"""
+    s = pd.to_numeric(s, errors="coerce").dropna()
+    if s.empty or s.iloc[-1] == 0:
+        return 0, 0
+    sign = 1 if s.iloc[-1] > 0 else -1
+    same = (s * sign > 0)[::-1]
+    return int(same.cumprod().sum()), sign
+
+
+def chip_trend(net_shares):
+    """
+    法人每日買賣超（股）→ 近 10 日累計、近 5 日與前 5 日（張），以及「轉為買超」「買超加速」等趨勢說明。
+    回傳 dict：sum10、last5、prev5、label、arrow（↑ 偏買、↓ 偏賣、→ 不明顯）、streak（例如「連買 3 天」）
+    """
+    s = pd.to_numeric(net_shares, errors="coerce").fillna(0) / 1000
+    last5, prev5 = float(s.tail(5).sum()), float(s.iloc[-10:-5].sum()) if len(s) > 5 else 0.0
+    if last5 > 0 and prev5 <= 0:
+        label, arrow = "由賣轉買", "↑"
+    elif last5 < 0 and prev5 >= 0:
+        label, arrow = "由買轉賣", "↓"
+    elif last5 > 0:
+        label, arrow = ("買超加速", "↑") if last5 > prev5 else ("買超減緩", "→")
+    elif last5 < 0:
+        label, arrow = ("賣超加速", "↓") if last5 < prev5 else ("賣超減緩", "→")
+    else:
+        label, arrow = "沒有進出", "→"
+    days, sign = _streak(s)
+    streak = f"連{'買' if sign > 0 else '賣'} {days} 天" if days >= 2 else ""
+    return {"sum10": float(s.tail(10).sum()), "last5": last5, "prev5": prev5,
+            "label": label, "arrow": arrow, "streak": streak}
+
+
+def balance_trend(balance):
+    """
+    融資或融券餘額（張）→ 近 5 日、近 20 日增減（張與 %）和連續增減天數。資料不夠回傳 None。
+    """
+    s = pd.to_numeric(balance, errors="coerce").dropna()
+    if len(s) < 2:
+        return None
+    now = float(s.iloc[-1])
+
+    def chg(n):
+        if len(s) <= n:
+            return None, None
+        before = float(s.iloc[-1 - n])
+        return now - before, ((now / before - 1) * 100 if before else None)
+
+    c5, p5 = chg(5)
+    c20, p20 = chg(20)
+    days, sign = _streak(s.diff())
+    return {"chg5": c5, "pct5": p5, "chg20": c20, "pct20": p20,
+            "streak": f"連{'增' if sign > 0 else '減'} {days} 天" if days >= 2 else ""}
+
+
+def margin_hint(margin_chg20, price_chg20):
+    """融資 20 日增減搭配股價 20 日漲跌的常見解讀（市場慣用看法，網站沒有回測）"""
+    if margin_chg20 is None or price_chg20 is None or margin_chg20 == 0:
+        return ""
+    if margin_chg20 > 0:
+        return "股價漲、融資也增加：追價的散戶變多，漲多時容易震盪" if price_chg20 >= 0 else \
+               "股價跌、融資卻增加：散戶逢低承接，籌碼比較亂，要小心"
+    return "股價漲、融資減少：籌碼比較安定，常見於法人買進" if price_chg20 >= 0 else \
+           "股價跌、融資也減少：散戶在退場（或被斷頭）"
+
+
+def revenue_trend(revenue):
+    """
+    月營收（千元，由舊到新）→ 營收表現的延伸數據：累計營收與年增率、近 3 月年增率（和前 3 月比）、
+    在近 12 個月排第幾高、年增連續幾個月、近 12 個月營收與年增率（畫小長條圖用）。資料不夠的欄位是 None。
+    """
+    out = {"cum_rev": None, "cum_yoy": None, "yoy3": None, "yoy3_prev": None, "rank12": None,
+           "n12": 0, "yoy_streak": "", "bars": []}
+    if revenue is None or revenue.empty:
+        return out
+    r = revenue.sort_values("year_month")
+    num = lambda c: pd.to_numeric(r[c], errors="coerce") if c in r.columns else pd.Series([None] * len(r), dtype=float)
+    rev, ly, yoy = num("revenue"), num("last_year_revenue"), num("yoy_growth")
+    ly = ly.fillna(rev / (1 + yoy / 100))  # 沒有去年同月營收時，用年增率反推
+    last = r.iloc[-1]
+    out["cum_rev"] = pd.to_numeric(last.get("cumulative_revenue"), errors="coerce")
+    out["cum_yoy"] = pd.to_numeric(last.get("cumulative_yoy_growth"), errors="coerce")
+
+    def yoy_of(a, b):
+        cur, base = rev.iloc[a:b], ly.iloc[a:b]
+        if len(cur) == 3 and cur.notna().all() and base.notna().all() and base.sum() > 0:
+            return (cur.sum() / base.sum() - 1) * 100
+        return None
+
+    out["yoy3"] = yoy_of(-3, None)
+    out["yoy3_prev"] = yoy_of(-6, -3) if len(r) >= 6 else None
+    last12 = rev.tail(12).dropna()
+    if not last12.empty and pd.notna(rev.iloc[-1]):
+        out["rank12"] = int((last12 > rev.iloc[-1]).sum()) + 1
+        out["n12"] = len(last12)
+    days, sign = _streak(yoy)
+    if days >= 2:
+        out["yoy_streak"] = f"連續 {days} 個月年{'增' if sign > 0 else '減'}"
+    out["bars"] = [(str(ym), v, g) for ym, v, g in zip(r["year_month"].tail(12), rev.tail(12), yoy.tail(12))]
+    return out
 
 
 def cross_state(diff, fast, slow):
@@ -106,13 +214,35 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
     latest_q      = quarterly.iloc[-1] if not quarterly.empty else {}
     latest_rev    = revenue.iloc[-1] if not revenue.empty else {}
     latest_margin = margin.iloc[-1] if not margin.empty else {}
-    latest_holder = holder.iloc[-1] if not holder.empty else {}
+    latest_holder = holder.sort_values("week_date").iloc[-1] if not holder.empty else {}
     latest_util   = utilization.iloc[-1] if not utilization.empty else {}  # ✅ 新增
 
     ins_10d      = ins.tail(10)
     foreign_10d  = ins_10d["foreign_net_shares"].sum() if not ins.empty else 0
     sitca_10d    = ins_10d["sitca_net_shares"].sum() if not ins.empty else 0
     dealers_10d  = ins_10d["dealers_net_shares"].sum() if not ins.empty else 0
+
+    # 法人買賣趨勢：近 5 日和前 5 日比，看是不是開始買或開始賣
+    chips = {name: chip_trend(ins[col]) if col in ins.columns else None
+             for name, col in (("外資", "foreign_net_shares"), ("投信", "sitca_net_shares"), ("自營商", "dealers_net_shares"))}
+
+    # 大戶持股比例：最新值與近 4 週變化（百分點）
+    big = pd.to_numeric(holder["big_holder_ratio"], errors="coerce").dropna() \
+        if "big_holder_ratio" in holder.columns else pd.Series(dtype=float)
+    big_chg = float(big.iloc[-1] - big.iloc[0]) if len(big) > 1 else None
+    big_weeks = len(big) - 1
+
+    # 融資融券：餘額增減與連續天數、券資比、融資增減搭配股價的解讀
+    margin_tr = balance_trend(utilization["margin_balance"]) if "margin_balance" in utilization.columns else None
+    short_tr = balance_trend(utilization["short_balance"]) if "short_balance" in utilization.columns else None
+    mb = pd.to_numeric(latest_util.get("margin_balance") if len(latest_util) else None, errors="coerce")
+    sb = pd.to_numeric(latest_util.get("short_balance") if len(latest_util) else None, errors="coerce")
+    short_margin_ratio = float(sb / mb * 100) if pd.notna(mb) and pd.notna(sb) and mb > 0 else None
+    closes = pd.to_numeric(prices_ta["close_price"], errors="coerce")
+    price_chg20 = float(closes.iloc[-1] / closes.iloc[-21] - 1) * 100 if len(closes) > 20 else None
+    hint = margin_hint(margin_tr["chg20"] if margin_tr else None, price_chg20)
+
+    rev_tr = revenue_trend(revenue)
 
     # 外資持股比率：最新值與近 20 個交易日的變化（百分點）
     hold_ratio = pd.to_numeric(ins["foreign_hold_ratio"], errors="coerce").dropna() \
@@ -281,4 +411,13 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         "crosses": crosses,
         "extra_tech": extra_tech,
         "hold_ratio": hold_ratio,
+        "chips": chips,
+        "big_chg": big_chg,
+        "big_weeks": big_weeks,
+        "margin_tr": margin_tr,
+        "short_tr": short_tr,
+        "short_margin_ratio": short_margin_ratio,
+        "price_chg20": price_chg20,
+        "margin_hint": hint,
+        "rev_tr": rev_tr,
     }

@@ -28,6 +28,8 @@ from line_lists import build_lists  # noqa: E402
 BUCKET = "archive"
 PREFIX = "_line_cards"
 PRICE_DAYS = 250   # 同個股分析卡：get_daily_prices(limit=250)、get_stock_ins(limit=250)
+MARGIN_DAYS = 21   # 同個股分析卡：get_margin_utilization(limit=21)，算融資融券近 20 日增減
+HOLDER_WEEKS = 5   # 同個股分析卡：get_holder(limit=5)，算大戶近 4 週變化
 EXTRA_DAYS = 20    # 多抓幾天，停牌過的股票也湊得到 250 筆
 UPLOAD_WORKERS = 4
 
@@ -61,8 +63,8 @@ def load_all():
     prices = get_snapshots("daily_prices", dates)
     prices = apply_adjustments(prices, get_price_adjustments(None, prices["date"].min()))
     ins = get_snapshots("stock_ins_daily", dates)
-    margin = get_snapshots("margin_utilization", get_recent_dates("margin_utilization", n=5))
-    holder = get_snapshots("holder_distribution", get_recent_dates("holder_distribution", "week_date", n=3),
+    margin = get_snapshots("margin_utilization", get_recent_dates("margin_utilization", n=MARGIN_DAYS))
+    holder = get_snapshots("holder_distribution", get_recent_dates("holder_distribution", "week_date", n=HOLDER_WEEKS),
                            date_col="week_date")
     year = date.fromisoformat(max(dates)).year
     revenue = pd.DataFrame(_fetch_all(lambda: supabase.table("monthly_revenue").select("*")
@@ -80,8 +82,8 @@ def load_all():
         "sig_date": sig_dates[0],
         "prices": _tail(prices, ["date"], PRICE_DAYS),
         "ins": _tail(ins, ["date"], PRICE_DAYS),
-        "margin": _tail(margin, ["date"], 1),
-        "holder": _tail(holder, ["week_date"], 1),
+        "margin": _tail(margin, ["date"], MARGIN_DAYS),
+        "holder": _tail(holder, ["week_date"], HOLDER_WEEKS),
         "revenue": _tail(revenue, ["year_month"], 12),
         "quarterly": _tail(quarterly, ["year", "quarter"], 8),
         "signals": _tail(signals, ["date"], line_push.SCORE_RECENT + 1),
