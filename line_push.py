@@ -151,13 +151,21 @@ def _trend_rows(t, key):
     return [_row("　└ 走向", trend_text(t, key), {"↑": UP, "↓": DOWN}.get(t[0], GRAY))]
 
 
-def _chip_rows(name, c):
-    """法人近 10 日買賣超（張）與趨勢（由賣轉買、買超加速…）兩列"""
+LAMP_COLOR = {"bull": UP, "bear": DOWN, "neu": GOLD}
+
+
+def _lv(lv):
+    """回測燈號的名稱，例如「（高成長）」；算不出來不顯示"""
+    return f"（{lv[0]}）" if lv and lv[0] != "N/A" else ""
+
+
+def _chip_rows(name, c, lamp):
+    """法人近 10 日買賣超（張）與趨勢（由賣轉買、買超加速…）兩列；趨勢顏色是回測燈號"""
     if not c:
         return [_row(f"{name}買賣超", "N/A")]
     streak = f"・{c['streak']}" if c["streak"] else ""
     return [_row(f"{name}（10 日）", f"{c['sum10']:+,.0f} 張", _sign_color(c["sum10"])),
-            _row("　└ 趨勢", f"{c['arrow']} {c['label']}{streak}", {"↑": UP, "↓": DOWN}.get(c["arrow"], GRAY))]
+            _row("　└ 趨勢", f"{c['arrow']} {c['label']}{streak}", LAMP_COLOR[lamp[0]])]
 
 
 def _balance_rows(tr):
@@ -165,7 +173,7 @@ def _balance_rows(tr):
     if not tr or tr["chg5"] is None:
         return []
     text = f"5日 {tr['chg5']:+,.0f}" + (f"／20日 {tr['chg20']:+,.0f}" if tr["chg20"] is not None else "") + " 張"
-    return [_row("　└ 增減", text, _sign_color(tr["chg5"]))]
+    return [_row("　└ 增減", text, GRAY)]  # 融資融券增減回測方向不一致，不上紅綠色
 
 
 def _section(title, rows):
@@ -220,13 +228,13 @@ def stock_bubble(sid, a):
     ])
     # ③ 營收
     r = m["latest_rev"]
-    rv = m["rev_tr"]
+    rv, rl = m["rev_tr"], m["rev_lamps"]
     rev = _num(r.get("revenue")) if len(r) else None
     body += _section(f"③ 營收表現（{r.get('year_month', '最新月') if len(r) else '最新月'}）", [
         _row("月營收", _f(rev / 1000 if rev else None, " 百萬", 1)),
-        _row("年增率", _f(r.get("yoy_growth") if len(r) else None, "%"), _sign_color(r.get("yoy_growth") if len(r) else None)),
+        _row("年增率", _f(r.get("yoy_growth") if len(r) else None, "%") + _lv(rl["yoy"]), _sign_color(r.get("yoy_growth") if len(r) else None)),
         _row("月增率", _f(r.get("mom_growth") if len(r) else None, "%"), _sign_color(r.get("mom_growth") if len(r) else None)),
-        _row("累計年增率", _f(rv["cum_yoy"], "%", 1), _sign_color(rv["cum_yoy"])),
+        _row("累計年增率", _f(rv["cum_yoy"], "%", 1) + _lv(rl["cum"]), _sign_color(rv["cum_yoy"])),
         _row("近 3 月年增率", _f(rv["yoy3"], "%", 1) +
              (f"（前 3 月 {rv['yoy3_prev']:+.1f}%）" if rv["yoy3"] is not None and rv["yoy3_prev"] is not None else ""),
              _sign_color(rv["yoy3"])),
@@ -236,9 +244,9 @@ def stock_bubble(sid, a):
     h = m["latest_holder"]
     hold_chg = m["hold_chg_20"]
     body += _section("④ 籌碼面（近 10 日累計＋買賣趨勢）", [
-        *[r for name in ("外資", "投信", "自營商") for r in _chip_rows(name, m["chips"].get(name))],
+        *[r for name in ("外資", "投信", "自營商") for r in _chip_rows(name, m["chips"].get(name), m["chip_lamps"][name])],
         _row("大戶持股比例", _f(h.get("big_holder_ratio") if len(h) else None, "%") +
-             (f"（{m['big_weeks']}週 {m['big_chg']:+.2f}）" if m["big_chg"] is not None else ""), _sign_color(m["big_chg"])),
+             (f"（{m['big_weeks']}週 {m['big_chg']:+.2f}）" if m["big_chg"] is not None else ""), LAMP_COLOR[m["big_lamp"][0]]),
         _row("外資持股比率", _f(m["hold_latest"], "%") +
              (f"（20日 {hold_chg:+.2f}）" if hold_chg is not None else ""), _sign_color(hold_chg)),
     ])
@@ -251,7 +259,7 @@ def stock_bubble(sid, a):
         _row("融券餘額", _f(mg.get("short_balance") if len(mg) else None, " 張", 0)),
         *_balance_rows(m["short_tr"]),
         _row("融券使用率", _f(u.get("short_rate") if len(u) else None, "%")),
-        _row("券資比", _f(m["short_margin_ratio"], "%", 1)),
+        _row("券資比", _f(m["short_margin_ratio"], "%", 1) + _lv(m["short_level"]), LAMP_COLOR[m["short_level"][1]]),
     ] + ([_text(f"💡 近 20 日{m['margin_hint']}", size="xs", color=GRAY, margin="sm")] if m["margin_hint"] else []))
     # ⑥ 技術面燈號（顏色同分析卡：偏多紅、偏空或過熱綠、中性金）
     pos = _num(m["position_pct"]) or 0
@@ -276,6 +284,10 @@ def stock_bubble(sid, a):
     crosses = m.get("crosses") or {}
     tech = [r for row, key in zip(tech, keys)
             for r in [row] + zero_rows.get(key, []) + _cross_rows(crosses.get(key)) + _trend_rows(trends.get(key), key)]
+    ts = m.get("tech_summary")
+    if ts:
+        tech = [_row("總結", f"{ts['verdict']}（{ts['red']} 紅 {ts['green']} 綠 {ts['gold']} 金）",
+                     lamp.get(ts["lamp"]))] + tech
     body += _section("⑥ 技術面燈號", tech)
 
     # 📐 葛蘭碧分析
