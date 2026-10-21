@@ -110,18 +110,6 @@ jobs:
           MOMENTUM_START: ${{ github.event.inputs.target_date || needs.update-daily-data.outputs.start }}
           MOMENTUM_END: ${{ github.event.inputs.target_date }}
         run: python momentum.py
-      # 把所有分組的自選股分析推到 LINE（分析和網頁自選股頁相同；沒設定 LINE 金鑰就跳過，同一個評分日只推一次）
-      # 推播失敗不擋後面的清除與檢查，最後一步再讓這次排程顯示失敗
-      - name: Push watchlist analysis to LINE
-        id: line
-        continue-on-error: true
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-          LINE_WATCH_OWNER: ${{ secrets.LINE_WATCH_OWNER }}
-        run: python line_push.py
       # LINE 打字查詢用的分析卡：全部股票的卡片算好存到 Storage（archive 桶 _line_cards/，每天覆蓋，不佔資料庫）
       - name: Build LINE lookup cards
         id: cards
@@ -143,19 +131,15 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python check_data.py
-      - name: Report LINE push failure
-        if: always() && steps.line.outcome == 'failure'
-        run: |
-          echo "::error title=LINE 推播失敗::自選股分析沒有推到 LINE，請看 Push watchlist analysis to LINE 這一步的紀錄"
-          exit 1
       - name: Report LINE lookup cards failure
         if: always() && steps.cards.outcome == 'failure'
         run: |
           echo "::error title=LINE 查詢卡片更新失敗::LINE 打字查詢會回覆前一天的卡片，請看 Build LINE lookup cards 這一步的紀錄"
           exit 1
 
-  # 早上 6:30 沒有補到資料（不會重新評分）時，補做前一晚失敗的 LINE 工作：
-  # 自選股推播（同一個評分日只推一次，晚上推過就不會再推）、查詢卡片（已是最新就不重算）
+  # 早上 6:30 沒有補到資料（不會重新評分）時，檢查 LINE 查詢卡片是不是最新的，
+  # 前一晚產生卡片那一步失敗過的話在這裡補上；卡片已是最新就什麼都不做
+  # （自選股不再每晚推播：在 LINE 打「自選」隨時查；要推播時手動執行「LINE 自選股推播（手動）」）
   refresh-line-cards:
     needs: [update-daily-data, update-signals]
     if: always() && github.event.schedule == '30 22 * * 1-5' && needs.update-signals.result == 'skipped'
@@ -172,27 +156,12 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Push watchlist analysis to LINE if not pushed yet
-        id: line
-        continue-on-error: true
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-          LINE_WATCH_OWNER: ${{ secrets.LINE_WATCH_OWNER }}
-        run: python line_push.py
       - name: Rebuild LINE lookup cards if outdated
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           LINE_CARDS_IF_STALE: "1"
         run: python line_cards.py
-      - name: Report LINE push failure
-        if: always() && steps.line.outcome == 'failure'
-        run: |
-          echo "::error title=LINE 推播失敗::早上補推也失敗，請看 Push watchlist analysis to LINE if not pushed yet 這一步的紀錄"
-          exit 1
 
   update-holder-only:
     if: github.event.schedule == '06 1 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only == 'true')
