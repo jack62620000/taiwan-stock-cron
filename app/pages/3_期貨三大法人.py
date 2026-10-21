@@ -4,6 +4,7 @@ import sys
 import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from utils.glossary import render_page_guide
 from utils.db import get_futures_ins
 from utils.ui import require_login, style_sign
 require_login()
@@ -15,6 +16,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 st.title("🔮 期貨三大法人未平倉")
+render_page_guide("futures")
 
 if st.button("🔄 強制重新整理資料"):
     st.cache_data.clear()

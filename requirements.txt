@@ -8,4 +8,3 @@ pandas==3.0.6
 # 網頁的排版 CSS 依賴 Streamlit 內部元件名稱，升級前要先測試
 streamlit==1.66.0
 numpy==2.5.4
-groq==1.7.0

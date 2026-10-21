@@ -6,6 +6,7 @@ import sys
 import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from utils.glossary import render_page_guide
 from utils.db import (
     get_stock_list,
     get_watchlist, add_to_watchlist, remove_from_watchlist, get_signal_history, get_rows_for_stocks,
@@ -20,6 +21,7 @@ require_login()
 
 st.set_page_config(page_title="個股分析卡", page_icon="🗂️", layout="wide")
 st.title("🗂️ 個股深度分析卡")
+render_page_guide("card")
 
 if st.button("🔄 強制重新整理資料"):
     st.cache_data.clear()

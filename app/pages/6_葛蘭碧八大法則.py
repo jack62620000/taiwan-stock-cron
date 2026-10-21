@@ -6,6 +6,7 @@ import os
 import math
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from utils.glossary import render_page_guide
 from utils.db import get_stock_list, get_recent_closes, get_recent_ins, get_watchlist, get_paper_trades
 from utils.granville import (
     RULES, STABLE_RULES, CONFIRMS, HOLD_HINT, WATCH_DAYS, WATCH_STATUS, LATE_STATUS, CHOP_DAYS, CHOP_CROSSES,
@@ -26,6 +27,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 st.title("📐 葛蘭碧八大法則選股")
+render_page_guide("granville")
 
 if st.button("🔄 強制重新整理資料"):
     st.cache_data.clear()
