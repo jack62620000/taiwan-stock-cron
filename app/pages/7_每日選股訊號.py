@@ -13,7 +13,7 @@ from utils.db import (
 from utils.watch import add_watch_form, add_watch_button
 from utils.granville import STOP_RULE
 from utils.momentum import BACKTEST_MD, RULES_MD, momentum_choices, momentum_table
-from utils.analysis import FOLLOW_DAYS, MOMENTUM_FOLLOW_PICKS, momentum_followup, render_followup
+from utils.analysis import FOLLOW_DAYS, MOMENTUM_FOLLOW_PICKS, TRADE_COST_PCT, momentum_followup, render_followup
 from utils.ui import require_login, render_metric_cards, style_sign, UP_COLOR, DOWN_COLOR
 require_login()
 
@@ -36,7 +36,7 @@ DIMENSIONS = {
     "fund_score": "基本面",
     "tech_score": "技術",
 }
-HORIZONS = [5, 10, 20]  # 單一個股回測：評分日之後幾個交易日的漲跌幅
+HORIZONS = [5, 10, 20]  # 回測：評分隔天收盤買進後，持有幾個交易日的報酬
 # 各面向滿分（規則 v3）
 MAX_SCORE = {"chip_score": 32, "margin_score": 8, "fund_score": 35, "tech_score": 25}
 
@@ -78,7 +78,10 @@ def load_performance(top_n, horizon):
 
 @st.cache_data(ttl=3600)
 def load_stock_backtest(stock_id):
-    """單一股票每個評分日的總分、排名，以及之後 5、10、20 個交易日的漲跌幅（%，還原權值）"""
+    """
+    單一股票每個評分日的總分、排名，以及評分隔天收盤買進、持有 5、10、20 個交易日後收盤賣出的報酬
+    （%，還原權值，已扣交易成本）。分數收盤後才算得出來，評分當天的收盤價買不到，所以隔天才買
+    """
     hist = get_signal_history(stock_id, limit=300)
     if hist.empty:
         return pd.DataFrame()
@@ -94,7 +97,8 @@ def load_stock_backtest(stock_id):
     pos = close.index.get_indexer(out["date"])  # 評分日在股價序列的位置，沒有股價為 -1
     for h in HORIZONS:
         out[f"ret_{h}"] = [
-            (close.iloc[p + h] / close.iloc[p] - 1) * 100 if 0 <= p and p + h < len(close) else None
+            (close.iloc[p + 1 + h] / close.iloc[p + 1] - 1) * 100 - TRADE_COST_PCT
+            if 0 <= p and p + 1 + h < len(close) else None
             for p in pos
         ]
         out[f"ret_{h}"] = pd.to_numeric(out[f"ret_{h}"], errors="coerce")
@@ -345,8 +349,8 @@ with tab_backtest:
         render_metric_cards([
             ("評分日數", f"{len(bt)} 天", f"{bt['date'].min()} 起", None),
             (f"進前 {bt_top} 名", f"{int(in_top.sum())} 次", f"佔 {in_top.mean():.0%}", None),
-            (f"前 {bt_top} 名時，{bt_h} 日後平均", top_text, top_n_text, top_sign),
-            (f"其他時候，{bt_h} 日後平均", other_text, other_n_text, other_sign),
+            (f"前 {bt_top} 名時，持有 {bt_h} 日平均", top_text, top_n_text, top_sign),
+            (f"其他時候，持有 {bt_h} 日平均", other_text, other_n_text, other_sign),
             (f"前 {bt_top} 名時上漲比例", f"{win:.0%}" if win is not None and pd.notna(win) else "—",
              f"全部評分日 {(done > 0).mean():.0%}" if len(done) else None, None),
         ])
@@ -355,7 +359,7 @@ with tab_backtest:
         groups = pd.cut(bt["total_score"], [-1, 49, 69, 100], labels=["50 分以下", "50～69 分", "70 分以上"])
         grouped = bt.groupby(groups, observed=False)
         score_table = grouped[[f"ret_{h}" for h in HORIZONS]].mean()
-        score_table.columns = [f"{h}日後平均%" for h in HORIZONS]
+        score_table.columns = [f"持有{h}日平均%" for h in HORIZONS]
         score_table.insert(0, "評分日數", grouped["total_score"].count())
         score_table = score_table.rename_axis("總分").reset_index()
         score_table["總分"] = score_table["總分"].astype(str)
@@ -363,8 +367,8 @@ with tab_backtest:
         with left:
             st.markdown("**依總分分組的平均漲跌幅**")
             st.dataframe(
-                score_table.style.format("{:+.2f}", subset=[f"{h}日後平均%" for h in HORIZONS], na_rep="—")
-                    .map(style_sign, subset=[f"{h}日後平均%" for h in HORIZONS]),
+                score_table.style.format("{:+.2f}", subset=[f"持有{h}日平均%" for h in HORIZONS], na_rep="—")
+                    .map(style_sign, subset=[f"持有{h}日平均%" for h in HORIZONS]),
                 hide_index=True, width="stretch",
             )
             add_watch_button(bt_id, bt_name, "每日選股回測", dates[0], "backtest")
@@ -372,11 +376,11 @@ with tab_backtest:
             pts = bt.dropna(subset=[ret]).assign(
                 組別=lambda d: (d["rank"].notna() & (d["rank"] <= bt_top)).map({True: f"前 {bt_top} 名", False: "其他"}))
             if pts.empty:
-                st.info(f"評分日之後還沒滿 {bt_h} 個交易日，暫時算不出報酬。")
+                st.info(f"評分日之後還沒滿 {bt_h + 1} 個交易日，暫時算不出報酬。")
             else:
                 st.altair_chart(alt.Chart(pts).mark_circle(size=60, opacity=0.75).encode(
                     x=alt.X("total_score:Q", title="當天總分", scale=alt.Scale(zero=False)),
-                    y=alt.Y(f"{ret}:Q", title=f"{bt_h} 日後漲跌幅（%）"),
+                    y=alt.Y(f"{ret}:Q", title=f"持有 {bt_h} 日報酬（%，扣成本）"),
                     color=alt.Color("組別:N", scale=alt.Scale(domain=[f"前 {bt_top} 名", "其他"],
                                                              range=[UP_COLOR, "#94a3b8"]),
                                     legend=alt.Legend(orient="top", title=None)),
@@ -387,30 +391,36 @@ with tab_backtest:
         with st.expander("📄 每個評分日的紀錄"):
             rec = bt.sort_values("date", ascending=False)[
                 ["date", "total_score", "rank"] + [f"ret_{h}" for h in HORIZONS]]
-            rec.columns = ["評分日", "總分", "排名"] + [f"{h}日後%" for h in HORIZONS]
+            rec.columns = ["評分日", "總分", "排名"] + [f"持有{h}日%" for h in HORIZONS]
             st.dataframe(
                 rec.style.format("{:.0f}", subset=["總分", "排名"], na_rep="—")
-                    .format("{:+.2f}", subset=[f"{h}日後%" for h in HORIZONS], na_rep="")
-                    .map(style_sign, subset=[f"{h}日後%" for h in HORIZONS]),
+                    .format("{:+.2f}", subset=[f"持有{h}日%" for h in HORIZONS], na_rep="")
+                    .map(style_sign, subset=[f"持有{h}日%" for h in HORIZONS]),
                 hide_index=True, width="stretch", height=min(42 + 35 * len(rec), 500),
             )
         st.caption(
-            "⚠️ 漲跌幅用還原權值的收盤價計算（評分日收盤買、N 個交易日後收盤賣），未扣交易成本與稅；"
+            f"⚠️ 分數收盤後才算得出來，所以用「評分隔天收盤買進、持有 N 個交易日後收盤賣出」計算（還原權值），"
+            f"已扣交易成本約 {TRADE_COST_PCT:g}%（手續費買賣各 0.1425%＋證交稅 0.3%）；"
             "排名只排 20 日均量 500 張以上的股票。單一個股樣本少，結果只能當參考，不代表未來表現。"
         )
 
     with st.expander(f"📊 整體規則成效：每天買前 {bt_top} 名 vs 全市場平均"):
+        st.caption(f"每個評分日隔天收盤買進前 {bt_top} 名、持有 {bt_h} 個交易日後收盤賣出，"
+                   f"報酬已扣交易成本約 {TRADE_COST_PCT:g}%；全市場平均是同一段時間 20 日均量夠的股票平均漲跌（不扣成本），"
+                   "超額報酬為正，才代表照排名買比抱著大盤好。")
         try:
             perf = load_performance(bt_top, bt_h)
         except Exception:
             perf = None
             st.warning("整體回測資料暫時讀取失敗（資料庫查詢逾時），請稍後按「強制重新整理」再看一次。")
         if perf is not None and perf.empty:
-            st.info(f"評分資料還不夠長，需要至少 {bt_h + 1} 個評分日才能計算。")
+            st.info(f"評分資料還不夠長，需要至少 {bt_h + 2} 個評分日才能計算。")
         elif perf is not None:
+            # 買前幾名要付交易成本；全市場平均當作「什麼都不做、抱著大盤」的對照，不扣成本
+            perf["top_return"] = perf["top_return"] - TRADE_COST_PCT
             perf["excess"] = perf["top_return"] - perf["market_return"]
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric(f"前 {bt_top} 名平均報酬", f"{perf['top_return'].mean():.2f}%")
+            m1.metric(f"前 {bt_top} 名平均報酬（扣成本）", f"{perf['top_return'].mean():.2f}%")
             m2.metric("全市場平均報酬", f"{perf['market_return'].mean():.2f}%")
             m3.metric("平均超額報酬", f"{perf['excess'].mean():+.2f}%")
             m4.metric("勝過市場的天數", f"{(perf['excess'] > 0).mean():.0%}", f"共 {len(perf)} 個評分日",
