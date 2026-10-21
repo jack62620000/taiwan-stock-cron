@@ -82,3 +82,16 @@ def test_dry_run_does_not_push(use_db, capsys):
     assert line_push.run(sb, None, None, post=post, dry_run=True) == 0
     assert post.calls == [] and line_push.last_pushed(sb) is None
     assert "自選股分析" in capsys.readouterr().out
+
+
+def test_only_owner_groups(use_db):
+    """設定帳號時只推那個帳號的分組"""
+    sb = use_db()
+    sb.tables["watch_groups"].append({"id": 2, "owner": "family", "name": "家人的分組"})
+    sb.tables["watchlist"].append({"group_id": 2, "stock_id": "2317", "note": "", "added_at": "2026-01-01T00:00:00+00:00"})
+    post = FakePost()
+    line_push.run(sb, "token", "U123", post=post, owner="tester")
+    assert "家人的分組" not in all_messages(post)[0]["text"]
+    post = FakePost()
+    line_push.run(sb, "token", "U123", post=post, force=True)
+    assert "家人的分組" in all_messages(post)[0]["text"]
