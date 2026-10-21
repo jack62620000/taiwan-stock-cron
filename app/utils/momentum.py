@@ -102,3 +102,29 @@ def momentum_summary(mrow):
     stop_m = stop_price(float(c_m), pd.to_numeric(mrow.get("atr14"), errors="coerce")) if pd.notna(c_m) else None
     return {"conds": conds, "n_ok": n_ok, "tt_text": tt_text, "tt_note": tt_note,
             "bo_text": bo_text, "bo_note": bo_note, "rs": rs_m, "close": c_m, "stop": stop_m}
+
+
+def momentum_choices(liq):
+    """動能選股頁的分類（每日選股頁與 LINE 共用）：{名稱: 布林 Series}；liq 是 20 日均量夠的股票"""
+    return {
+        "兩者同時": liq["trend_template"] & liq["breakout"],
+        "52 週新高＋量增": liq["breakout"],
+        "今天剛符合趨勢模板": liq["trend_new"],
+        "符合趨勢模板（全部）": liq["trend_template"],
+    }
+
+
+def momentum_table(view):
+    """
+    動能選股表的欄位（每日選股頁與 LINE 共用）：離 52 週高點 %、停損價、每張風險、趨勢模板／新高突破打勾，
+    依 RS、量比由高到低排序。view 需要 close_price、high_52w、atr14、rs_rating、vol_ratio、trend_template、breakout
+    """
+    from utils.granville import stop_price
+    view = view.copy()
+    close = pd.to_numeric(view["close_price"], errors="coerce")
+    view["off_high"] = (close / pd.to_numeric(view["high_52w"], errors="coerce") - 1) * 100
+    view["stop"] = [stop_price(float(c), a) for c, a in zip(close, pd.to_numeric(view["atr14"], errors="coerce"))]
+    view["risk"] = ((close - view["stop"]) * 1000).round()
+    view["tt"] = view["trend_template"].map({True: "✅", False: ""})
+    view["bo"] = view["breakout"].map({True: "✅", False: ""})
+    return view.sort_values(["rs_rating", "vol_ratio"], ascending=False)

@@ -6,6 +6,7 @@ export type Lookup =
   | { kind: "help" }
   | { kind: "watchlist" }
   | { kind: "myid" }
+  | { kind: "list"; file: string }
   | { kind: "stock"; id: string }
   | { kind: "choices"; ids: string[] }
   | { kind: "none"; query: string };
@@ -13,6 +14,11 @@ export type Lookup =
 const HELP_WORDS = new Set(["說明", "help", "?", "？", "使用說明", "幫助"]);
 const WATCH_WORDS = new Set(["自選", "自選股", "我的自選股"]);
 const MYID_WORDS = new Set(["我的id", "myid", "id"]);
+// 選單清單：每晚由 line_lists.py 算好的回覆檔
+const LIST_WORDS: Record<string, string> = {
+  "葛蘭碧": "granville.json", "等待法則2": "granville.json",
+  "動能": "momentum.json", "動能股": "momentum.json", "動能選股": "momentum.json",
+};
 export const MAX_CHOICES = 10; // 名稱對到很多檔時，最多列幾檔讓使用者點選（LINE 快速回覆最多 13 個）
 
 export function lookup(text: string, index: Index): Lookup {
@@ -20,6 +26,7 @@ export function lookup(text: string, index: Index): Lookup {
   if (!q || HELP_WORDS.has(q.toLowerCase())) return { kind: "help" };
   if (WATCH_WORDS.has(q)) return { kind: "watchlist" };
   if (MYID_WORDS.has(q.toLowerCase())) return { kind: "myid" };
+  if (q in LIST_WORDS) return { kind: "list", file: LIST_WORDS[q] };
   const stocks = index.stocks;
   const code = q.toUpperCase();
   if (code in stocks) return { kind: "stock", id: code };
@@ -49,6 +56,7 @@ export function helpText(index: Index | null): string {
     "台積電",
     "",
     "輸入「自選」會回覆你網頁自選股每一檔的分析卡。",
+    "輸入「葛蘭碧」會列出等待法則 2 的股票；輸入「動能股」會列出動能選股。",
     "",
     "會回覆和網頁「個股分析卡」相同的分析（52 週區間、基本面、營收、籌碼、資金、技術面、葛蘭碧、每日評分、動能）。",
   ];

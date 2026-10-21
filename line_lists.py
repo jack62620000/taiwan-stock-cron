@@ -1,0 +1,193 @@
+"""
+LINE 選單「葛蘭碧」「動能股」的回覆 - 和網頁同一套計算，每晚由 line_cards.py 算好存到 Storage
+
+    葛蘭碧：葛蘭碧頁「買賣預告 → 準備買進」中狀態為「⏳ 等待法則2」的股票（網頁預設參數、不加篩選），
+            欄位、數字、說明文字和網頁表格相同（utils.analysis.granville_buy_table）
+    動能股：每日選股頁「動能選股」的「兩者同時」「52 週新高＋量增」「今天剛符合趨勢模板」三種，
+            欄位和網頁表格相同（utils.momentum.momentum_table）
+
+每檔一張小卡，卡片下方的按鈕可以直接查那檔的完整個股分析卡。
+存放：archive 桶 / _line_cards / granville.json、momentum.json，內容是 {"date": 資料日期, "messages": [LINE 訊息]}，
+LINE 機器人（supabase/functions/line-webhook）收到時原樣回覆，最多 5 則訊息。
+"""
+import json
+import os
+import sys
+
+import pandas as pd
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "app"))
+
+from line_push import GOLD, GRAY, _carousels, _f, _num, _row, _sign_color, _text  # noqa: E402
+
+MAX_MESSAGES = 5          # 一次回覆最多 5 則訊息
+TEXT_MAX = 4900           # 文字訊息上限 5,000 字
+MOMENTUM_PICKS = ["兩者同時", "52 週新高＋量增", "今天剛符合趨勢模板"]
+
+
+def _bubble(sid, name, industry, tag, rows, note=None):
+    """一檔股票的小卡：標題（代號、名稱、產業、狀態）、欄位列、說明文字，下方按鈕查完整分析卡"""
+    body = list(rows)
+    if note:
+        body += [{"type": "separator", "margin": "md"}, _text(note, size="xs", color=GRAY, margin="md")]
+    return {
+        "type": "bubble", "size": "kilo",
+        "header": {"type": "box", "layout": "vertical", "contents": [
+            _text(tag, size="xs", color=GOLD, bold=True),
+            _text(f"{sid} {name}", size="lg", bold=True),
+            _text(industry or "", size="xs", color=GRAY),
+        ]},
+        "body": {"type": "box", "layout": "vertical", "spacing": "xs", "contents": body},
+        "footer": {"type": "box", "layout": "vertical", "contents": [
+            {"type": "button", "style": "link", "height": "sm",
+             "action": {"type": "message", "label": "看完整分析卡", "text": sid}},
+        ]},
+    }
+
+
+def _pack(title, bubbles, max_carousels):
+    """卡片打包成輪播（最多 max_carousels 則），回傳 (訊息, 放不下的卡片數)"""
+    chunks = _carousels(bubbles)
+    shown = chunks[:max_carousels]
+    msgs = [{"type": "flex", "altText": title[:400], "contents": {"type": "carousel", "contents": c}} for c in shown]
+    return msgs, len(bubbles) - sum(len(c) for c in shown)
+
+
+def _rest_line(df, n_rest, id_col, name_col):
+    if n_rest <= 0:
+        return []
+    rest = df.tail(n_rest)
+    return ["", "一次回覆放不下，其餘請直接輸入代號查：" + "、".join(f"{r[id_col]} {r[name_col]}" for _, r in rest.iterrows())]
+
+
+# ===== 葛蘭碧：等待法則2 =====
+def granville_bubble(r):
+    trig = _num(r["觸發價"])
+    rows = [
+        _row("最新收盤", _f(r["最新收盤"])),
+        _row("觸發價", _f(trig)),
+        _row("距離%", _f(r["距離%"], "%") if trig is not None else "N/A", _sign_color(r["距離%"])),
+        _row("停損價", _f(r["停損價"])),
+        _row("每張風險", _f(r["每張風險"], " 元", 0)),
+        _row("比大盤%", _f(r["比大盤%"], "%"), _sign_color(r["比大盤%"])),
+        _row("趨勢", f"{r['趨勢']}（穿越均線 {int(r['穿越均線'])} 次）"),
+        _row("法則1日期", str(r["法則1日期"])[:10]),
+    ]
+    return _bubble(r["代號"], r["名稱"], r["產業"], r["狀態"], rows, note=str(r["說明"]))
+
+
+def granville_messages(date, table):
+    """葛蘭碧回覆：第一則文字（說明與欄位解釋），之後每檔一張卡"""
+    from utils.analysis import GRANVILLE_MIN_VOLUME
+    from utils.granville import CHOP_CROSSES, CHOP_DAYS, HOLD_HINT, RS_DAYS, STOP_RULE, WATCH_DAYS
+    waiting = table[table["狀態"] == "⏳ 等待法則2"] if not table.empty else table
+    lo, hi = HOLD_HINT
+    lines = [
+        f"📐 葛蘭碧：等待法則2（{date} 收盤後）",
+        f"共 {len(waiting)} 檔。同網頁葛蘭碧頁「準備買進」，預設參數（20 日均線、20 日均量 ≥ {GRANVILLE_MIN_VOLUME} 張）。",
+        "",
+        f"先出現法則 1，之後回檔再站回均線就是法則 2 的買點；回測是法則 2 出現隔天開盤買進、持有 {lo}～{hi} 個交易日。"
+        f"法則 1 出現後 {WATCH_DAYS} 個交易日內沒等到法則 2 就失效。",
+        "",
+        "【欄位說明】",
+        "・觸發價：明天收盤到這個價位就出現法則 2",
+        "・距離%：觸發價比今天收盤高（+）或低（−）幾 %",
+        f"・停損價：{STOP_RULE}，收盤跌破就出場",
+        "・每張風險：（預計買進價 − 停損價）× 1000 股，單位：元",
+        f"・比大盤%：近 {RS_DAYS} 個交易日漲跌幅減去全部股票平均，正的代表比大盤強",
+        f"・趨勢：近 {CHOP_DAYS} 個交易日收盤穿越均線 {CHOP_CROSSES} 次以上算「🌊 盤整」，越少代表趨勢越明確",
+        "",
+        "觸發價只代表「如果收盤到這個價位」，不代表一定會發生；技術分析僅供參考。",
+    ]
+    if waiting.empty:
+        lines[1] = "目前沒有等待法則 2 的股票。"
+        return [{"type": "text", "text": "\n".join(lines)[:TEXT_MAX]}]
+    msgs, n_rest = _pack("葛蘭碧：等待法則2", [granville_bubble(r) for _, r in waiting.iterrows()], MAX_MESSAGES - 1)
+    lines += _rest_line(waiting, n_rest, "代號", "名稱")
+    return [{"type": "text", "text": "\n".join(lines)[:TEXT_MAX]}] + msgs
+
+
+# ===== 動能股 =====
+def momentum_bubble(r, pick):
+    rows = [
+        _row("收盤", _f(r["close_price"])),
+        _row("RS", _f(r["rs_rating"], decimals=0)),
+        _row("量比", _f(r["vol_ratio"])),
+        _row("離52週高%", _f(r["off_high"], "%", 1)),
+        _row("趨勢模板", r["tt"] or "—"),
+        _row("新高突破", r["bo"] or "—"),
+        _row("停損價", _f(r["stop"])),
+        _row("每張風險", _f(r["risk"], " 元", 0)),
+    ]
+    return _bubble(r["stock_id"], r.get("stock_name") or "", r.get("industry"), f"🚀 {pick}", rows)
+
+
+def momentum_messages(mom):
+    """動能股回覆：第一則文字（三種的檔數與欄位解釋），之後每一種一則輪播（依 RS、量比排序，放不下的列代號）"""
+    from utils.granville import STOP_RULE
+    from utils.momentum import BREAKOUT_VOL, RS_MIN, momentum_choices, momentum_table
+    if mom.empty:
+        return None, [{"type": "text", "text": "還沒有動能選股資料。"}]
+    date = mom["date"].max()
+    liq = mom[mom["liquid"]]
+    choices = momentum_choices(liq)
+    lines = [f"🚀 動能股（{date} 收盤後）",
+             f"只判斷 20 日均量 500 張以上的股票，共 {len(liq):,} 檔。同網頁每日選股頁「動能選股」。", ""]
+    lines += [f"・{pick}：{int(choices[pick].sum())} 檔" for pick in MOMENTUM_PICKS]
+    lines += [
+        "",
+        "【分類說明】",
+        "・兩者同時：同時符合趨勢模板和 52 週新高＋量增，回測最好",
+        f"・52 週新高＋量增：收盤創 52 週新高，成交量至少是前 50 日均量的 {BREAKOUT_VOL:g} 倍",
+        f"・今天剛符合趨勢模板：今天才符合趨勢模板 8 個條件（含 RS ≥ {RS_MIN}）",
+        "",
+        "【欄位說明】",
+        "・RS：相對強度 0～99，贏過多少 % 的股票",
+        "・量比：今天成交量 ÷ 前 50 日均量",
+        "・離52週高%：0 代表今天就是 52 週新高",
+        f"・停損價：{STOP_RULE}",
+        "・每張風險：（收盤 − 停損價）× 1000 股，單位：元",
+    ]
+    msgs = []
+    for pick in MOMENTUM_PICKS:
+        view = liq[choices[pick]]
+        if view.empty:
+            continue
+        view = momentum_table(view)
+        bubbles = [momentum_bubble(r, pick) for _, r in view.iterrows()]
+        # 每一種只放一則輪播，保留位置給其他種類
+        packed, n_rest = _pack(f"動能股：{pick}", bubbles, 1)
+        msgs += packed
+        if n_rest:
+            lines += ["", f"【{pick}】還有 {n_rest} 檔放不下，請直接輸入代號查："
+                      + "、".join(f"{r['stock_id']} {r.get('stock_name') or ''}" for _, r in view.tail(n_rest).iterrows())]
+    return date, [{"type": "text", "text": "\n".join(lines)[:TEXT_MAX]}] + msgs[:MAX_MESSAGES - 1]
+
+
+def load_momentum():
+    """同每日選股頁的 load_momentum：最新一天的動能選股，數字欄位轉成數值、加上名稱與產業"""
+    from utils.db import get_momentum_latest, get_stock_list
+    df = get_momentum_latest()
+    if df.empty:
+        return df
+    for c in ["close_price", "high_52w", "rs_rating", "vol_ratio", "atr14"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    info = get_stock_list(include_delisted=True)[["stock_id", "stock_name", "industry", "market"]]
+    return df.merge(info, on="stock_id", how="left")
+
+
+def build_lists():
+    """回傳 {檔名: 內容}，給 line_cards.upload 一起上傳"""
+    from utils.analysis import granville_buy_default
+    g_date, table = granville_buy_default()
+    m_date, m_msgs = momentum_messages(load_momentum())
+    return {
+        "granville.json": {"date": g_date, "messages": granville_messages(g_date, table)},
+        "momentum.json": {"date": m_date, "messages": m_msgs},
+    }
+
+
+if __name__ == "__main__":
+    for name, content in build_lists().items():
+        print(name, content["date"], f"{len(json.dumps(content, ensure_ascii=False).encode()):,} bytes")
+        print(content["messages"][0]["text"])

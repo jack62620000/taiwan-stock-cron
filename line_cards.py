@@ -7,6 +7,7 @@ LINE 機器人（supabase/functions/line-webhook）收到股票代號或名稱�
 存放位置（不佔資料庫空間，Storage 另外計算，每天覆蓋只留最新一份）：
     archive 桶 / _line_cards / {代號前兩碼}.json   同一個前兩碼的股票放在同一個檔案，{代號: 卡片}
     archive 桶 / _line_cards / index.json          {"date": 評分日, "stocks": {代號: 名稱}}
+    archive 桶 / _line_cards / granville.json、momentum.json   選單「葛蘭碧」「動能股」的回覆（見 line_lists.py）
 
 和個股分析卡頁逐檔查詢不同，這裡整批載入全市場資料再依股票切開（逐檔查 2,000 檔太慢）；
 取的筆數和分析卡頁相同（股價、法人近 250 個交易日，季報 8 季、營收 12 個月、評分 21 個評分日）。
@@ -22,6 +23,7 @@ import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "app"))
 
 import line_push  # noqa: E402
+from line_lists import build_lists  # noqa: E402
 
 BUCKET = "archive"
 PREFIX = "_line_cards"
@@ -129,9 +131,11 @@ def build_shards(analyses):
     return shards
 
 
-def upload(sb, shards, index):
+def upload(sb, shards, index, extra=None):
+    """上傳分檔、extra（{檔名: 內容}，例如葛蘭碧、動能股清單），最後才換索引"""
     bucket = sb.storage.from_(BUCKET)
     files = {f"{PREFIX}/{k}.json": v for k, v in shards.items()}
+    files.update({f"{PREFIX}/{k}": v for k, v in (extra or {}).items()})
     files[f"{PREFIX}/index.json"] = index  # 最後才換索引，查詢時不會讀到還沒上傳的分檔
 
     def put(item):
@@ -177,11 +181,14 @@ def run(sb, dry_run=False):
     shards = build_shards(analyses)
     names = {sid: a["info"].get("stock_name") or "" for sid, a in analyses.items()}
     index = {"date": data["sig_date"], "stocks": names}
+    lists = build_lists()
+    for name, content in lists.items():
+        print(f"  {name}：資料日期 {content['date']}，{len(content['messages'])} 則訊息")
     if dry_run:
         size = sum(len(json.dumps(v, ensure_ascii=False).encode()) for v in shards.values())
         print(f"試跑：{len(analyses):,} 檔、{len(shards)} 個分檔，共 {size / 1e6:.1f} MB（未上傳）")
         return len(analyses)
-    size = upload(sb, shards, index)
+    size = upload(sb, shards, index, lists)
     print(f"已更新 LINE 查詢卡片（評分日 {data['sig_date']}）：{len(analyses):,} 檔、{len(shards)} 個分檔，"
           f"共 {size / 1e6:.1f} MB")
     return len(analyses)

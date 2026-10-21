@@ -11,8 +11,8 @@ from utils.db import (
     get_rows_for_stocks, get_price_adjustments, apply_adjustments, get_momentum_latest,
 )
 from utils.watch import add_watch_form, add_watch_button
-from utils.granville import STOP_RULE, stop_price
-from utils.momentum import BACKTEST_MD, RULES_MD
+from utils.granville import STOP_RULE
+from utils.momentum import BACKTEST_MD, RULES_MD, momentum_choices, momentum_table
 from utils.ui import require_login, render_metric_cards, style_sign, UP_COLOR, DOWN_COLOR
 require_login()
 
@@ -435,25 +435,14 @@ with tab_momentum:
         m2.metric("52 週新高＋量增", f"{int(liq['breakout'].sum())} 檔")
         m3.metric("符合趨勢模板", f"{int(liq['trend_template'].sum())} 檔")
         m4.metric("今天剛符合趨勢模板", f"{int(liq['trend_new'].sum())} 檔")
-        choices = {
-            "兩者同時": liq["trend_template"] & liq["breakout"],
-            "52 週新高＋量增": liq["breakout"],
-            "今天剛符合趨勢模板": liq["trend_new"],
-            "符合趨勢模板（全部）": liq["trend_template"],
-        }
+        choices = momentum_choices(liq)
         pick = st.radio("顯示", list(choices), horizontal=True, key="momentum_pick",
                         help="回測以「兩者同時」最好；趨勢模板（全部）每天都很多檔，適合當作篩選的第一步")
         view = liq[choices[pick]].copy()
         if view.empty:
             st.info(f"{m_date} 沒有「{pick}」的股票。")
         else:
-            close = pd.to_numeric(view["close_price"], errors="coerce")
-            view["off_high"] = (close / pd.to_numeric(view["high_52w"], errors="coerce") - 1) * 100
-            view["stop"] = [stop_price(float(c), a) for c, a in zip(close, pd.to_numeric(view["atr14"], errors="coerce"))]
-            view["risk"] = ((close - view["stop"]) * 1000).round()
-            view["tt"] = view["trend_template"].map({True: "✅", False: ""})
-            view["bo"] = view["breakout"].map({True: "✅", False: ""})
-            view = view.sort_values(["rs_rating", "vol_ratio"], ascending=False)
+            view = momentum_table(view)
             table = view[["stock_id", "stock_name", "industry", "close_price", "rs_rating", "vol_ratio",
                           "off_high", "tt", "bo", "stop", "risk"]]
             st.dataframe(

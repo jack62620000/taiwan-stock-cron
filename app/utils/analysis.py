@@ -4,8 +4,9 @@ import pandas as pd
 import streamlit as st
 
 from utils.granville import (
-    RULES, HOLD_HINT, CHOP_CROSSES,
-    atr, granville_signals, ma_cross_counts, next_day_triggers, rule1_watchlist, stop_price, watch_note,
+    RULES, HOLD_HINT, CHOP_CROSSES, WATCH_DAYS,
+    atr, granville_signals, ma_cross_counts, next_day_triggers, relative_strength, rule1_watchlist, stop_price,
+    watch_note,
 )
 
 
@@ -131,3 +132,98 @@ def granville_status(ids, prices, ins, names=None):
     for c in ["買進觸發價", "停損價", "每張風險", "賣出觸發價", "賣出距離%"]:
         out[c] = pd.to_numeric(out[c], errors="coerce")
     return out.sort_values("代號", key=lambda c: c.map(order)).reset_index(drop=True)
+
+
+BUY_COLUMNS = ["狀態", "代號", "名稱", "產業", "最新收盤", "觸發價", "距離%", "停損價", "每張風險", "比大盤%",
+               "趨勢", "穿越均線", "法則1日期", "說明"]
+
+
+def granville_buy_table(cand, trig, ma_now, crosses, rs, atrs):
+    """
+    葛蘭碧頁「準備買進」表（網頁與 LINE 共用）。
+    cand：rule1_watchlist 中狀態為「今天出現法則2」「等待法則2」的列（含 stock_name、industry）；
+    trig：等待中股票的法則 2 觸發價（next_day_triggers，index 為 stock_id）；
+    ma_now：最新均線；crosses：穿越均線次數；rs：比大盤強弱；atrs：ATR。
+    回傳 (表格 DataFrame, {代號: (觸發價, 圖上標示文字)})
+    """
+    lo, hi = HOLD_HINT
+    rows, triggers = [], {}
+    for r in cand.itertuples():
+        left = WATCH_DAYS - int(r.days_since)
+        price = pct = None
+        if r.status == "今天出現法則2":
+            state, order = "✅ 明天開盤可買", 0
+            note = f"今天已出現法則 2，回測建議持有 {lo}～{hi} 個交易日"
+        elif r.stock_id in trig.index:
+            state, order = "⏳ 等待法則2", 1
+            price, pct = float(trig.at[r.stock_id, "trigger_price"]), float(trig.at[r.stock_id, "trigger_pct"])
+            note = (f"明天收盤 ≥ {price:,.2f} 元（漲 {pct:.2f}% 以上）就出現法則 2" if pct > 0 else
+                    f"明天收盤只要不低於 {price:,.2f} 元（跌幅在 {-pct:.2f}% 以內）就出現法則 2")
+            note += f"（還剩 {left} 個交易日）"
+            triggers[r.stock_id] = (price, f"收盤 ≥ {price:,.2f} 出現法則2")
+        else:
+            state, order = "👀 觀察中", 2
+            if r.r2_c1 != "符合":
+                note = "均線還沒穩定上揚，明天不會出現法則 2"
+            elif r.r2_c4 != "符合":
+                note = "月線還在季線之下，明天不會出現法則 2"
+            elif r.close_price < ma_now.get(r.stock_id, float("nan")):
+                note = f"目前在均線（約 {ma_now[r.stock_id]:,.2f} 元）之下，明天漲停也站不回，暫時不會出現法則 2"
+            elif r.r2_c2 != "符合":
+                note = f"還沒回檔：要先跌破均線（約 {ma_now.get(r.stock_id, float('nan')):,.2f} 元）再站回，才會出現法則 2"
+            else:
+                note = "法則 2 的條件還沒到齊，明天不會出現"
+            note += f"（還剩 {left} 個交易日）"
+        n_cross = int(crosses.get(r.stock_id, 0))
+        rs_v = rs.get(r.stock_id, float("nan"))
+        # 停損價以預計買進價計算：等待法則2 用觸發價，其餘用最新收盤（明天開盤價未知）
+        ref = price if price is not None else float(r.close_price)
+        stop = stop_price(ref, atrs.get(r.stock_id))
+        rows.append({"order": order, "狀態": state, "代號": r.stock_id, "名稱": r.stock_name,
+                     "比大盤%": rs_v, "停損價": stop, "每張風險": round((ref - stop) * 1000),
+                     "趨勢": "🌊 盤整" if n_cross >= CHOP_CROSSES else "📈 明確", "穿越均線": n_cross,
+                     "產業": r.industry, "最新收盤": r.close_price, "觸發價": price, "距離%": pct,
+                     "法則1日期": r.setup_date, "說明": note})
+    buy_df = pd.DataFrame(rows)
+    buy_df["abs_pct"] = buy_df["距離%"].abs()
+    buy_df["weak"] = ~(buy_df["比大盤%"] > 0)
+    buy_df["neg_rs"] = -buy_df["比大盤%"]
+    buy_df = buy_df.sort_values(["order", "weak", "abs_pct", "neg_rs", "代號"])[BUY_COLUMNS]
+    return buy_df, triggers
+
+
+# 葛蘭碧頁的預設參數（頁面左側「恢復預設參數」的值）
+GRANVILLE_DEFAULTS = {"ma_days": 20, "slope_days": 5, "lookback": 5, "near_pct": 2.0, "bias_pct": 10.0}
+GRANVILLE_MIN_VOLUME = 500
+
+
+def granville_buy_default():
+    """
+    用葛蘭碧頁的預設參數、不加任何篩選，算出「準備買進」表（LINE 查詢用，和網頁打開時看到的相同）。
+    資料同葛蘭碧頁：近 100 個日曆天股價、近 60 個日曆天法人。回傳 (資料日期, 表格)；沒有資料時表格是空的
+    """
+    from utils.db import get_recent_closes, get_recent_ins, get_stock_list
+    prices = get_recent_closes(calendar_days=100, columns="stock_id, date, close_price, volume")
+    if prices.empty:
+        return None, pd.DataFrame(columns=BUY_COLUMNS)
+    latest = prices["date"].max()
+    ins = get_recent_ins(calendar_days=60)
+    stock_list = get_stock_list()
+    signals = granville_signals(prices, ins=ins, **GRANVILLE_DEFAULTS)
+    df = signals.merge(stock_list[["stock_id", "stock_name", "market", "industry"]], on="stock_id", how="inner")
+    df = df[df["avg_volume_20"] >= GRANVILLE_MIN_VOLUME]
+    watch = rule1_watchlist(prices, ins=ins, min_volume=GRANVILLE_MIN_VOLUME, **GRANVILLE_DEFAULTS)
+    if watch.empty:
+        return latest, pd.DataFrame(columns=BUY_COLUMNS)
+    watch = watch[watch["stock_id"].isin(df["stock_id"])] \
+        .merge(stock_list[["stock_id", "stock_name", "industry"]], on="stock_id", how="left")
+    cand = watch[watch["status"].isin(["今天出現法則2", "等待法則2"])]
+    if cand.empty:
+        return latest, pd.DataFrame(columns=BUY_COLUMNS)
+    waiting = sorted(cand.loc[cand["status"] == "等待法則2", "stock_id"])
+    trig = next_day_triggers(prices, (2,), "買進", stock_ids=waiting, **GRANVILLE_DEFAULTS).set_index("stock_id")
+    table, _ = granville_buy_table(
+        cand, trig, df.set_index("stock_id")["ma"], ma_cross_counts(prices, GRANVILLE_DEFAULTS["ma_days"]),
+        relative_strength(prices), load_atr(tuple(sorted(cand["stock_id"]))),
+    )
+    return latest, table
