@@ -12,7 +12,7 @@ from utils.granville import (
     STOP_LOSS_PCT, STOP_RULE, ATR_MULT, ATR_DAYS, RS_DAYS, granville_signals, ma_cross_counts, next_day_triggers, relative_strength, rule1_watchlist, rule_frames, watch_note,
 )
 from utils.watch import add_watch_form
-from utils.analysis import granville_buy_table, load_atr
+from utils.analysis import FOLLOW_DAYS, granville_buy_table, granville_followup, load_atr, render_followup
 from utils.groups import current_group
 from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
 require_login()
@@ -129,7 +129,7 @@ if not watch_all.empty:
     watch_all = watch_all[watch_all["stock_id"].isin(df["stock_id"])] \
         .merge(stock_list[["stock_id", "stock_name", "industry"]], on="stock_id", how="left")
 
-tab_plan, tab_today = st.tabs(["🎯 買賣預告", "📋 進階：八大法則"])
+tab_plan, tab_today, tab_follow = st.tabs(["🎯 買賣預告", "📋 進階：八大法則", "🧾 事後追蹤"])
 
 # ===== 個股走勢圖 =====
 def render_stock_chart(labels, triggers):
@@ -601,3 +601,29 @@ with tab_plan:
         for r in df.sort_values("stock_id").itertuples():
             chart_labels.setdefault(r.stock_id, f"{r.stock_id} {r.stock_name}")
         render_stock_chart(chart_labels, chart_triggers)
+
+
+# ===== 事後追蹤：最近出現過的法則 2 買點，之後實際漲跌多少 =====
+@st.cache_data(ttl=3600)
+def load_followup():
+    return granville_followup()
+
+
+with tab_follow:
+    st.caption(f"最近 {FOLLOW_DAYS} 個交易日出現過的法則 2 買點（「準備買進」表裡「今天出現法則2」的股票），"
+               f"之後實際漲跌多少，用來看最近的訊號準不準。固定用預設參數（20 日均線、20 日均量 ≥ 500 張），"
+               f"不受左側設定影響。回測建議持有 {HOLD_HINT[0]}～{HOLD_HINT[1]} 個交易日。")
+    # 要重算近 160 個日曆天的買點，第一次約 15 秒，按了才算（之後一小時內直接顯示）
+    f_date, follow = None, None
+    if st.toggle("顯示事後追蹤", key="granville_followup",
+                 help="第一次要重算最近的買點，約 15 秒；之後一小時內直接顯示"):
+        try:
+            with st.spinner("計算最近的法則 2 買點…"):
+                f_date, follow = load_followup()
+        except Exception:
+            st.warning("事後追蹤資料暫時讀取失敗，請稍後按「強制重新整理」再看一次。")
+    if follow is not None and follow.empty:
+        st.info(f"最近 {FOLLOW_DAYS} 個交易日沒有出現法則 2 買點。")
+    elif follow is not None:
+        st.caption(f"資料日期：{f_date}（收盤後），共 {len(follow)} 個買點。")
+        render_followup(follow, {"industry": st.column_config.TextColumn("產業", width="small")})

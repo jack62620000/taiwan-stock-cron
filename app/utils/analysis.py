@@ -227,3 +227,181 @@ def granville_buy_default():
         relative_strength(prices), load_atr(tuple(sorted(cand["stock_id"]))),
     )
     return latest, table
+
+
+# =====================================================================
+# 訊號事後追蹤：最近出現過的訊號，之後實際漲跌多少（葛蘭碧頁、每日選股頁共用）
+# =====================================================================
+FOLLOW_DAYS = 20  # 追蹤最近幾個交易日出現的訊號
+
+
+def signal_followup(events, prices, indexes=None):
+    """
+    events：stock_id、signal_date（訊號日），其他欄位原樣保留；可以加 market 欄位（上櫃和櫃買指數比）。
+    prices：這些股票訊號日之後的 stock_id、date、open_price、close_price（還原權值）。
+    indexes：{"TAIEX": 加權指數, "TPEX": 櫃買指數}，欄位 date、open、close，算同期大盤用，可省略。
+    同回測：訊號隔天開盤買進，算到最新收盤。還沒有隔天股價的訊號（今天剛出現）買進價留空。
+    新增欄位：buy_date、buy_price、last_close、held_days（含買進當天）、ret_now、ret_max、ret_min、
+    index_ret（同期大盤，%）、excess（贏大盤幾 %）。
+    """
+    cols = ["buy_date", "buy_price", "last_close", "held_days", "ret_now", "ret_max", "ret_min", "index_ret", "excess"]
+    out = events.copy().reset_index(drop=True)
+    for c in cols:
+        out[c] = None
+    if out.empty or prices.empty:
+        return out
+    by_stock = {sid: g.sort_values("date") for sid, g in prices.groupby("stock_id")}
+    idx = {code: df.sort_values("date").set_index("date") for code, df in (indexes or {}).items()
+           if df is not None and not df.empty}
+    for i, ev in out.iterrows():
+        g = by_stock.get(ev["stock_id"])
+        if g is None:
+            continue
+        after = g[g["date"] > ev["signal_date"]]
+        opens = pd.to_numeric(after["open_price"], errors="coerce")
+        closes = pd.to_numeric(after["close_price"], errors="coerce")
+        if after.empty or pd.isna(closes.iloc[-1]):
+            continue
+        buy = opens.iloc[0] if pd.notna(opens.iloc[0]) and opens.iloc[0] > 0 else closes.iloc[0]  # 沒有開盤價用收盤
+        if pd.isna(buy) or buy <= 0:
+            continue
+        buy_date = after["date"].iloc[0]
+        ret = (closes / buy - 1) * 100
+        row = {"buy_date": buy_date, "buy_price": float(buy), "last_close": float(closes.iloc[-1]),
+               "held_days": int(closes.notna().sum()), "ret_now": float(ret.iloc[-1]),
+               "ret_max": float(ret.max()), "ret_min": float(ret.min())}
+        ix = idx.get("TPEX" if ev.get("market") == "上櫃" else "TAIEX")
+        if ix is not None and buy_date in ix.index:
+            i_buy = pd.to_numeric(ix.at[buy_date, "open"], errors="coerce")
+            i_last = pd.to_numeric(ix["close"], errors="coerce").iloc[-1]
+            if pd.notna(i_buy) and i_buy > 0 and pd.notna(i_last):
+                row["index_ret"] = float((i_last / i_buy - 1) * 100)
+                row["excess"] = row["ret_now"] - row["index_ret"]
+        for k, v in row.items():
+            out.at[i, k] = v
+    for c in ["buy_price", "last_close", "held_days", "ret_now", "ret_max", "ret_min", "index_ret", "excess"]:
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+    return out
+
+
+def followup_summary(df):
+    """事後追蹤的整體數字：已買進幾檔、平均報酬、上漲比例、平均贏大盤；還沒有買進的訊號不算"""
+    done = df[df["ret_now"].notna()]
+    if done.empty:
+        return None
+    excess = done["excess"].dropna()
+    return {"n": len(done), "pending": int(df["ret_now"].isna().sum()),
+            "avg": done["ret_now"].mean(), "median": done["ret_now"].median(),
+            "win": (done["ret_now"] > 0).mean(), "excess": excess.mean() if len(excess) else None}
+
+
+def load_followup_prices(stock_ids, since):
+    """事後追蹤用的股價：幾檔股票 since 之後的開盤、收盤（還原權值）"""
+    from utils.db import apply_adjustments, get_price_adjustments, get_rows_for_stocks
+    if not stock_ids:
+        return pd.DataFrame(columns=["stock_id", "date", "open_price", "close_price"])
+    raw = get_rows_for_stocks("daily_prices", list(stock_ids), since=since,
+                              columns="stock_id, date, open_price, close_price")
+    if raw.empty:
+        return raw
+    return apply_adjustments(raw, get_price_adjustments(None, since))
+
+
+def load_followup_indexes(n=FOLLOW_DAYS + 5):
+    """加權、櫃買指數最近 n 個交易日（同期大盤）"""
+    from utils.db import get_market_index
+    return {code: get_market_index(code, limit=n) for code in ("TAIEX", "TPEX")}
+
+
+def granville_followup(days=FOLLOW_DAYS):
+    """
+    葛蘭碧頁「事後追蹤」：最近 days 個交易日出現過的法則 2 買點（預設參數、20 日均量 ≥ 500 張），
+    隔天開盤買進到今天的漲跌。回傳 (資料日期, 表格)
+    """
+    from utils.db import get_recent_closes, get_recent_ins, get_stock_list
+    from utils.granville import rule2_events
+    # 起點最多在買點前 WATCH_DAYS 個交易日，再往前要有季線（60 日）＋均線方向的資料：約 160 個日曆天
+    prices = get_recent_closes(calendar_days=160, columns="stock_id, date, close_price, volume")
+    if prices.empty:
+        return None, pd.DataFrame()
+    ins = get_recent_ins(calendar_days=90)
+    events = rule2_events(prices, ins=ins, min_volume=GRANVILLE_MIN_VOLUME, days=days,
+                          watch_days=WATCH_DAYS, **GRANVILLE_DEFAULTS)
+    latest = prices["date"].max()
+    if events.empty:
+        return latest, events
+    events = events.merge(get_stock_list()[["stock_id", "stock_name", "industry", "market"]], on="stock_id",
+                          how="inner")
+    px = load_followup_prices(tuple(sorted(events["stock_id"].unique())), events["signal_date"].min())
+    return latest, signal_followup(events, px, load_followup_indexes(days + 5))
+
+
+MOMENTUM_FOLLOW_PICKS = ["兩者同時", "52 週新高＋量增", "剛符合趨勢模板"]
+
+
+def momentum_followup(days=FOLLOW_DAYS):
+    """
+    每日選股頁「事後追蹤」：最近 days 個交易日出現過的動能訊號，隔天開盤買進到今天的漲跌。
+    signal 欄位是這次訊號屬於哪幾類（MOMENTUM_FOLLOW_PICKS，用「、」連接）。回傳 (資料日期, 表格)
+    """
+    from utils.db import get_momentum_events, get_recent_dates, get_stock_list
+    dates = get_recent_dates("daily_prices", n=days)
+    if not dates:
+        return None, pd.DataFrame()
+    ev = get_momentum_events(min(dates))
+    if ev.empty:
+        return max(dates), ev
+    both = ev["trend_template"].astype(bool) & ev["breakout"].astype(bool)
+    flags = [both, ev["breakout"].astype(bool), ev["trend_new"].astype(bool)]
+    ev["signal"] = ["、".join(n for n, f in zip(MOMENTUM_FOLLOW_PICKS, fs) if f) for fs in zip(*flags)]
+    ev = ev.rename(columns={"date": "signal_date", "close_price": "signal_close"}) \
+        .merge(get_stock_list()[["stock_id", "stock_name", "industry", "market"]], on="stock_id", how="inner") \
+        .sort_values(["signal_date", "stock_id"], ascending=[False, True], ignore_index=True)
+    px = load_followup_prices(tuple(sorted(ev["stock_id"].unique())), ev["signal_date"].min())
+    return max(dates), signal_followup(ev, px, load_followup_indexes(days + 5))
+
+
+FOLLOW_NOTE = (
+    "同回測：訊號隔天開盤買進，算到最新收盤（還原權值，未扣約 0.6% 交易成本）。"
+    "期間最高／最低是買進後收盤價最高、最低時的漲跌；同期大盤是同一段時間的加權指數（上櫃股票用櫃買指數）。"
+    "今天剛出現的訊號明天才買進，先列在表格最上面、報酬留空。"
+)
+
+
+def render_followup(df, extra_cols=None):
+    """事後追蹤的指標卡片與表格（葛蘭碧頁、每日選股頁共用）；extra_cols：{欄位: column_config} 放在名稱後面"""
+    from utils.ui import render_metric_cards, style_sign
+    s = followup_summary(df)
+    if s is None:
+        st.info("最近的訊號都還沒到買進日（今天剛出現），明天收盤後就有結果。")
+    else:
+        render_metric_cards([
+            ("已買進", f"{s['n']} 檔", f"另有 {s['pending']} 檔明天才買進" if s["pending"] else "", None),
+            ("平均至今漲跌", f"{s['avg']:+.2f}%", f"中位數 {s['median']:+.2f}%", s["avg"]),
+            ("上漲比例", f"{s['win']:.0%}", "至今賺錢的訊號占幾成", None),
+            ("平均贏大盤", f"{s['excess']:+.2f}%" if s["excess"] is not None else "—", "至今漲跌 − 同期大盤",
+             s["excess"]),
+        ])
+    extra_cols = extra_cols or {}
+    pct = ["ret_now", "ret_max", "ret_min", "index_ret", "excess"]
+    cols = ["signal_date", "stock_id", "stock_name", *extra_cols, "buy_price", "last_close", "held_days", *pct]
+    table = df[cols]
+    st.dataframe(
+        table.style.map(style_sign, subset=["ret_now", "excess"]),
+        hide_index=True, width="stretch", height=min(42 + 35 * len(table), 600),
+        column_config={
+            "signal_date": st.column_config.TextColumn("訊號日", width="small", pinned=True),
+            "stock_id": st.column_config.TextColumn("代號", width="small", pinned=True),
+            "stock_name": st.column_config.TextColumn("名稱", width="small", pinned=True),
+            **extra_cols,
+            "buy_price": st.column_config.NumberColumn("買進價", format="%.2f", help="訊號隔天開盤價"),
+            "last_close": st.column_config.NumberColumn("最新收盤", format="%.2f"),
+            "held_days": st.column_config.NumberColumn("持有天數", format="%d", help="從買進當天算起的交易日數"),
+            "ret_now": st.column_config.NumberColumn("至今%", format="%+.2f"),
+            "ret_max": st.column_config.NumberColumn("期間最高%", format="%+.2f"),
+            "ret_min": st.column_config.NumberColumn("期間最低%", format="%+.2f"),
+            "index_ret": st.column_config.NumberColumn("同期大盤%", format="%+.2f"),
+            "excess": st.column_config.NumberColumn("贏大盤%", format="%+.2f", help="至今% − 同期大盤%"),
+        },
+    )
+    st.caption(FOLLOW_NOTE)

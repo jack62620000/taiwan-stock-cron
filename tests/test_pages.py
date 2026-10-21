@@ -79,3 +79,32 @@ def test_add_to_watchlist_from_stock_card(use_db):
     assert errors(at) == []
     assert {"group_id": 1, "stock_id": "1101"}.items() <= next(
         r for r in client.tables["watchlist"] if r["stock_id"] == "1101").items()
+
+
+GRANVILLE_PAGE = next(p for p in PAGES if p.startswith("6_"))
+DAILY_PAGE = next(p for p in PAGES if p.startswith("7_"))
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_granville_followup_tab(use_db, empty):
+    use_db(empty=empty)
+    at = run_page(APP / "pages" / GRANVILLE_PAGE, granville_followup=True)
+    assert errors(at) == []
+
+
+def test_granville_followup_table(use_db, monkeypatch):
+    """有買點時顯示卡片與表格（假資料剛好沒有法則 2 買點，借動能訊號的結果來顯示）"""
+    use_db()
+    import utils.analysis as analysis
+    date, df = analysis.momentum_followup()
+    monkeypatch.setattr(analysis, "granville_followup", lambda: (date, df.drop(columns="signal")))
+    at = run_page(APP / "pages" / GRANVILLE_PAGE, granville_followup=True)
+    assert errors(at) == []
+    assert any("至今%" in list(d.value.columns) or "ret_now" in list(d.value.columns) for d in at.dataframe)
+
+
+def test_momentum_followup_section(use_db):
+    use_db()
+    at = run_page(APP / "pages" / DAILY_PAGE)
+    assert errors(at) == []
+    assert any("ret_now" in list(d.value.columns) for d in at.dataframe)

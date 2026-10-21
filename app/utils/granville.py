@@ -205,6 +205,23 @@ WATCH_STATUS = ["今天出現法則2", "等待法則2", "已錯過買點", "已�
 LATE_STATUS = ["已錯過買點", "已過期"]  # 預設收起來，不跟可操作的股票混在一起
 
 
+def _setup_frames(prices, ins, min_volume, **rule_params):
+    """觀察名單的起點：法則 1 + 外資 5 日買超 + MACD 柱 > 0 + 當日量 > 1.5 倍均量，且 20 日均量夠。
+    回傳 (收盤寬表, 各法則命中寬表, 法則 2 的四個條件, 起點布林寬表)"""
+    close = _pivot(prices, "close_price")
+    vol = _pivot(prices, "volume").reindex(index=close.index, columns=close.columns) \
+        if "volume" in prices.columns else None
+    foreign = _pivot(ins, "foreign_net_shares") if ins is not None and not ins.empty else None
+    frames = rule_frames(close, **rule_params)
+    hits, parts = frames["hits"], frames["rule2_parts"]
+    cf = confirm_frames(close, vol, foreign)
+    setup = hits[1] & _confirmed(cf, ("foreign", "macd", "volume"), close.columns)
+    if vol is not None:
+        avg_vol = vol.fillna(0).rolling(20, min_periods=20).mean() / 1000
+        setup &= avg_vol >= min_volume
+    return close, hits, parts, setup
+
+
 def rule1_watchlist(prices, ins=None, min_volume=500, watch_days=WATCH_DAYS,
                     show_expired_days=10, **rule_params):
     """
@@ -221,17 +238,7 @@ def rule1_watchlist(prices, ins=None, min_volume=500, watch_days=WATCH_DAYS,
     """
     if prices.empty:
         return pd.DataFrame()
-    close = _pivot(prices, "close_price")
-    vol = _pivot(prices, "volume").reindex(index=close.index, columns=close.columns) \
-        if "volume" in prices.columns else None
-    foreign = _pivot(ins, "foreign_net_shares") if ins is not None and not ins.empty else None
-    frames = rule_frames(close, **rule_params)
-    hits, parts = frames["hits"], frames["rule2_parts"]
-    cf = confirm_frames(close, vol, foreign)
-    setup = hits[1] & _confirmed(cf, ("foreign", "macd", "volume"), close.columns)
-    if vol is not None:
-        avg_vol = vol.fillna(0).rolling(20, min_periods=20).mean() / 1000
-        setup &= avg_vol >= min_volume
+    close, hits, parts, setup = _setup_frames(prices, ins, min_volume, **rule_params)
 
     dates = close.index
     last = len(dates) - 1
@@ -287,6 +294,30 @@ def watch_note(row):
     if held == 0:
         return f"今天出現法則 2：可考慮明天開盤買進，建議持有 {lo}～{hi} 個交易日"
     return f"法則 2 後第 {held} 個交易日，已過買點；若當時有買進，建議持有到第 {lo}～{hi} 天"
+
+
+def rule2_events(prices, ins=None, min_volume=500, days=20, watch_days=WATCH_DAYS, **rule_params):
+    """
+    最近 days 個交易日出現過的法則 2 買點（觀察名單起點後 watch_days 個交易日內第一次出現法則 2，
+    和觀察名單「今天出現法則2」的判斷相同），給訊號事後追蹤用。
+    回傳 stock_id、setup_date（起點）、signal_date（法則 2 出現日），依出現日由新到舊。
+    prices 要比 days 多載入約 watch_days + 季線天數，起點和均線才算得出來。
+    """
+    cols = ["stock_id", "setup_date", "signal_date"]
+    if prices.empty:
+        return pd.DataFrame(columns=cols)
+    close, hits, _, setup = _setup_frames(prices, ins, min_volume, **rule_params)
+    dates = close.index
+    first = len(dates) - days
+    rows = {}
+    for sid in close.columns:
+        r2 = np.flatnonzero(hits[2][sid].to_numpy())
+        for s in np.flatnonzero(setup[sid].to_numpy()):
+            after = r2[(r2 > s) & (r2 <= s + watch_days)]
+            if len(after) and after[0] >= first:
+                rows.setdefault((sid, int(after[0])), dates[s])  # 同一個買點只算一次（取最早的起點）
+    out = pd.DataFrame([(sid, setup_date, dates[k]) for (sid, k), setup_date in rows.items()], columns=cols)
+    return out.sort_values(["signal_date", "stock_id"], ascending=[False, True], ignore_index=True)
 
 
 # =====================================================================
