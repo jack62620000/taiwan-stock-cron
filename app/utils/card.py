@@ -7,8 +7,8 @@ from utils.db import (
     get_stock_info, get_daily_prices, get_quarterly, get_revenue, get_stock_ins,
     get_margin, get_holder, get_margin_utilization, get_market_index,
 )
-from utils.indicators import (calc_all, get_latest_signals, level, volume_level, obv_state, macd_zero,
-                              POSITION_LEVELS, BOLL_LEVELS, BIAS_LEVELS)
+from utils.indicators import (calc_all, get_latest_signals, level, volume_level, obv_state, macd_zero, LAMP,
+                              POSITION_LEVELS, BOLL_LEVELS, BIAS_LEVELS, INF)
 
 
 def load_card_data(stock_id):
@@ -101,7 +101,77 @@ def chip_trend(net_shares):
     days, sign = _streak(s)
     streak = f"連{'買' if sign > 0 else '賣'} {days} 天" if days >= 2 else ""
     return {"sum10": float(s.tail(10).sum()), "last5": last5, "prev5": prev5,
-            "label": label, "arrow": arrow, "streak": streak}
+            "label": label, "arrow": arrow, "streak": streak, "streak_days": days * (1 if sign > 0 else -1)}
+
+
+# ===== 回測後的燈號 =====
+# 回測方式：訊號隔天開盤買、持有 20 個交易日，和同期全部股票平均比；前後兩段時間都一致才給紅綠燈。
+# 燈號：bull 紅＝回測比平均好、bear 綠＝回測比平均差、neu 金＝差別不大或前後不一致
+YOY_LEVELS = [  # 單月營收年增率（%）
+    (20, "高成長", "bull", "年增 20% 以上，回測之後 20 日比平均好"),
+    (0, "小幅成長", "neu", "年增 0～20%，回測和平均差不多"),
+    (-20, "衰退", "bear", "年減，回測之後 20 日比平均差"),
+    (INF, "大幅衰退", "bear", "年減超過 20%，回測之後 20 日明顯比平均差"),
+]
+YOY3_LEVELS = [  # 近 3 月年增率（%）
+    (10, "成長", "bull", "近 3 月年增 10% 以上，回測比平均好"),
+    (0, "小幅成長", "neu", "近 3 月年增 0～10%，回測和平均差不多"),
+    (INF, "衰退", "bear", "近 3 月年減，回測比平均差"),
+]
+CUM_YOY_LEVELS = [  # 今年累計營收年增率（%）
+    (20, "高成長", "bull", "累計年增 20% 以上，回測比平均好"),
+    (0, "持平", "neu", "累計年增 0～20%，回測和平均一樣"),
+    (INF, "衰退", "bear", "累計年減，回測比平均差"),
+]
+SHORT_RATIO_LEVELS = [  # 券資比（%）
+    (20, "很高", "bull", "券資比 20% 以上，回測比平均好，但後段時間差距縮小、波動大"),
+    (5, "偏高", "bull", "券資比 5～20%，回測明顯比平均好（空單回補的買盤）"),
+    (INF, "一般", "neu", "券資比 5% 以下，回測和平均差不多"),
+]
+
+
+def chip_lamp(name, c):
+    """法人趨勢的回測燈號 → (燈號, 說明)。外資看買或賣、投信只看連買、自營商影響很小"""
+    if not c:
+        return "neu", ""
+    days = c.get("streak_days", 0)
+    if name == "投信":
+        if days >= 3:
+            return "bull", "投信連買 3 天以上，回測明顯比平均好"
+        return "neu", "投信的買賣方向回測差別不大（連買才明顯）"
+    if name == "外資":
+        if c["label"] in ("由賣轉買", "由買轉賣"):
+            return "neu", "剛轉向，回測和平均差不多"
+        if c["last5"] > 0:
+            return "bull", "近 5 日買超，回測略比平均好"
+        if c["last5"] < 0:
+            return "bear", "近 5 日賣超，回測比平均差"
+        return "neu", ""
+    return "neu", "自營商進出多為避險，回測影響很小"
+
+
+def big_holder_lamp(big_chg):
+    """大戶持股近 4 週變化（百分點）的回測燈號 → (燈號, 說明)"""
+    if big_chg is None:
+        return "neu", ""
+    if big_chg >= 1:
+        return "bull", "大戶明顯加碼（增加 1 個百分點以上），回測比平均好"
+    return "neu", "變化不到 1 個百分點時，增減回測差別不大"
+
+
+def revenue_lamps(latest_yoy, rv):
+    """營收各項的回測燈號 → dict：yoy、yoy3、cum 是 (名稱, 燈號, 說明)；rank、streak 是 (燈號, 說明)"""
+    num = lambda v: float(pd.to_numeric(v, errors="coerce")) if v is not None else float("nan")
+    rank = ("bull", "創近 12 個月新高，回測明顯比平均好") if rv["rank12"] == 1 else ("neu", "")
+    days = rv.get("yoy_streak_days", 0)
+    if days >= 3:
+        streak = ("bull", "連續年增 3 個月以上，回測比平均好")
+    elif days < 0:
+        streak = ("bear", "最新月年減，回測比平均差")
+    else:
+        streak = ("neu", "")
+    return {"yoy": level(YOY_LEVELS, num(latest_yoy)), "yoy3": level(YOY3_LEVELS, num(rv["yoy3"])),
+            "cum": level(CUM_YOY_LEVELS, num(rv["cum_yoy"])), "rank": rank, "streak": streak}
 
 
 def balance_trend(balance):
@@ -127,14 +197,14 @@ def balance_trend(balance):
 
 
 def margin_hint(margin_chg20, price_chg20):
-    """融資 20 日增減搭配股價 20 日漲跌的常見解讀（市場慣用看法，網站沒有回測）"""
+    """融資 20 日增減搭配股價 20 日漲跌的解讀，附上回測結果（隔天開盤買、持有 20 日和全部股票平均比）"""
     if margin_chg20 is None or price_chg20 is None or margin_chg20 == 0:
         return ""
     if margin_chg20 > 0:
-        return "股價漲、融資也增加：追價的散戶變多，漲多時容易震盪" if price_chg20 >= 0 else \
-               "股價跌、融資卻增加：散戶逢低承接，籌碼比較亂，要小心"
-    return "股價漲、融資減少：籌碼比較安定，常見於法人買進" if price_chg20 >= 0 else \
-           "股價跌、融資也減少：散戶在退場（或被斷頭）"
+        return "股價漲、融資也增加：追價的人變多，回測之後 20 日反而比平均好" if price_chg20 >= 0 else \
+               "股價跌、融資卻增加：散戶逢低承接，籌碼比較亂，回測之後 20 日比平均差"
+    return "股價漲、融資減少：籌碼比較安定，回測和平均差不多" if price_chg20 >= 0 else \
+           "股價跌、融資也減少：散戶在退場（或被斷頭），回測之後 20 日比平均差"
 
 
 def revenue_trend(revenue):
@@ -143,7 +213,7 @@ def revenue_trend(revenue):
     在近 12 個月排第幾高、年增連續幾個月、近 12 個月營收與年增率（畫小長條圖用）。資料不夠的欄位是 None。
     """
     out = {"cum_rev": None, "cum_yoy": None, "yoy3": None, "yoy3_prev": None, "rank12": None,
-           "n12": 0, "yoy_streak": "", "bars": []}
+           "n12": 0, "yoy_streak": "", "yoy_streak_days": 0, "bars": []}
     if revenue is None or revenue.empty:
         return out
     r = revenue.sort_values("year_month")
@@ -169,6 +239,7 @@ def revenue_trend(revenue):
     days, sign = _streak(yoy)
     if days >= 2:
         out["yoy_streak"] = f"連續 {days} 個月年{'增' if sign > 0 else '減'}"
+    out["yoy_streak_days"] = days * (1 if sign > 0 else -1)
     out["bars"] = [(str(ym), v, g) for ym, v, g in zip(r["year_month"].tail(12), rev.tail(12), yoy.tail(12))]
     return out
 
@@ -243,6 +314,10 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
     hint = margin_hint(margin_tr["chg20"] if margin_tr else None, price_chg20)
 
     rev_tr = revenue_trend(revenue)
+    rev_lamps = revenue_lamps(latest_rev.get("yoy_growth") if len(latest_rev) else None, rev_tr)
+    chip_lamps = {name: chip_lamp(name, c) for name, c in chips.items()}
+    big_lamp = big_holder_lamp(big_chg)
+    short_level = level(SHORT_RATIO_LEVELS, short_margin_ratio if short_margin_ratio is not None else float("nan"))
 
     # 外資持股比率：最新值與近 20 個交易日的變化（百分點）
     hold_ratio = pd.to_numeric(ins["foreign_hold_ratio"], errors="coerce").dropna() \
@@ -375,6 +450,15 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
     if obv:
         extra_tech.append(("OBV 能量潮", obv[0], obv[1], obv[0], obv[2]))
 
+    # ===== 技術面總結：數 ⑥ 每一格的燈號（只是統計，沒有另外回測）=====
+    lamps = [LAMP.get(rsi_status, "neu"), LAMP.get(kd_status, "neu"),
+             "bull" if (macd_hist or 0) > 0 else "bear", position_level[1]] + [cls for _, _, cls, _, _ in extra_tech]
+    red, green = lamps.count("bull"), lamps.count("bear")
+    gold = len(lamps) - red - green
+    verdict = "整體偏多" if red - green >= 2 else "整體偏弱" if green - red >= 2 else "多空交錯"
+    tech_summary = {"red": red, "green": green, "gold": gold, "verdict": verdict,
+                    "lamp": "bull" if red - green >= 2 else "bear" if green - red >= 2 else "neu"}
+
     return {
         "prices_ta": prices_ta,
         "signals": signals,
@@ -416,6 +500,7 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         "position_level": position_level,
         "macd_hist": macd_hist,
         "macd_zero": macd_zero_state,
+        "tech_summary": tech_summary,
         "ma5": ma5,
         "ma20": ma20,
         "ma60": ma60,
@@ -433,4 +518,8 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         "price_chg20": price_chg20,
         "margin_hint": hint,
         "rev_tr": rev_tr,
+        "rev_lamps": rev_lamps,
+        "chip_lamps": chip_lamps,
+        "big_lamp": big_lamp,
+        "short_level": short_level,
     }

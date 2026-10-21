@@ -126,3 +126,22 @@ def test_macd_zero():
     assert macd_zero(-1, -0.5) == ("零軸下，空頭", "bear")
     assert macd_zero(0.1, -0.2)[1] == "neu"
     assert macd_zero(None, 1) is None
+
+
+def test_backtest_lamps():
+    from utils.card import chip_lamp, big_holder_lamp, revenue_lamps, chip_trend, SHORT_RATIO_LEVELS
+    from utils.indicators import level
+    buy = chip_trend(pd.Series([1000] * 10))  # 連買 10 天、買超持平 → 買超減緩
+    sell = chip_trend(pd.Series([-1000] * 10))
+    assert chip_lamp("外資", buy)[0] == "bull" and chip_lamp("外資", sell)[0] == "bear"
+    assert chip_lamp("投信", buy)[0] == "bull" and chip_lamp("投信", sell)[0] == "neu"
+    assert chip_lamp("自營商", buy)[0] == "neu"
+    assert chip_lamp("外資", chip_trend(pd.Series([-1000] * 5 + [1000] * 5)))[0] == "neu"  # 由賣轉買
+    assert big_holder_lamp(1.2)[0] == "bull" and big_holder_lamp(-2)[0] == "neu" and big_holder_lamp(None)[0] == "neu"
+    assert level(SHORT_RATIO_LEVELS, 8)[1] == "bull" and level(SHORT_RATIO_LEVELS, 1)[1] == "neu"
+    rv = {"yoy3": 15.0, "cum_yoy": -3.0, "rank12": 1, "yoy_streak_days": 4}
+    r = revenue_lamps(25.0, rv)
+    assert r["yoy"][:2] == ("高成長", "bull") and r["yoy3"][1] == "bull" and r["cum"][1] == "bear"
+    assert r["rank"][0] == "bull" and r["streak"][0] == "bull"
+    r = revenue_lamps(None, {"yoy3": None, "cum_yoy": None, "rank12": 3, "yoy_streak_days": -1})
+    assert r["yoy"][0] == "N/A" and r["rank"][0] == "neu" and r["streak"][0] == "bear"

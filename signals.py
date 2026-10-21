@@ -14,6 +14,9 @@
       - 拿掉「融資使用率低」「資減價漲」（含沒有資料時的中性分）：沒有效果，最近一年甚至是反效果
       - 空出的 17 分加到兩段期間都有效的因子：投信 5 日買超 +3、投信連買 +4、站上月線 +4、近 20 日上漲 +6
       - 每天總分前 20 名之後 20 日的超額報酬：v2 +4.26%，v3 +4.90%
+  v4（2026-10-21）：改用「隔天開盤買」驗證（2025-02～2026-10），技術面「RSI 50～75」改成「RSI ≥ 70」：
+      - RSI 70 以上的股票之後反而比較強（前後兩段都多約 1.2～1.8 個百分點），50～75 的效果最弱
+      - 每天總分前 20 名之後 20 日比全體平均多：v3 4.49%，v4 4.83%（前後兩段都比 v3 好）
 
 用法：
     python signals.py                                   # 評分資料庫裡最新的交易日
@@ -42,7 +45,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-RULE_VERSION = 3
+RULE_VERSION = 4
 LOOKBACK_DAYS = 30          # 評分日之前要多載入的交易日數（MA20、RSI、20 日漲幅需要）
 LIQUID_MIN_LOTS = 500       # 20 日均量至少 500 張才列入排名
 ANCHOR_STOCKS = ["2330", "2317", "2454"]  # 用權值股找交易日，走主鍵索引比較快
@@ -374,9 +377,9 @@ def score_stock(x):
         tech += 10
         reasons.append("站上月線")
     rsi = x["rsi"]
-    if _num(rsi) and 50 <= rsi <= 75:
+    if _num(rsi) and rsi >= 70:
         tech += 4
-        reasons.append(f"RSI 強勢區（{rsi:.0f}）")
+        reasons.append(f"RSI 強勢（{rsi:.0f}）")
     if _num(x["chg20"]) and x["chg20"] > 0:
         tech += 11
         reasons.append(f"近20日上漲 {x['chg20']:.1%}")
