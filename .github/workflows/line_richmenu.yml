@@ -1,5 +1,6 @@
 name: LINE 圖文選單（手動）
-# 設定 LINE 聊天室下方的按鈕（自選股、葛蘭碧、動能股、使用說明）；執行一次就好，改了圖片或按鈕再執行
+# 設定 LINE 聊天室下方的按鈕：所有人預設三格（葛蘭碧、動能股、使用說明），有對應網頁帳號的人四格（多了自選股）；
+# 執行一次就好，改了圖片或按鈕再執行
 on:
   workflow_dispatch:
 
@@ -18,4 +19,5 @@ jobs:
       - name: Set LINE rich menu
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
         run: python line_richmenu.py
