@@ -6,12 +6,14 @@ import sys
 import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from utils.glossary import render_page_guide
 from utils.db import (
     get_stock_list,
     get_watchlist, add_to_watchlist, remove_from_watchlist, get_signal_history, get_rows_for_stocks,
 )
 from utils.analysis import granville_status
 from utils.card import card_metrics, load_card_data as _load_card_data
+from utils.plain import render_plain_summary
 from utils.granville import STOP_RULE
 from utils.momentum import BACKTEST_MD, RULES_MD, momentum_summary
 from utils.groups import current_group
@@ -20,6 +22,7 @@ require_login()
 
 st.set_page_config(page_title="個股分析卡", page_icon="🗂️", layout="wide")
 st.title("🗂️ 個股深度分析卡")
+render_page_guide("card")
 
 if st.button("🔄 強制重新整理資料"):
     st.cache_data.clear()
@@ -272,6 +275,8 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 </body>
 </html>
 """
+
+render_plain_summary(m, index_df, "櫃買指數" if info.get("market") == "上櫃" else "加權指數")
 
 # st.components.v1.html 已被 Streamlit 標為淘汰，改用 st.iframe；高度跟著內容自動調整，不必另外捲動
 st.iframe(html, height="content")

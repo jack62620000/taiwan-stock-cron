@@ -5,6 +5,7 @@ import os
 from datetime import date, timedelta
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from utils.glossary import render_page_guide
 from utils.db import (
     get_stock_list, get_rows_for_stocks, get_price_adjustments, apply_adjustments,
     get_paper_trades, add_paper_trades, sell_paper_trade, delete_paper_trade,
@@ -18,6 +19,7 @@ require_login()
 
 st.set_page_config(page_title="模擬持股", page_icon="💼", layout="wide")
 st.title("💼 模擬持股")
+render_page_guide("paper")
 st.caption(
     "從「自選股」頁挑股票加入，或在下方手動新增，假設買進後過一段時間再賣出，"
     "看看實際會不會賺錢。持有中的股票用最新收盤價估算損益。分組和自選股頁共用，可以在自選股頁新增或改名稱。"

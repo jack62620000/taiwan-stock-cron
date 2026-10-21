@@ -5,6 +5,7 @@ import sys
 import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from utils.glossary import render_page_guide
 from utils.db import (
     get_stock_list, get_signal_dates, get_signals,
     get_signal_history, get_signal_performance,
@@ -21,6 +22,7 @@ require_login()
 
 st.set_page_config(page_title="每日選股訊號", page_icon="🎯", layout="wide")
 st.title("🎯 每日選股訊號")
+render_page_guide("signals")
 st.caption(
     "每個交易日收盤後，依固定規則幫全市場股票打分數："
     "總分 100 = 籌碼 32 + 資金 8 + 基本面 35 + 技術面 25（規則 v3）。"

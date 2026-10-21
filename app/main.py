@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from datetime import date, timedelta
+from utils.glossary import render_page_guide
 from utils.ui import apply_theme, render_metric_cards, style_sign
 from utils.db import (
     get_data_status, get_market_index, get_signal_dates, get_top_signals, get_watchlist,
@@ -44,6 +45,7 @@ st.set_page_config(
 )
 
 st.title("📈 台股分析系統")
+render_page_guide("home")
 
 
 # ===== 資料更新狀態 =====

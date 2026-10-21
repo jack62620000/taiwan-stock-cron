@@ -5,6 +5,7 @@ import sys
 import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from utils.glossary import render_page_guide
 from utils.db import (
     get_stock_list,
     get_watchlist, add_to_watchlist, update_watchlist_note, remove_from_watchlist,
@@ -18,6 +19,7 @@ require_login()
 
 st.set_page_config(page_title="自選股", page_icon="⭐", layout="wide")
 st.title("⭐ 自選股")
+render_page_guide("watchlist")
 st.caption("把常看的股票加進來，一頁看完最新股價、法人動向與營收，並分別用葛蘭碧法則與每日選股評分分析。"
            "清單存在資料庫，換裝置也看得到；每個人的帳號底下可以分成多個分組。")
 
