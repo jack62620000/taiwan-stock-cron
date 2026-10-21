@@ -7,7 +7,8 @@ from utils.db import (
     get_stock_info, get_daily_prices, get_quarterly, get_revenue, get_stock_ins,
     get_margin, get_holder, get_margin_utilization, get_market_index,
 )
-from utils.indicators import calc_all, get_latest_signals
+from utils.indicators import (calc_all, get_latest_signals, level, volume_level,
+                              POSITION_LEVELS, BOLL_LEVELS, BIAS_LEVELS)
 
 
 def load_card_data(stock_id):
@@ -173,10 +174,12 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
     kd_k       = signals.get("KD", {}).get("K")
     kd_d       = signals.get("KD", {}).get("D")
     kd_status  = signals.get("KD", {}).get("status", "N/A")
+    kd_note    = signals.get("KD", {}).get("note", "")
+    position_level = level(POSITION_LEVELS, position_pct)  # (名稱, 燈號, 說明)
     macd_hist  = signals.get("MACD", {}).get("hist")
 
     # ===== 其他技術面燈號：均線排列、乖離率、布林通道、量能 =====
-    # 燈號顏色沿用上面：偏多（紅）、過熱或偏空（綠）、中性（金）
+    # 每筆是 (指標, 數值, 燈號, 分級名稱, 說明)；燈號偏多紅、過熱或偏弱綠、中性金，分級見 indicators.py 的回測
     def _num(v):
         v = pd.to_numeric(v, errors="coerce")
         return None if pd.isna(v) else float(v)
@@ -213,29 +216,22 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
     extra_tech = []
     if None not in (ma5, ma20, ma60):
         if ma5 > ma20 > ma60:
-            extra_tech.append(("均線排列", "多頭排列", "bull", "5 日 > 20 日 > 60 日"))
+            extra_tech.append(("均線排列", "多頭排列", "bull", "多頭排列", "5 日 > 20 日 > 60 日"))
         elif ma5 < ma20 < ma60:
-            extra_tech.append(("均線排列", "空頭排列", "bear", "5 日 < 20 日 < 60 日"))
+            extra_tech.append(("均線排列", "空頭排列", "bear", "空頭排列", "5 日 < 20 日 < 60 日"))
         else:
-            extra_tech.append(("均線排列", "均線糾結", "neu", "5、20、60 日線交錯"))
+            extra_tech.append(("均線排列", "均線糾結", "neu", "均線糾結", "5、20、60 日線交錯"))
     if ma20:
         bias = (close / ma20 - 1) * 100
-        extra_tech.append(("乖離率（20 日）", f"{bias:+.1f}%",
-                           "bear" if bias > 10 else "bull" if bias < -10 else "neu",
-                           "正乖離過大，短線過熱" if bias > 10 else "負乖離過大，可能超跌" if bias < -10 else
-                           "站上 20 日線" if bias >= 0 else "跌破 20 日線"))
+        name, lamp, note = level(BIAS_LEVELS, bias)
+        extra_tech.append(("乖離率（20 日）", f"{bias:+.1f}%", lamp, name, note))
     if bb_up is not None and bb_low is not None and bb_up > bb_low:
         bb_pos = (close - bb_low) / (bb_up - bb_low) * 100
-        extra_tech.append(("布林通道", f"{bb_pos:.0f}%",
-                           "bear" if bb_pos >= 80 else "bull" if bb_pos <= 20 else "neu",
-                           "突破上軌" if bb_pos > 100 else "靠近上軌" if bb_pos >= 80 else
-                           "跌破下軌" if bb_pos < 0 else "靠近下軌" if bb_pos <= 20 else "通道中段"))
+        name, lamp, note = level(BOLL_LEVELS, bb_pos)
+        extra_tech.append(("布林通道", f"{bb_pos:.0f}%", lamp, name, note))
     if vol_ratio is not None:
-        if vol_ratio >= 1.5:
-            extra_tech.append(("量能", f"{vol_ratio:.1f} 倍", "bull" if change >= 0 else "bear",
-                               "價漲量增" if change >= 0 else "價跌量增"))
-        else:
-            extra_tech.append(("量能", f"{vol_ratio:.1f} 倍", "neu", "量縮" if vol_ratio < 0.7 else "量能正常"))
+        name, lamp, note = volume_level(vol_ratio, change)
+        extra_tech.append(("量能", f"{vol_ratio:.1f} 倍", lamp, name, note))
 
     return {
         "prices_ta": prices_ta,
@@ -274,6 +270,8 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         "kd_k": kd_k,
         "kd_d": kd_d,
         "kd_status": kd_status,
+        "kd_note": kd_note,
+        "position_level": position_level,
         "macd_hist": macd_hist,
         "ma5": ma5,
         "ma20": ma20,

@@ -29,14 +29,6 @@ def test_trend_text():
     assert trend_text(None) == ""
 
 
-def test_rsi_kd_zone():
-    """高檔是強勢區、低檔是弱勢區（回測顯示高檔之後反而比較強）"""
-    from utils.indicators import STRONG, WEAK, NORMAL, zone
-    assert zone(75, 70, 30) == STRONG == "強勢區"
-    assert zone(25, 70, 30) == WEAK == "弱勢區"
-    assert zone(50, 70, 30) == NORMAL
-
-
 def test_cross_state():
     from utils.card import cross_state
     assert cross_state(pd.Series([-1, -2, 1, 2, 3]), "K", "D") == ("↑", "K 在 D 上方，往上（2 天前黃金交叉）")
@@ -50,3 +42,26 @@ def test_rsi_five_levels():
     assert [rsi_level(v)[0] for v in (95, 90, 80, 60, 40, 30, 10)] == ["超買", "超買", "強勢", "偏強", "偏弱", "偏弱", "超賣"]
     assert rsi_level(float("nan")) == ("N/A", "")
     assert LAMP["超買"] == "bear" and LAMP["強勢"] == "bull" and LAMP["偏強"] == "neu"
+
+
+def test_kd_five_levels():
+    from utils.indicators import KD_LEVELS, level
+    names = [level(KD_LEVELS, v)[:2] for v in (95, 85, 60, 30, 10)]
+    assert names == [("超買", "bear"), ("強勢", "bull"), ("偏強", "neu"), ("偏弱", "neu"), ("超賣", "bear")]
+    assert level(KD_LEVELS, float("nan")) == ("N/A", "neu", "")
+
+
+def test_other_levels():
+    """位階、布林、乖離依回測分級：高檔偏多（紅），低檔偏弱（綠）"""
+    from utils.indicators import POSITION_LEVELS, BOLL_LEVELS, BIAS_LEVELS, level, volume_level
+    assert [level(POSITION_LEVELS, v)[:2] for v in (95, 80, 60, 30, 5)] == [
+        ("接近年高", "bull"), ("偏高", "bull"), ("中上段", "neu"), ("中下段", "bear"), ("接近年低", "bear")]
+    assert [level(BOLL_LEVELS, v)[0] for v in (120, 90, 50, 10, -5)] == [
+        "突破上軌", "靠近上軌", "通道中段", "靠近下軌", "跌破下軌"]
+    assert level(BOLL_LEVELS, 10)[1] == "bear" and level(BOLL_LEVELS, 90)[1] == "bull"
+    assert [level(BIAS_LEVELS, v)[:2] for v in (15, 7, 2, -5, -15)] == [
+        ("大幅正乖離", "bull"), ("正乖離", "neu"), ("站上月線", "neu"), ("跌破月線", "bear"), ("大幅負乖離", "neu")]
+    assert volume_level(3.5, -1)[0] == "爆量"
+    assert volume_level(2, 1)[:2] == ("價漲量增", "bull")
+    assert volume_level(2, -1)[:2] == ("價跌量增", "neu")
+    assert volume_level(0.5, 1)[0] == "量縮" and volume_level(1, 1)[0] == "量能正常"
