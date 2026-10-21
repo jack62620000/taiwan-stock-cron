@@ -122,6 +122,14 @@ jobs:
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
           LINE_WATCH_OWNER: ${{ secrets.LINE_WATCH_OWNER }}
         run: python line_push.py
+      # LINE 打字查詢用的分析卡：全部股票的卡片算好存到 Storage（archive 桶 _line_cards/，每天覆蓋，不佔資料庫）
+      - name: Build LINE lookup cards
+        id: cards
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python line_cards.py
       # 評分完再清除超過保留期限的舊資料（期限見 cleanup_old_data.py）
       - name: Clean up expired data
         env:
@@ -139,6 +147,11 @@ jobs:
         if: always() && steps.line.outcome == 'failure'
         run: |
           echo "::error title=LINE 推播失敗::自選股分析沒有推到 LINE，請看 Push watchlist analysis to LINE 這一步的紀錄"
+          exit 1
+      - name: Report LINE lookup cards failure
+        if: always() && steps.cards.outcome == 'failure'
+        run: |
+          echo "::error title=LINE 查詢卡片更新失敗::LINE 打字查詢會回覆前一天的卡片，請看 Build LINE lookup cards 這一步的紀錄"
           exit 1
 
   update-holder-only:
