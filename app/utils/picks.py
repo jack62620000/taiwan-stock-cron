@@ -13,7 +13,6 @@ import pandas as pd
 SLOTS = 10            # 同時最多持有幾檔（每檔 1/10 資金）
 HOLD = 10             # 買進後第幾個交易日開盤賣出
 TOP_N = 10            # 每天買進候選：每日選股前幾名
-START = "2026-06-01"  # 從這天開始照規則模擬（評分排名從這天起都有保留），起點固定，每天看到的持股才會一致
 
 BACKTEST_MD = """
 | 設定（大盤在季線上才買） | 總報酬 | 年化 | 最大回撤 | 勝率 |
@@ -31,11 +30,11 @@ BACKTEST_MD = """
 """
 
 RULES_MD = f"""
-**每天收盤後要做的事**
-1. 看大盤：加權指數收盤在 60 日均線（季線）之上才買新股票；在季線下就不買，手上的照時間賣。
-2. 賣出：買進後第 {HOLD} 個交易日開盤賣出，不管賺賠。
-3. 買進：空出來的名額，隔天開盤買每日選股前 {TOP_N} 名（已經持有的跳過，分數高的先買）。
-4. 最多同時持有 {SLOTS} 檔，每檔約放總資金的 1/{SLOTS}。
+**規則**
+1. 看大盤：加權指數收盤在 60 日均線（季線）之上才買；在季線下就不買新股票。
+2. 買進：隔天開盤買每日選股前 {TOP_N} 名。
+3. 賣出：買進後第 {HOLD} 個交易日開盤賣出，不管賺賠。
+4. 回測的做法是最多同時持有 {SLOTS} 檔、每檔約放總資金的 1/{SLOTS}，名額滿了就不買、已持有的不重複買。
 
 **標籤只是參考，不影響買賣**
 - 🚀 趨勢模板、新高量增、回檔再起：動能選股的訊號。
@@ -43,7 +42,6 @@ RULES_MD = f"""
 - 📐 法則2：近 5 個交易日出現過葛蘭碧法則 2。
 - ⚠️ 漲多：離 50 日線 30% 以上；⚠️ 葛蘭碧賣訊：今天出現法則 5、6、7。
 """
-
 
 def market_ok_by_date(index_df, ma_days=60):
     """加權指數每天收盤是否在 ma_days 日均線之上：{日期: bool}，均線算不出來的日子為 False"""
@@ -55,64 +53,52 @@ def market_ok_by_date(index_df, ma_days=60):
     return {str(d)[:10]: bool(c > m) if pd.notna(m) else False for d, c, m in zip(df["date"], close, ma)}
 
 
-def replay(dates, tops, market_ok, slots=SLOTS, hold=HOLD):
+def pick_record(dates, ranks, market_ok, prices, raw=None, hold=HOLD, cost_pct=0.0):
     """
-    照規則從 dates[0] 開始模擬每天的買賣（和回測的 sim.simulate 同樣做法）。
-    dates：評分日，由舊到新；tops：{評分日: [前 N 名 stock_id，依排名]}；market_ok：{評分日: 大盤在季線上}。
-    第 i 天開盤：先賣持有滿 hold 天的，再用前一天的前 N 名補空出來的名額。
-    回傳 (trades, plan)：
-    trades 每筆 {stock_id, signal_date, buy_date, buy_i, sell_date（還沒賣是 None）}；
-    plan 是明天開盤要做的事 {sell: [持股], buy: [stock_id], hold: [持股], market_ok, free}
+    每個評分日前 N 名的紀錄：評分隔天開盤買、第 hold 個交易日開盤賣的報酬（%，扣交易成本）。
+    dates：評分日（交易日），由舊到新；ranks：date、stock_id、rank、total_score；
+    market_ok：{評分日: 大盤在季線上}；prices：stock_id、date、open_price、close_price（還原權值，算報酬）；
+    raw：同樣欄位的原始價格（顯示買進價、賣出價、最新收盤，和券商看到的一樣），沒給就用 prices。
+    還沒到期的用最新收盤價算「至今」報酬。最新評分日還沒買進，不列入。
     """
-    pos, closed = [], []
-    for i in range(1, len(dates)):
-        d, prev = dates[i], dates[i - 1]
-        keep = []
-        for p in pos:
-            if i - p["buy_i"] >= hold:
-                closed.append({**p, "sell_date": d})
-            else:
-                keep.append(p)
-        pos = keep
-        free = slots - len(pos)
-        if free > 0 and market_ok.get(prev):
-            held = {p["stock_id"] for p in pos}
-            for sid in [s for s in tops.get(prev, []) if s not in held][:free]:
-                pos.append({"stock_id": sid, "signal_date": prev, "buy_date": d, "buy_i": i, "sell_date": None})
-    n = len(dates)  # 明天的位置
-    sell = [p for p in pos if n - p["buy_i"] >= hold]
-    remain = [p for p in pos if n - p["buy_i"] < hold]
-    free = slots - len(remain)
-    ok = bool(dates) and bool(market_ok.get(dates[-1]))
-    buy = []
-    if free > 0 and ok:
-        held = {p["stock_id"] for p in remain}
-        buy = [s for s in tops.get(dates[-1], []) if s not in held][:free]
-    for p in pos:
-        p["day"] = n - p["buy_i"]  # 今天是持有第幾天（買進當天算第 1 天）
-    return closed + pos, {"sell": sell, "buy": buy, "hold": remain, "market_ok": ok, "free": free}
+    cols = ["signal_date", "rank", "stock_id", "total_score", "market_ok", "buy_date", "sell_date",
+            "status", "buy_price", "sell_price", "last_close", "ret"]
+    if ranks.empty or len(dates) < 2:
+        return pd.DataFrame(columns=cols)
+    pos = {d: i for i, d in enumerate(dates)}
+    def lookup(df):
+        df = df.copy()
+        for c in ["open_price", "close_price"]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        return (df.set_index(["stock_id", "date"])["open_price"],
+                df.dropna(subset=["close_price"]).sort_values("date").groupby("stock_id")["close_price"].last())
 
-
-def trade_returns(trades, prices, cost_pct):
-    """
-    每筆交易的報酬（%，還原權值，扣交易成本）。prices：stock_id、date、open_price、close_price（還原權值）。
-    已賣出用賣出日開盤價；還沒賣用最新收盤價。回傳 DataFrame，多了 buy_price、now_price、ret 欄位。
-    """
-    df = pd.DataFrame(trades, columns=["stock_id", "signal_date", "buy_date", "buy_i", "sell_date", "day"])
-    if df.empty:
-        return df.assign(buy_price=None, now_price=None, ret=None)
-    px = prices.copy()
-    for c in ["open_price", "close_price"]:
-        px[c] = pd.to_numeric(px[c], errors="coerce")
-    opens = px.set_index(["stock_id", "date"])["open_price"]
-    last_close = px.dropna(subset=["close_price"]).sort_values("date").groupby("stock_id")["close_price"].last()
-    df["buy_price"] = [opens.get((s, d)) for s, d in zip(df["stock_id"], df["buy_date"])]
-    df["now_price"] = [opens.get((s, d)) if pd.notna(d) else last_close.get(s)
-                       for s, d in zip(df["stock_id"], df["sell_date"])]
-    for c in ["buy_price", "now_price"]:
+    opens, last_close = lookup(prices)
+    raw_opens, raw_close = lookup(raw if raw is not None else prices)
+    rows = []
+    for r in ranks.itertuples():
+        i = pos.get(r.date)
+        if i is None or i + 1 >= len(dates):
+            continue
+        buy_date = dates[i + 1]
+        sell_i = i + 1 + hold
+        sold = sell_i < len(dates)
+        buy = opens.get((r.stock_id, buy_date))
+        now = opens.get((r.stock_id, dates[sell_i])) if sold else last_close.get(r.stock_id)
+        rows.append({
+            "signal_date": r.date, "rank": r.rank, "stock_id": r.stock_id, "total_score": r.total_score,
+            "market_ok": bool(market_ok.get(r.date)), "buy_date": buy_date,
+            "sell_date": dates[sell_i] if sold else None,
+            "status": "已賣出" if sold else f"持有第 {len(dates) - 1 - i} / {hold} 天",
+            "buy_price": raw_opens.get((r.stock_id, buy_date)),
+            "sell_price": raw_opens.get((r.stock_id, dates[sell_i])) if sold else None,
+            "last_close": None if sold else raw_close.get(r.stock_id),
+            "ret": (now / buy - 1) * 100 - cost_pct if buy and now and pd.notna(buy) and pd.notna(now) else None,
+        })
+    df = pd.DataFrame(rows, columns=cols)
+    for c in ["buy_price", "sell_price", "last_close", "ret"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    df["ret"] = (df["now_price"] / df["buy_price"] - 1) * 100 - cost_pct
-    return df
+    return df.sort_values(["signal_date", "rank"], ascending=[False, True]).reset_index(drop=True)
 
 
 def stock_tags(ids, prices, momentum):

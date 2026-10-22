@@ -39,6 +39,15 @@ def test_page_with_empty_db(use_db, page):
     assert errors(at) == []
 
 
+@pytest.mark.parametrize("tab", ["🛒 明日買進", "🏆 評分排行", "📐 均線買賣點"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_picks_tabs(use_db, tab, empty):
+    """選股頁的三個分頁各自都要能顯示"""
+    use_db(empty=empty)
+    at = run_page(APP / "pages" / "0_選股.py", picks_tab=tab)
+    assert errors(at) == []
+
+
 def test_home_page(use_db):
     use_db()
     at = run_page(APP / "main.py")
@@ -87,14 +96,13 @@ def test_add_to_watchlist_from_stock_card(use_db):
         r for r in client.tables["watchlist"] if r["stock_id"] == "1101").items()
 
 
-GRANVILLE_PAGE = next(p for p in PAGES if p.startswith("6_"))
-DAILY_PAGE = next(p for p in PAGES if p.startswith("7_"))
+PICKS_PAGE = "0_選股.py"  # 葛蘭碧、每日選股都是選股頁的分頁
 
 
 @pytest.mark.parametrize("empty", [False, True])
 def test_granville_followup_tab(use_db, empty):
     use_db(empty=empty)
-    at = run_page(APP / "pages" / GRANVILLE_PAGE, granville_followup=True)
+    at = run_page(APP / "pages" / PICKS_PAGE, picks_tab="📐 均線買賣點", granville_followup=True)
     assert errors(at) == []
 
 
@@ -104,13 +112,13 @@ def test_granville_followup_table(use_db, monkeypatch):
     import utils.analysis as analysis
     date, df = analysis.momentum_followup()
     monkeypatch.setattr(analysis, "granville_followup", lambda: (date, df.drop(columns="signal")))
-    at = run_page(APP / "pages" / GRANVILLE_PAGE, granville_followup=True)
+    at = run_page(APP / "pages" / PICKS_PAGE, picks_tab="📐 均線買賣點", granville_followup=True)
     assert errors(at) == []
     assert any("至今%" in list(d.value.columns) or "ret_now" in list(d.value.columns) for d in at.dataframe)
 
 
 def test_momentum_followup_section(use_db):
     use_db()
-    at = run_page(APP / "pages" / DAILY_PAGE)
+    at = run_page(APP / "pages" / PICKS_PAGE, picks_tab="🏆 評分排行")
     assert errors(at) == []
     assert any("ret_now" in list(d.value.columns) for d in at.dataframe)

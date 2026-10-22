@@ -17,7 +17,7 @@ from utils.indicators import LAMP
 from utils.granville import STOP_RULE
 from utils.momentum import BACKTEST_MD, RULES_MD, momentum_summary
 from utils.groups import current_group
-from utils.ui import require_login, render_metric_cards, UP_COLOR, DOWN_COLOR, ACCENT, GLOW
+from utils.ui import require_login, render_metric_cards, go_picks_tab, UP_COLOR, DOWN_COLOR, ACCENT, GLOW
 require_login()
 
 st.set_page_config(page_title="個股分析卡", page_icon="🗂️", layout="wide")
@@ -471,11 +471,8 @@ with g_col:
             lines.append(f"- **賣出觸發價**：明天收盤 ≤ {g['賣出觸發價']:,.2f} 元（{g['賣出距離%']:+.2f}%）會出現法則 5 或 6")
         lines.append(f"- **趨勢**：{g['趨勢']}")
         st.markdown("\n".join(lines))
-        st.caption("依 20 日均線、葛蘭碧頁的預設參數；觸發價是推算「下一個交易日收盤」要到多少才會出現訊號。")
-    try:
-        st.page_link("pages/6_葛蘭碧八大法則.py", label="到葛蘭碧頁看完整說明", icon="📐")
-    except Exception:  # 單獨執行這一頁時找不到其他頁面
-        pass
+        st.caption("依 20 日均線、「均線買賣點」的預設參數；觸發價是推算「下一個交易日收盤」要到多少才會出現訊號。")
+    go_picks_tab("到「均線買賣點」看完整說明", "📐 均線買賣點", "card_go_granville", icon="📐")
 
 with s_col:
     st.subheader("🎯 每日選股評分")
@@ -510,10 +507,7 @@ with s_col:
             y=alt.Y("total_score:Q", title="總分", scale=alt.Scale(domain=[0, 100])),
             tooltip=[alt.Tooltip("date:T", title="日期"), alt.Tooltip("total_score:Q", title="總分")],
         ).properties(height=180), width="stretch")
-    try:
-        st.page_link("pages/7_每日選股訊號.py", label="到每日選股頁看規則回測", icon="🎯")
-    except Exception:
-        pass
+    go_picks_tab("到「評分排行」看規則回測", "🏆 評分排行", "card_go_signals", icon="🏆")
 
 # ===== 動能條件：趨勢模板、52 週新高突破（momentum.py 每天收盤後計算）=====
 @st.cache_data(ttl=3600)
@@ -546,10 +540,7 @@ else:
     with st.expander("📖 條件說明與回測結果"):
         st.markdown(RULES_MD)
         st.markdown(BACKTEST_MD)
-    try:
-        st.page_link("pages/7_每日選股訊號.py", label="到每日選股頁看今天符合條件的股票", icon="🚀")
-    except Exception:
-        pass
+    go_picks_tab("到「評分排行」的動能選股看今天符合條件的股票", "🏆 評分排行", "card_go_momentum", icon="🚀")
 
 # ===== 圖表 =====
 st.markdown("---")

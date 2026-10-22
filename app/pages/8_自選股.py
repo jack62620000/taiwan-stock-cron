@@ -14,7 +14,7 @@ from utils.granville import STOP_RULE, CHOP_DAYS, CHOP_CROSSES
 from utils.analysis import granville_status, load_watch_inputs
 from utils.paper import add_form
 from utils.groups import group_picker, group_manager
-from utils.ui import require_login, style_sign
+from utils.ui import require_login, style_sign, go_picks_tab
 require_login()
 
 st.set_page_config(page_title="自選股", page_icon="⭐", layout="wide")
@@ -123,7 +123,7 @@ def picks_table(ids, signals):
 
 # ===== 自選股總表 =====
 if not watch_ids:
-    st.info("還沒有自選股，用下方「新增自選股」加入，或在個股分析卡、葛蘭碧、每日選股頁按「⭐ 加入自選股」。")
+    st.info("還沒有自選股，用下方「新增自選股」加入，或在個股分析卡、選股頁按「⭐ 加入自選股」。")
 else:
     sig_dates, signals, prices, ins, revenue = load_watch_data(tuple(watch_ids))
     table = build_table(watch_ids, sig_dates, signals, prices, ins, revenue)
@@ -164,7 +164,7 @@ else:
         if g.empty:
             st.info("股價資料不足，暫時無法判斷葛蘭碧法則（新上市的股票要有 20 個交易日以上的資料）。")
         else:
-            st.caption(f"資料日期：{prices['date'].max()}（收盤後），依 20 日均線、葛蘭碧頁的預設參數。"
+            st.caption(f"資料日期：{prices['date'].max()}（收盤後），依 20 日均線、「均線買賣點」的預設參數。"
                        "觸發價是推算「下一個交易日收盤」要到多少才會出現訊號；"
                        f"停損價是{STOP_RULE}；每張風險是買在預計價、跌到停損價出場，一張會虧多少元。")
             m1, m2, m3, m4 = st.columns(4)
@@ -194,10 +194,7 @@ else:
                     "說明": st.column_config.TextColumn(width="large"),
                 },
             )
-            try:
-                st.page_link("pages/6_葛蘭碧八大法則.py", label="到葛蘭碧頁看走勢圖與完整說明", icon="📐")
-            except Exception:  # 單獨執行這一頁時找不到其他頁面
-                pass
+            go_picks_tab("到「均線買賣點」看走勢圖與完整說明", "📐 均線買賣點", "watch_go_granville", icon="📐")
 
     with tab_picks:
         if signals.empty:
@@ -233,10 +230,7 @@ else:
                 opacity=alt.condition(focus, alt.value(1), alt.value(0.15)),
                 tooltip=[alt.Tooltip("date:T", title="日期"), "股票:N", alt.Tooltip("total_score:Q", title="總分")],
             ).add_params(focus).properties(height=320), width="stretch")
-            try:
-                st.page_link("pages/7_每日選股訊號.py", label="到每日選股頁看單一個股的規則回測", icon="🎯")
-            except Exception:
-                pass
+            go_picks_tab("到「評分排行」看單一個股的規則回測", "🏆 評分排行", "watch_go_signals", icon="🏆")
 
 st.markdown("---")
 
