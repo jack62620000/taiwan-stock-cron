@@ -433,7 +433,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 # st.components.v1.html 已被 Streamlit 標為淘汰，改用 st.iframe；高度跟著內容自動調整，不必另外捲動
 st.iframe(html, height="content")
 
-# ===== 葛蘭碧與每日選股分析（和自選股頁相同的判斷）=====
+# ===== 均線買賣點與評分排行（和自選股頁相同的判斷）=====
 @st.cache_data(ttl=3600)
 def load_granville(stock_id, prices, ins):
     cols = [c for c in ["stock_id", "date", "high_price", "low_price", "close_price", "volume"] if c in prices.columns]
@@ -450,7 +450,7 @@ SCORE_RECENT, SCORE_TOP = 20, 20
 st.markdown("---")
 g_col, s_col = st.columns(2)
 with g_col:
-    st.subheader("📐 葛蘭碧分析")
+    st.subheader("📐 均線買賣點")
     g = load_granville(stock_id, prices, ins)
     if g.empty:
         st.info("股價資料不足，暫時無法判斷葛蘭碧法則（要有 20 個交易日以上的資料）。")
@@ -475,10 +475,10 @@ with g_col:
     go_picks_tab("到「均線買賣點」看完整說明", "📐 均線買賣點", "card_go_granville", icon="📐")
 
 with s_col:
-    st.subheader("🎯 每日選股評分")
+    st.subheader("🏆 評分排行")
     hist = load_score_history(stock_id)
     if hist.empty:
-        st.info("這檔股票沒有每日選股評分（可能是新上市或資料不足）。")
+        st.info("這檔股票沒有評分（可能是新上市或資料不足）。")
     else:
         now = hist.iloc[-1]
         recent = hist.tail(SCORE_RECENT)

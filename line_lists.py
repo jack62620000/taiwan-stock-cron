@@ -62,7 +62,7 @@ def _rest_line(df, n_rest, id_col, name_col):
     return ["", "一次回覆放不下，其餘請直接輸入代號查：" + "、".join(f"{r[id_col]} {r[name_col]}" for _, r in rest.iterrows())]
 
 
-# ===== 葛蘭碧：等待法則2 =====
+# ===== 均線買賣點：等待法則2 =====
 def granville_bubble(r):
     trig = _num(r["觸發價"])
     rows = [
@@ -91,7 +91,7 @@ def rebound_bubble(r):
 
 
 def granville_messages(date, table, rebound=None):
-    """葛蘭碧回覆：第一則文字（說明與欄位解釋），之後每檔一張卡；最後一則輪播是急跌反彈候選（有的話）"""
+    """均線買賣點回覆：第一則文字（說明與欄位解釋），之後每檔一張卡；最後一則輪播是急跌反彈候選（有的話）"""
     from utils.analysis import GRANVILLE_DEFAULTS, GRANVILLE_MIN_VOLUME
     from utils.granville import CHOP_CROSSES, CHOP_DAYS, HOLD_HINT, RS_DAYS, STOP_RULE, WATCH_DAYS
     waiting = table[table["狀態"] == "⏳ 等待法則2"] if not table.empty else table
@@ -117,14 +117,14 @@ def granville_messages(date, table, rebound=None):
     if waiting.empty:
         lines[1] = "目前沒有等待法則 2 的股票。"
     reb_slots = 1 if not rebound.empty else 0
-    msgs, n_rest = _pack("葛蘭碧：等待法則2", [granville_bubble(r) for _, r in waiting.iterrows()],
+    msgs, n_rest = _pack("均線買賣點：等待法則2", [granville_bubble(r) for _, r in waiting.iterrows()],
                          MAX_MESSAGES - 1 - reb_slots)
     lines += _rest_line(waiting, n_rest, "代號", "名稱")
     lines += ["", f"【🔵 急跌反彈候選（法則 4）】共 {len(rebound)} 檔",
               f"均線往下、收盤離均線 {GRANVILLE_DEFAULTS['bias_pct']:g}% 以上（負乖離過大）。回測隔天開盤買、持有 20 個交易日，"
               "前後兩段都比全部股票平均好約 2%，但勝率只有四成多，買之前一定要設停損。"]
     if reb_slots:
-        reb_msgs, reb_rest = _pack("葛蘭碧：急跌反彈候選", [rebound_bubble(r) for _, r in rebound.iterrows()], reb_slots)
+        reb_msgs, reb_rest = _pack("均線買賣點：急跌反彈候選", [rebound_bubble(r) for _, r in rebound.iterrows()], reb_slots)
         msgs += reb_msgs
         lines += _rest_line(rebound, reb_rest, "代號", "名稱")
     else:
@@ -168,7 +168,7 @@ def picks_messages(date, top, regime):
     ]
     lines += [f"{int(r['rank'])}. {r['stock_id']} {r.get('stock_name') or ''}（{_f(r['total_score'], decimals=0)} 分）"
               + (f"　{'　'.join(r['tags'])}" if r["tags"] else "") for _, r in top.iterrows()]
-    lines += ["", "標籤只是參考，不影響買賣：🚀 動能選股訊號、🎯 布林收斂、📐 近 5 日法則 2、⚠️ 漲多或葛蘭碧賣訊。"]
+    lines += ["", "標籤只是參考，不影響買賣：🚀 動能選股訊號、🎯 布林收斂、📐 近 5 日法則 2、⚠️ 漲多或均線賣訊。"]
     msgs, _ = _pack("明日買進", [picks_bubble(r) for _, r in top.iterrows()], 1)
     return [{"type": "text", "text": "\n".join(lines)[:TEXT_MAX]}] + msgs
 
@@ -235,7 +235,7 @@ def momentum_messages(mom):
 
 
 def load_momentum():
-    """同每日選股頁的 load_momentum：最新一天的動能選股，數字欄位轉成數值、加上名稱與產業"""
+    """同評分排行分頁的 load_momentum：最新一天的動能選股，數字欄位轉成數值、加上名稱與產業"""
     from utils.db import get_momentum_latest, get_stock_list
     df = get_momentum_latest()
     if df.empty:

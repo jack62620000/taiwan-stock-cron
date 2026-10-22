@@ -152,7 +152,7 @@ def get_latest_prices():
 
 def get_recent_closes(calendar_days=40, columns="stock_id, date, close_price", adjust=True):
     """
-    取所有股票最近 calendar_days 天（日曆天）的收盤價，給總覽頁算 RSI、葛蘭碧頁算均線用。
+    取所有股票最近 calendar_days 天（日曆天）的收盤價，給總覽頁算 RSI、均線買賣點分頁算均線用。
     40 個日曆天約 25 個交易日，遇到長假也夠算 RSI(14)。
     adjust=True 時回傳還原權值後的價格（見 apply_adjustments）。
     """
@@ -162,7 +162,7 @@ def get_recent_closes(calendar_days=40, columns="stock_id, date, close_price", a
     return df
 
 def get_recent_ins(calendar_days=10, columns="stock_id, date, foreign_net_shares"):
-    """取所有股票最近 calendar_days 天（日曆天）的法人買賣超，給葛蘭碧頁的籌碼確認條件用"""
+    """取所有股票最近 calendar_days 天（日曆天）的法人買賣超，給均線買賣點分頁的籌碼確認條件用"""
     return _recent_series("stock_ins_daily", calendar_days, columns)
 
 # 資料庫函式（sql/functions.sql）一次回傳「每檔股票一列、近期每天的值放在陣列裡」，
@@ -410,7 +410,7 @@ def get_momentum_latest():
 
 def get_momentum_events(since):
     """since 之後出現過的動能訊號（52 週新高＋量增、剛符合趨勢模板、趨勢中回檔再起；只有 20 日均量夠的股票），依日期排序。
-    momentum.py 只把有訊號的列多留一個月，給每日選股頁的事後追蹤用"""
+    momentum.py 只把有訊號的列多留一個月，給評分排行分頁的事後追蹤用"""
     cols = "stock_id, date, close_price, trend_template, trend_new, breakout, pullback"
     frames = [pd.DataFrame(_fetch_all(lambda c=c: supabase.table("momentum_signals").select(cols)
                                       .gte("date", since).eq("liquid", True).eq(c, True)
@@ -430,7 +430,7 @@ DATA_TABLES = [
     ("融資融券", "margin_utilization", "date", "日"),
     ("大盤指數", "market_index", "date", "日"),
     ("期貨三大法人", "futures_institutional", "date", "日"),
-    ("每日選股評分", "daily_signals", "date", "日"),
+    ("評分排行", "daily_signals", "date", "日"),
     ("大戶持股", "holder_distribution", "week_date", "週"),
     ("月營收", "monthly_revenue", "year_month", "月"),
     ("季報", "quarterly_report", None, "季"),

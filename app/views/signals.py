@@ -202,7 +202,7 @@ with tab_rank:
         },
     )
 
-    add_watch_form(view, "每日選股", date, "picks")
+    add_watch_form(view, "評分排行", date, "picks")
 
     with st.expander("📖 評分規則說明"):
         st.markdown("""
@@ -288,7 +288,7 @@ with tab_stock:
 
     b1, b2 = st.columns(2)
     with b2:
-        add_watch_button(stock_id, row.get("stock_name", ""), "每日選股", date, "stock")
+        add_watch_button(stock_id, row.get("stock_name", ""), "評分排行", date, "stock")
     with b1:
         if st.button("🗂️ 前往個股分析卡", width="stretch"):
             st.session_state["card_stock_id"] = stock_id
@@ -349,7 +349,7 @@ with tab_backtest:
                     .map(style_sign, subset=[f"持有{h}日平均%" for h in HORIZONS]),
                 hide_index=True, width="stretch",
             )
-            add_watch_button(bt_id, bt_name, "每日選股回測", dates[0], "backtest")
+            add_watch_button(bt_id, bt_name, "評分排行回測", dates[0], "backtest")
         with right:
             pts = bt.dropna(subset=[ret]).assign(
                 組別=lambda d: (d["rank"].notna() & (d["rank"] <= bt_top)).map({True: f"前 {bt_top} 名", False: "其他"}))

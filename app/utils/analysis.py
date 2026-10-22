@@ -57,7 +57,7 @@ def load_watch_inputs(ids, score_days=60):
 
 def granville_status(ids, prices, ins, names=None):
     """
-    每檔股票的葛蘭碧狀態（參數同葛蘭碧頁的預設值）：今天符合的法則、法則 1 之後的狀態、
+    每檔股票的均線買賣點狀態（參數同均線買賣點分頁的預設值）：今天符合的法則、法則 1 之後的狀態、
     明天收盤到多少會出現法則 2（買進）或法則 5、6（賣出）、停損價。自選股頁與個股分析卡共用。
     prices：stock_id、date、close_price、volume（還原權值，至少約 65 個交易日才算得出季線），
     有 high_price、low_price 時用 ATR 算停損價；
@@ -140,7 +140,7 @@ BUY_COLUMNS = ["狀態", "代號", "名稱", "產業", "最新收盤", "觸發�
 
 def granville_buy_table(cand, trig, ma_now, crosses, rs, atrs):
     """
-    葛蘭碧頁「準備買進」表（網頁與 LINE 共用）。
+    均線買賣點分頁「準備買進」表（網頁與 LINE 共用）。
     cand：rule1_watchlist 中狀態為「今天出現法則2」「等待法則2」的列（含 stock_name、industry）；
     trig：等待中股票的法則 2 觸發價（next_day_triggers，index 為 stock_id）；
     ma_now：最新均線；crosses：穿越均線次數；rs：比大盤強弱；atrs：ATR。
@@ -192,7 +192,7 @@ def granville_buy_table(cand, trig, ma_now, crosses, rs, atrs):
     return buy_df, triggers
 
 
-# 葛蘭碧頁的預設參數（頁面左側「恢復預設參數」的值）
+# 均線買賣點分頁的預設參數（頁面左側「恢復預設參數」的值）
 GRANVILLE_DEFAULTS = {"ma_days": 20, "slope_days": 5, "lookback": 5, "near_pct": 2.0, "bias_pct": 10.0}
 GRANVILLE_MIN_VOLUME = 500
 
@@ -203,7 +203,7 @@ REBOUND_COLUMNS = ["代號", "名稱", "產業", "最新收盤", "均線", "乖�
 def granville_rebound_table(df, rs):
     """
     急跌反彈候選：今天出現法則 4（均線往下、負乖離過大）的股票，跌越深排越前面。
-    df 是 granville_signals 合併股票名稱後的表，rs 是 relative_strength。葛蘭碧頁與 LINE 共用。
+    df 是 granville_signals 合併股票名稱後的表，rs 是 relative_strength。均線買賣點分頁與 LINE 共用。
     """
     hit = df[df["rules"].apply(lambda r: 4 in r).astype(bool)] if not df.empty else df
     if hit.empty:
@@ -217,8 +217,8 @@ def granville_rebound_table(df, rs):
 
 def granville_default():
     """
-    用葛蘭碧頁的預設參數、不加任何篩選，算出「準備買進」與「急跌反彈候選」表（LINE 查詢用，和網頁打開時看到的相同）。
-    資料同葛蘭碧頁：近 100 個日曆天股價、近 60 個日曆天法人。回傳 (資料日期, 準備買進表, 急跌反彈候選表)；沒有資料時表格是空的
+    用均線買賣點分頁的預設參數、不加任何篩選，算出「準備買進」與「急跌反彈候選」表（LINE 查詢用，和網頁打開時看到的相同）。
+    資料同均線買賣點分頁：近 100 個日曆天股價、近 60 個日曆天法人。回傳 (資料日期, 準備買進表, 急跌反彈候選表)；沒有資料時表格是空的
     """
     from utils.db import get_recent_closes, get_recent_ins, get_stock_list
     empty_buy, empty_rebound = pd.DataFrame(columns=BUY_COLUMNS), pd.DataFrame(columns=REBOUND_COLUMNS)
@@ -250,7 +250,7 @@ def granville_default():
     return latest, table, rebound
 
 # =====================================================================
-# 訊號事後追蹤：最近出現過的訊號，之後實際漲跌多少（葛蘭碧頁、每日選股頁共用）
+# 訊號事後追蹤：最近出現過的訊號，之後實際漲跌多少（均線買賣點分頁、評分排行分頁共用）
 # =====================================================================
 FOLLOW_DAYS = 20  # 追蹤最近幾個交易日出現的訊號
 TRADE_COST_PCT = 0.585  # 一買一賣的交易成本（%）：手續費買賣各 0.1425%＋證交稅 0.3%
@@ -336,7 +336,7 @@ def load_followup_indexes(n=FOLLOW_DAYS + 5):
 
 def granville_followup(days=FOLLOW_DAYS):
     """
-    葛蘭碧頁「事後追蹤」：最近 days 個交易日出現過的法則 2 買點（預設參數、20 日均量 ≥ 500 張），
+    均線買賣點分頁「事後追蹤」：最近 days 個交易日出現過的法則 2 買點（預設參數、20 日均量 ≥ 500 張），
     隔天開盤買進到今天的漲跌。回傳 (資料日期, 表格)
     """
     from utils.db import get_recent_closes, get_recent_ins, get_stock_list
@@ -359,7 +359,7 @@ def granville_followup(days=FOLLOW_DAYS):
 
 def rebound_followup(days=FOLLOW_DAYS):
     """
-    葛蘭碧頁「事後追蹤」的急跌反彈：最近 days 個交易日剛出現法則 4 的股票（預設參數、20 日均量 ≥ 500 張），
+    均線買賣點分頁「事後追蹤」的急跌反彈：最近 days 個交易日剛出現法則 4 的股票（預設參數、20 日均量 ≥ 500 張），
     隔天開盤買進到今天的漲跌。回傳 (資料日期, 表格)
     """
     from utils.db import get_recent_closes, get_stock_list
@@ -382,7 +382,7 @@ MOMENTUM_FOLLOW_PICKS = ["兩者同時", "趨勢中回檔再起", "52 週新高�
 
 def momentum_followup(days=FOLLOW_DAYS):
     """
-    每日選股頁「事後追蹤」：最近 days 個交易日出現過的動能訊號，隔天開盤買進到今天的漲跌。
+    評分排行分頁「事後追蹤」：最近 days 個交易日出現過的動能訊號，隔天開盤買進到今天的漲跌。
     signal 欄位是這次訊號屬於哪幾類（MOMENTUM_FOLLOW_PICKS，用「、」連接）。回傳 (資料日期, 表格)
     """
     from utils.db import get_momentum_events, get_recent_dates, get_stock_list
@@ -410,7 +410,7 @@ FOLLOW_NOTE = (
 
 
 def render_followup(df, extra_cols=None):
-    """事後追蹤的指標卡片與表格（葛蘭碧頁、每日選股頁共用）；extra_cols：{欄位: column_config} 放在名稱後面"""
+    """事後追蹤的指標卡片與表格（均線買賣點分頁、評分排行分頁共用）；extra_cols：{欄位: column_config} 放在名稱後面"""
     from utils.ui import render_metric_cards, style_sign
     s = followup_summary(df)
     if s is None:
@@ -449,7 +449,7 @@ def render_followup(df, extra_cols=None):
 
 
 # =====================================================================
-# 大盤季線提醒：加權指數收盤在 60 日均線之下時提醒（葛蘭碧頁、每日選股頁、LINE 清單共用）
+# 大盤季線提醒：加權指數收盤在 60 日均線之下時提醒（均線買賣點分頁、評分排行分頁、LINE 清單共用）
 # 回測（2025-02～2026-10，持有 20 日）：季線下的買進訊號平均明顯較差，所以提醒但不擋訊號
 # =====================================================================
 MARKET_MA = 60

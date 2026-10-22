@@ -21,7 +21,7 @@ render_page_guide("picks")
 # ===== 載入資料 =====
 @st.cache_data(ttl=3600)
 def load_today():
-    """最新評分日與當天每日選股前 N 名（含名稱、產業、參考標籤）"""
+    """最新評分日與當天評分前 N 名（含名稱、產業、參考標籤）"""
     return buy_list()
 
 
@@ -74,7 +74,7 @@ tab_buy, tab_record, tab_rules = st.tabs(["🛒 明天開盤買進", "📒 紀�
 
 pct = st.column_config.NumberColumn
 with tab_buy:
-    st.markdown(f"#### {last} 每日選股前 {TOP_N} 名" + ("" if market_ok else "（大盤在季線下，先不買）"))
+    st.markdown(f"#### {last} 評分前 {TOP_N} 名" + ("" if market_ok else "（大盤在季線下，先不買）"))
     view = pd.DataFrame({
         "排名": today["rank"], "代號": today["stock_id"],
         "名稱": today["stock_name"], "產業": today["industry"],

@@ -33,7 +33,7 @@ def test_push_all_groups(use_db):
     bubbles = [b for m in msgs[1:] for b in m["contents"]["contents"]]
     assert len(bubbles) == len(ids)
     text = json.dumps(bubbles, ensure_ascii=False)
-    for section in ("52 週股價區間", "基本面", "營收表現", "籌碼面", "資金面", "技術面燈號", "葛蘭碧分析", "每日選股評分", "動能條件"):
+    for section in ("52 週股價區間", "基本面", "營收表現", "籌碼面", "資金面", "技術面燈號", "均線買賣點", "評分排行", "動能條件"):
         assert section in text
     assert all(len(json.dumps(m, ensure_ascii=False).encode()) <= line_push.CAROUSEL_MAX_BYTES for m in msgs[1:])
     assert all(c["to"] == "U123" and len(c["messages"]) <= 5 for c in post.calls)

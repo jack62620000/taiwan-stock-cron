@@ -1,6 +1,6 @@
 import pandas as pd
 
-# 動能選股（momentum.py 每天收盤後計算，寫進 momentum_signals）：條件與回測說明，每日選股頁與個股分析卡共用
+# 動能選股（momentum.py 每天收盤後計算，寫進 momentum_signals）：條件與回測說明，評分排行分頁與個股分析卡共用
 RS_MIN = 70
 BREAKOUT_VOL = 1.5
 HOT_PCT = 30   # 收盤在 50 日均線之上這麼多 % 以上算「漲多」，清單直接剔除（回測 60 日已沒有優勢）
@@ -132,7 +132,7 @@ def off_ma50(df):
 
 def momentum_choices(liq):
     """
-    動能選股頁的分類（每日選股頁與 LINE 共用）：{名稱: 布林 Series}；liq 是 20 日均量夠的股票。
+    動能選股頁的分類（評分排行分頁與 LINE 共用）：{名稱: 布林 Series}；liq 是 20 日均量夠的股票。
     離 50 日均線 HOT_PCT% 以上（漲多）的股票不列入
     """
     flag = lambda c: liq[c].fillna(False).astype(bool) if c in liq else pd.Series(False, index=liq.index)  # noqa: E731
@@ -155,7 +155,7 @@ def hot_count(liq):
 
 def momentum_table(view):
     """
-    動能選股表的欄位（每日選股頁與 LINE 共用）：離 52 週高點 %、離 50 日線 %、停損價、每張風險、趨勢模板／新高突破打勾，
+    動能選股表的欄位（評分排行分頁與 LINE 共用）：離 52 週高點 %、離 50 日線 %、停損價、每張風險、趨勢模板／新高突破打勾，
     依 RS、量比由高到低排序。view 需要 close_price、ma50、high_52w、atr14、rs_rating、vol_ratio、trend_template、breakout
     """
     from utils.granville import stop_price

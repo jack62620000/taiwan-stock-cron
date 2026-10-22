@@ -4,8 +4,8 @@ LINE 自選股推播 - 把分組的自選股推到 LINE，每檔一張完整的�
 
 內容和網頁「個股分析卡」頁是同一套程式算出來的：
     卡片數據（52 週區間、基本面、營收、籌碼、資金、技術面燈號）：utils.card
-    葛蘭碧分析：utils.analysis.granville_status
-    每日選股評分：daily_signals
+    均線買賣點：utils.analysis.granville_status
+    評分排行：daily_signals
     動能條件：utils.momentum.momentum_summary
 網頁的分析改了，推播也會跟著改。圖表（股價走勢、法人買賣超等）沒有放進推播。
 
@@ -305,7 +305,7 @@ def stock_bubble(sid, a):
                      lamp.get(ts["lamp"]))] + tech
     body += _section("⑥ 技術面燈號", tech)
 
-    # 📐 葛蘭碧分析
+    # 📐 均線買賣點
     rows = []
     if g is None:
         rows.append(_text("股價資料不足，暫時無法判斷葛蘭碧法則", color=GRAY))
@@ -322,12 +322,12 @@ def stock_bubble(sid, a):
         if _num(g.get("賣出觸發價")) is not None:
             rows.append(_row("賣出觸發價", f"收盤 ≤ {_f(g['賣出觸發價'])}（{_f(g['賣出距離%'], '%')}）"))
         rows.append(_row("趨勢", g["趨勢"]))
-    body += _section("📐 葛蘭碧分析", rows)
+    body += _section("📐 均線買賣點", rows)
 
-    # 🎯 每日選股評分
+    # 🏆 評分排行
     rows = []
     if hist.empty:
-        rows.append(_text("沒有每日選股評分（可能是新上市或資料不足）", color=GRAY))
+        rows.append(_text("沒有評分（可能是新上市或資料不足）", color=GRAY))
     else:
         now = hist.iloc[-1]
         prev = _num(hist.iloc[-2]["total_score"]) if len(hist) > 1 else None
@@ -346,7 +346,7 @@ def stock_bubble(sid, a):
         rows.append(_text("✅ 加分理由：" + ("、".join(reasons) or "無")))
         if warnings:
             rows.append(_text("⚠️ 風險提醒：" + "、".join(warnings), color=WARN))
-    body += _section("🎯 每日選股評分", rows)
+    body += _section("🏆 評分排行", rows)
 
     # 🚀 動能條件
     if mom is None:
