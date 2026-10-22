@@ -13,7 +13,7 @@ from utils.db import (
 )
 from utils.watch import add_watch_form, add_watch_button
 from utils.granville import STOP_RULE
-from utils.momentum import BACKTEST_MD, RULES_MD, momentum_choices, momentum_table
+from utils.momentum import BACKTEST_MD, HOT_PCT, RULES_MD, hot_count, momentum_choices, momentum_table
 from utils.analysis import (
     FOLLOW_DAYS, MOMENTUM_FOLLOW_PICKS, TRADE_COST_PCT, momentum_followup, render_followup, render_market_warning,
 )
@@ -428,23 +428,21 @@ with tab_momentum:
     else:
         m_date = mom["date"].max()
         liq = mom[mom["liquid"]]
-        st.caption(f"資料日期：{m_date}（收盤後）。只判斷 20 日均量 500 張以上的股票，共 {len(liq):,} 檔；"
-                   "條件說明與回測結果在下方。")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("兩者同時", f"{int((liq['trend_template'] & liq['breakout']).sum())} 檔")
-        m2.metric("52 週新高＋量增", f"{int(liq['breakout'].sum())} 檔")
-        m3.metric("符合趨勢模板", f"{int(liq['trend_template'].sum())} 檔")
-        m4.metric("今天剛符合趨勢模板", f"{int(liq['trend_new'].sum())} 檔")
         choices = momentum_choices(liq)
+        st.caption(f"資料日期：{m_date}（收盤後）。只判斷 20 日均量 500 張以上的股票，共 {len(liq):,} 檔；"
+                   f"已剔除離 50 日線 {HOT_PCT}% 以上的漲多股 {hot_count(liq)} 檔。條件說明與回測結果在下方。")
+        metric_cols = st.columns(len(choices))
+        for col, (name, mask) in zip(metric_cols, choices.items()):
+            col.metric(name, f"{int(mask.sum())} 檔")
         pick = st.radio("顯示", list(choices), horizontal=True, key="momentum_pick",
-                        help="回測以「兩者同時」最好；趨勢模板（全部）每天都很多檔，適合當作篩選的第一步")
+                        help="回測 60 日以「趨勢中回檔再起」最好、「兩者同時」其次；趨勢模板（全部）每天都很多檔，適合當作篩選的第一步")
         view = liq[choices[pick]].copy()
         if view.empty:
             st.info(f"{m_date} 沒有「{pick}」的股票。")
         else:
             view = momentum_table(view)
             table = view[["stock_id", "stock_name", "industry", "close_price", "rs_rating", "vol_ratio",
-                          "off_high", "tt", "bo", "stop", "risk"]]
+                          "off_high", "off_ma50", "tt", "bo", "stop", "risk"]]
             st.dataframe(
                 table, hide_index=True, width="stretch", height=min(42 + 35 * len(table), 600),
                 column_config={
@@ -458,6 +456,8 @@ with tab_momentum:
                                                                help="今天成交量 ÷ 前 50 日均量"),
                     "off_high": st.column_config.NumberColumn("離52週高%", format="%.1f",
                                                               help="0 代表今天就是 52 週新高"),
+                    "off_ma50": st.column_config.NumberColumn("離50日線%", format="%.1f",
+                                                              help=f"收盤離 50 日均線多少 %；{HOT_PCT}% 以上算漲多，不列入"),
                     "tt": st.column_config.TextColumn("趨勢模板", width="small"),
                     "bo": st.column_config.TextColumn("新高突破", width="small"),
                     "stop": st.column_config.NumberColumn("停損價", format="%.2f", help=STOP_RULE),

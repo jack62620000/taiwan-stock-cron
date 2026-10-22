@@ -76,7 +76,7 @@ def test_momentum_three_picks(use_db):
     for pick in line_lists.MOMENTUM_PICKS:
         assert pick in msgs[0]["text"]
     text = json.dumps(msgs[1:], ensure_ascii=False)
-    for field in ("RS", "量比", "離52週高%", "趨勢模板", "新高突破", "停損價", "每張風險"):
+    for field in ("RS", "量比", "離52週高%", "離50日線%", "趨勢模板", "新高突破", "停損價", "每張風險"):
         assert field in text
 
 

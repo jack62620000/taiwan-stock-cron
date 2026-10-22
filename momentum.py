@@ -10,6 +10,8 @@
      ⑧ 相對強度（RS）在有流動性的股票裡前 30%（RS 是近 3、6、9、12 個月漲幅的加權，最近 3 個月占 40%）
   2. 52 週新高突破：收盤創 52 週新高，而且成交量至少是前 50 日均量的 1.5 倍；
      前 10 個交易日內已經突破過的不重複算。
+  3. 趨勢中回檔再起：符合趨勢模板，前 10 個交易日內收盤碰過布林下軌（20 日均線 − 2 個標準差），
+     今天收盤由下往上站上布林中軌（20 日均線）。
   只有 20 日均量 ≥ 500 張的股票會判斷這兩種條件；其他股票仍寫入均線等數值給個股分析卡參考。
 
 回測（2025/1～2026/10，20 日均量 500 張以上的普通股，訊號隔天開盤買進，未扣約 0.6% 交易成本）：
@@ -18,6 +20,8 @@
   新高突破＋量增 +3.9%、+12.5%、51%
   兩者同時      +5.2%、+17.2%、55%
   2025、2026 兩年分開看都贏全部股票；勝率只有五成上下，報酬集中在少數大漲股，要搭配停損。
+  和全部股票平均比的 60 日超額報酬：趨勢模板 +5.6%、趨勢中回檔再起 +11.0%（約 350 次）；
+  離 50 日均線 30% 以上的趨勢模板股只剩 +0.2%，網頁與 LINE 的清單會剔除（utils.momentum.HOT_PCT）。
   這段期間台股偏多頭，空頭時效果可能變差。
 
 用法：
@@ -43,6 +47,8 @@ RS_MIN = 70               # 相對強度至少贏過 70% 的股票
 BREAKOUT_VOL = 1.5        # 突破當天成交量至少是前 50 日均量的倍數
 BREAKOUT_GAP = 10         # 前幾個交易日內已突破過就不重複算
 ATR_DAYS = 14
+BOLL_DAYS = 20            # 布林通道用 20 日均線 ± 2 個標準差
+PULLBACK_DAYS = 10        # 趨勢中回檔再起：前幾個交易日內碰過布林下軌
 KEEP_DAYS = 5             # 資料表只保留最近這麼多個交易日（網頁只看最新一天；資料庫免費額度 500 MB，盡量省空間）
 EVENT_KEEP_DAYS = 30      # 有訊號的列（新高突破、剛符合趨勢模板）多留這麼多個交易日，給每日選股頁的事後追蹤（每天約十幾～幾十列）
 BATCH_SIZE = 500
@@ -104,6 +110,10 @@ def compute(prices, adjust, targets):
     raw_break = new_high & (vol_ratio >= BREAKOUT_VOL) & liquid
     recent = raw_break.astype(float).shift(1).rolling(BREAKOUT_GAP, min_periods=1).max().fillna(0)
     breakout = raw_break & (recent == 0)
+    mid = close.rolling(BOLL_DAYS, min_periods=BOLL_DAYS).mean()
+    lower = mid - 2 * close.rolling(BOLL_DAYS, min_periods=BOLL_DAYS).std(ddof=0)
+    touched = (close <= lower).astype(float).shift(1).rolling(PULLBACK_DAYS, min_periods=1).max().fillna(0) > 0
+    pullback = template & touched & (close > mid) & (close.shift(1) <= mid.shift(1))
 
     def num(frame, d, sid, digits=2):
         v = frame.at[d, sid] if sid in frame.columns else np.nan
@@ -130,6 +140,7 @@ def compute(prices, adjust, targets):
                 "trend_new": bool(template_new.at[d, sid]),
                 "new_high": bool(new_high.at[d, sid]),
                 "breakout": bool(breakout.at[d, sid]),
+                "pullback": bool(pullback.at[d, sid]),
                 "liquid": bool(liquid.at[d, sid]),
             })
     return rows
@@ -170,7 +181,7 @@ def save(sb, rows):
 
 def prune(sb, all_dates):
     """
-    全部股票只保留最近 KEEP_DAYS 個交易日；更早的只留有訊號的列（20 日均量夠，而且新高突破或剛符合趨勢模板），
+    全部股票只保留最近 KEEP_DAYS 個交易日；更早的只留有訊號的列（20 日均量夠，而且新高突破、剛符合趨勢模板或趨勢中回檔再起），
     保留到 EVENT_KEEP_DAYS 個交易日，再更早的全部刪除
     """
     table = lambda: sb.table("momentum_signals").delete(returning="minimal")  # noqa: E731
@@ -181,7 +192,7 @@ def prune(sb, all_dates):
     if len(all_dates) > KEEP_DAYS:
         cutoff = all_dates[-KEEP_DAYS]
         _execute(lambda: table().lt("date", cutoff).eq("liquid", False))
-        _execute(lambda: table().lt("date", cutoff).eq("breakout", False).eq("trend_new", False))
+        _execute(lambda: table().lt("date", cutoff).eq("breakout", False).eq("trend_new", False).eq("pullback", False))
         print(f"  {cutoff} 以前只保留有訊號的列")
 
 
@@ -205,7 +216,8 @@ def main():
             continue
         failed += save(sb, day)
         print(f"  {d}：{len(day)} 檔，趨勢模板 {sum(r['trend_template'] for r in day)} 檔"
-              f"（剛進入 {sum(r['trend_new'] for r in day)}）、新高突破 {sum(r['breakout'] for r in day)} 檔")
+              f"（剛進入 {sum(r['trend_new'] for r in day)}）、新高突破 {sum(r['breakout'] for r in day)} 檔、"
+              f"趨勢中回檔再起 {sum(r['pullback'] for r in day)} 檔")
 
     try:
         prune(sb, all_dates)

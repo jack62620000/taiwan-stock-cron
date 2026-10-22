@@ -59,8 +59,9 @@ def test_momentum_followup(use_db):
     from utils.analysis import momentum_followup
     date, df = momentum_followup()
     assert date is not None and not df.empty
-    assert set(df["signal"]) <= {"兩者同時、52 週新高＋量增", "52 週新高＋量增", "剛符合趨勢模板",
-                                 "兩者同時、52 週新高＋量增、剛符合趨勢模板", "52 週新高＋量增、剛符合趨勢模板"}
+    from utils.analysis import MOMENTUM_FOLLOW_PICKS
+    assert all(set(s.split("、")) <= set(MOMENTUM_FOLLOW_PICKS) for s in df["signal"])
+    assert df["signal"].str.contains("趨勢中回檔再起").any()
     assert df["ret_now"].notna().any()      # 前幾天的訊號已經買進
     assert df["ret_now"].isna().any()       # 今天的訊號還沒買進
     assert df["signal_date"].is_monotonic_decreasing
@@ -82,6 +83,9 @@ def test_momentum_prune_keeps_signal_rows():
         rows.append({"stock_id": "B", "date": d, "liquid": True, "breakout": True, "trend_new": False})
         rows.append({"stock_id": "C", "date": d, "liquid": False, "breakout": False, "trend_new": False})
         rows.append({"stock_id": "D", "date": d, "liquid": True, "breakout": False, "trend_new": True})
+        rows.append({"stock_id": "E", "date": d, "liquid": True, "breakout": False, "trend_new": False, "pullback": True})
+    for r in rows:
+        r.setdefault("pullback", False)
     sb = FakeClient({"momentum_signals": rows})
     momentum.prune(sb, dates)
     left = pd.DataFrame(sb.tables["momentum_signals"])
@@ -90,6 +94,36 @@ def test_momentum_prune_keeps_signal_rows():
     assert set(left[left["stock_id"].isin(["A", "C"])]["date"]) == set(recent)
     assert set(left[left["stock_id"] == "B"]["date"]) == set(events)
     assert set(left[left["stock_id"] == "D"]["date"]) == set(events)
+    assert set(left[left["stock_id"] == "E"]["date"]) == set(events)
+
+
+def test_momentum_pullback():
+    """上升趨勢裡回檔碰到布林下軌，之後收盤站回中軌的那一天才算趨勢中回檔再起"""
+    import numpy as np
+    import momentum
+    days = [d.strftime("%Y-%m-%d") for d in pd.bdate_range("2025-01-01", periods=300)]
+    closes = list(np.linspace(10, 30, 290)) + [29.0, 28.0, 27.5, 27.6, 28.2, 29.0, 30.5, 30.8, 31.0, 31.2]
+    rows = [{"stock_id": "1234", "date": d, "high_price": c * 1.01, "low_price": c * 0.99, "close_price": c,
+             "volume": 1_000_000} for d, c in zip(days, closes)]
+    out = momentum.compute(pd.DataFrame(rows), pd.DataFrame(columns=["stock_id", "date", "event_type", "factor"]),
+                           days[-10:])
+    assert [r["date"] for r in out if r["pullback"]] == [days[-4]]
+
+
+def test_momentum_choices_drop_hot():
+    """離 50 日線 30% 以上的漲多股不列入任何分類"""
+    from utils.momentum import hot_count, momentum_choices, momentum_table
+    liq = pd.DataFrame({
+        "stock_id": ["A", "B", "C"], "close_price": [110.0, 135.0, 120.0], "ma50": [100.0, 100.0, 100.0],
+        "high_52w": [111.0, 136.0, 121.0], "atr14": [2.0, 2.0, 2.0], "rs_rating": [80, 95, 90], "vol_ratio": [2.0, 2.0, 1.0],
+        "trend_template": [True, True, True], "breakout": [True, True, False], "trend_new": [False, False, False],
+        "pullback": [False, False, True]})
+    choices = momentum_choices(liq)
+    assert list(liq[choices["兩者同時"]]["stock_id"]) == ["A"]
+    assert list(liq[choices["符合趨勢模板（全部）"]]["stock_id"]) == ["A", "C"]
+    assert list(liq[choices["趨勢中回檔再起"]]["stock_id"]) == ["C"]
+    assert hot_count(liq) == 1
+    assert momentum_table(liq)["off_ma50"].round(1).tolist() == [35.0, 20.0, 10.0]
 
 
 def test_momentum_compute_no_infinite_values():
@@ -103,7 +137,7 @@ def test_momentum_compute_no_infinite_values():
                      "volume": 0 if i < 299 else 1_000_000})
     out = momentum.compute(pd.DataFrame(rows), pd.DataFrame(columns=["stock_id", "date", "event_type", "factor"]),
                            days[-1:])
-    assert out and out[0]["vol_ratio"] is None
+    assert out and out[0]["vol_ratio"] is None and out[0]["pullback"] is False
     json.dumps(out, allow_nan=False)
 
 

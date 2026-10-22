@@ -1,6 +1,6 @@
 -- 動能選股：momentum.py 每個交易日收盤後檢查趨勢模板（Minervini）與 52 週新高突破，寫進這張表
 -- 只保留最近 5 個交易日（momentum.py 會刪除更早的資料），全市場一天約 1,900 筆、約 2 MB；
--- 有訊號的列（新高突破、剛符合趨勢模板）多留到 30 個交易日，給每日選股頁的事後追蹤（每天約十幾～幾十筆）
+-- 有訊號的列（新高突破、剛符合趨勢模板、趨勢中回檔再起）多留到 30 個交易日，給每日選股頁的事後追蹤（每天約十幾～幾十筆）
 create table if not exists public.momentum_signals (
     stock_id       varchar  not null references public.stock_info(stock_id),
     date           date     not null,
@@ -19,9 +19,13 @@ create table if not exists public.momentum_signals (
     trend_new      boolean  not null default false,
     new_high       boolean  not null default false,
     breakout       boolean  not null default false,
+    pullback       boolean  not null default false,
     liquid         boolean  not null default false,
     primary key (stock_id, date)
 );
+
+-- 已建好的表補上「趨勢中回檔再起」欄位
+alter table public.momentum_signals add column if not exists pullback boolean not null default false;
 
 -- 和其他表一樣開 RLS、不設規則：只有 service_role 金鑰（網站、排程）讀寫得到，anon 金鑰讀不到
 alter table public.momentum_signals enable row level security;
@@ -47,4 +51,5 @@ comment on column public.momentum_signals.trend_template is '8 個條件全部�
 comment on column public.momentum_signals.trend_new      is '今天剛符合趨勢模板（前一個交易日還不符合）';
 comment on column public.momentum_signals.new_high       is '收盤創 52 週新高';
 comment on column public.momentum_signals.breakout       is '創 52 週新高且量比 >= 1.5，前 10 個交易日內沒突破過（且 20 日均量 >= 500 張）';
+comment on column public.momentum_signals.pullback       is '趨勢中回檔再起：符合趨勢模板，前 10 個交易日內收盤碰過布林下軌，今天收盤由下往上站上布林中軌（20 日均線）';
 comment on column public.momentum_signals.liquid         is '20 日均量 >= 500 張';
