@@ -104,6 +104,26 @@ def main():
         show(f"{nm}：RS", [("70～80", sig & (rs < 80)), ("80～90", sig & (rs >= 80) & (rs < 90)), ("≥ 90", sig & (rs >= 90))])
     show("趨勢模板：離 52 週高點", [("新高（0）", tt & (offh >= 0)), ("−5～0%", tt & (offh < 0) & (offh >= -5)),
          ("−15～−5%", tt & (offh < -5) & (offh >= -15)), ("−25～−15%", tt & (offh < -15))])
+    # ===== 布林通道：碰過下軌後，收盤由下往上站上中軌 =====
+    mid = close.rolling(20, min_periods=20).mean()
+    sdv = close.rolling(20, min_periods=20).std(ddof=0)
+    lower, upper = mid - 2 * sdv, mid + 2 * sdv
+    cross = (close > mid) & (close.shift(1) <= mid.shift(1)) & liq_all
+    touch = lambda n: (close <= lower).astype(float).shift(1).rolling(n, min_periods=1).max().fillna(0) > 0  # noqa: E731
+    b10 = cross & touch(10)
+    ma60 = close.rolling(60, min_periods=60).mean()
+    width = (upper - lower) / mid * 100
+    show("布林：站上中軌", [("只站上中軌（沒碰下軌）", cross & ~touch(20)), ("5 日內碰過下軌", cross & touch(5)),
+         ("10 日內碰過下軌", b10), ("20 日內碰過下軌", cross & touch(20))])
+    show("布林：10 日內碰下軌＋站上中軌，再加條件", [
+        ("全部", b10), ("量比 ≥ 1.5", b10 & (vr >= 1.5)), ("中軌上揚", b10 & (mid > mid.shift(1))),
+        ("收盤在 60 日線上", b10 & (close > ma60)), ("收盤在 200 日線上", b10 & (close > ma200)),
+        ("收盤在 60 日線下", b10 & (close <= ma60)), ("RS ≥ 70", b10 & (rs >= 70)),
+        ("通道寬 < 10%", b10 & (width < 10)), ("通道寬 ≥ 20%", b10 & (width >= 20)),
+        ("同時符合趨勢模板", b10 & tt)])
+    show("布林：近 20 日漲幅（10 日內碰下軌＋站上中軌）", [("< 0%", b10 & (g20 < 0)), ("0～10%", b10 & (g20 >= 0) & (g20 < 10)),
+         ("≥ 10%", b10 & (g20 >= 10))])
+
     pull = tt & (ext >= 0) & (ext < 5) & (close.shift(5) > close)
     show("趨勢模板回檔候選", [("回到 50 日線 5% 以內、5 日下跌", pull), ("同上且 RS ≥ 80", pull & (rs >= 80))])
 
