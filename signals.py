@@ -40,12 +40,12 @@
 import argparse
 import os
 import sys
-import time
 from functools import lru_cache
 
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
+from retry import execute as _execute
 
 load_dotenv()
 
@@ -64,19 +64,6 @@ BACKTEST_MAX_HORIZON = 20   # 規則回測最長持有天數，精簡時要保�
 def _client():
     from supabase import create_client
     return create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
-
-
-def _execute(make_request, retries=4):
-    """執行查詢，遇到連線被中斷等暫時性錯誤就等一下重試"""
-    for attempt in range(1, retries + 1):
-        try:
-            return make_request().execute()
-        except Exception as e:
-            if attempt == retries:
-                raise
-            wait = 3 * attempt
-            print(f"  連線錯誤，{wait} 秒後重試（第 {attempt} 次）：{type(e).__name__}")
-            time.sleep(wait)
 
 
 def _fetch_all(make_query, page_size=1000):
@@ -227,7 +214,6 @@ class Features:
         self.close_ff = self.close.ffill(limit=5)
 
         self.ma20 = self.close_ff.rolling(20, min_periods=15).mean()
-        self.chg1 = self.close_ff / self.close_ff.shift(1) - 1
         self.chg5 = self.close_ff / self.close_ff.shift(5) - 1
         self.chg20 = self.close_ff / self.close_ff.shift(20) - 1
         self.rsi = _rsi(self.close_ff)
@@ -416,7 +402,7 @@ def score_day(feat, d):
 
     # 先把每張寬表當天那一列取出來，逐檔查詢時就只是查 dict
     day = {}
-    for name in ("ma20", "chg1", "chg5", "chg20", "rsi", "vol5", "vol20",
+    for name in ("ma20", "chg5", "chg20", "rsi", "vol5", "vol20",
                  "f5", "s5", "f_streak", "s_streak", "mb", "sb", "rate", "mb_chg5"):
         wide = getattr(feat, name)
         day[name] = wide.loc[d].to_dict() if (not wide.empty and d in wide.index) else {}
@@ -432,7 +418,7 @@ def score_day(feat, d):
         x = {
             "close": close_today[sid],
             "ma20": at("ma20", sid),
-            "chg1": at("chg1", sid), "chg5": at("chg5", sid), "chg20": at("chg20", sid),
+            "chg5": at("chg5", sid), "chg20": at("chg20", sid),
             "rsi": at("rsi", sid),
             "vol5": np.nan_to_num(at("vol5", sid)), "vol20": np.nan_to_num(at("vol20", sid)),
             "f5": np.nan_to_num(at("f5", sid)), "s5": np.nan_to_num(at("s5", sid)),
@@ -534,7 +520,7 @@ def main():
     try:
         res = _execute(lambda: sb.rpc("prune_daily_signals", {
             "keep_days": KEEP_FULL_DAYS,
-            "lookback": BACKTEST_MAX_HORIZON,
+            "lookback": BACKTEST_MAX_HORIZON + 1,  # 回測是評分隔天買進，賣出日在評分日後 horizon + 1 個評分日
             "max_dates": len(targets) + 5,
         }))
         print(f"  精簡舊評分：刪除 {res.data} 筆冷門股資料")

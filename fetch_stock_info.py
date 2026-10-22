@@ -269,7 +269,8 @@ def get_valid_stock_ids():
     page_size = 1000
     while True:
         try:
-            res = supabase.table("stock_info").select("stock_id").range(start, start + page_size - 1).execute()
+            res = supabase.table("stock_info").select("stock_id").order("stock_id") \
+                .range(start, start + page_size - 1).execute()  # 分頁要固定排序，否則可能漏掉或重複
             data = res.data
             if not data: break
             for item in data: valid_stocks.add(item["stock_id"])
@@ -516,43 +517,6 @@ def fetch_tpex_margin(today_str, valid_stocks):
         return records
     except Exception as e:
         print(f"抓取上櫃融資融券失敗: {e}"); return []
-
-
-# ==================== 5. 大戶持股比例抓取 ====================
-def fetch_holder_distribution(valid_stocks):
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    url = "https://smart.tdcc.com.tw/opendata/getOD.ashx?id=1-5"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    print("正在從集保結算所下載大戶持股資料...")
-    try:
-        import pandas as pd
-        from io import StringIO
-        r = requests.get(url, headers=headers, timeout=30, verify=False)
-        r.encoding = "utf-8"
-        df = pd.read_csv(StringIO(r.text))
-
-        df = df[df["持股分級"].isin([12, 13, 14, 15])]
-        df = df[df["證券代號"].astype(str).str.strip().isin(valid_stocks)]
-
-        result = (
-            df.groupby(["資料日期", "證券代號"])["占集保庫存數比例%"]
-            .sum()
-            .reset_index()
-        )
-
-        records = []
-        for _, row in result.iterrows():
-            records.append({
-                "stock_id":         str(row["證券代號"]).strip(),
-                "week_date":        parse_date(str(row["資料日期"]).strip()),
-                "big_holder_ratio": round(float(row["占集保庫存數比例%"]), 2),
-            })
-
-        return records
-
-    except Exception as e:
-        print(f"抓取大戶持股失敗: {e}"); return []
 
 
 # ==================== 6. 月營收抓取 ====================
@@ -894,45 +858,6 @@ def build_quarterly_record(stock_id, inc, bal, close_price):
     }
 
 
-# ==================== 9. 期貨三大法人未平倉 ====================
-def fetch_futures_institutional():
-    url = "https://openapi.taifex.com.tw/v1/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
-    print("正在下載期貨三大法人未平倉...")
-
-    try:
-        r = requests.get(url, timeout=10)
-        r.encoding = "utf-8-sig"
-        data = r.json()
-    except Exception as e:
-        print(f"抓取失敗: {e}")
-        return []
-
-    records = []
-    for row in data:
-        if row.get("ContractCode", "").strip() != "臺股期貨":
-            continue
-
-        date_str = row.get("Date", "").strip()
-        if len(date_str) != 8:
-            continue
-
-        record_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-
-        records.append({
-            "date":           record_date,
-            "contract_code":  row.get("ContractCode", "").strip(),
-            "item":           row.get("Item", "").strip(),
-            "long_oi":        parse_volume(row.get("OpenInterest(Long)", "")),
-            "long_oi_value":  parse_volume(row.get("ContractValueofOpenInterest(Long)(Thousands)", "")),
-            "short_oi":       parse_volume(row.get("OpenInterest(Short)", "")),
-            "short_oi_value": parse_volume(row.get("ContractValueofOpenInterest(Short)(Thousands)", "")),
-            "net_oi":         parse_volume(row.get("OpenInterest(Net)", "")),
-            "net_oi_value":   parse_volume(row.get("ContractValueofOpenInterest(Net)(Thousands)", "")),
-        })
-
-    return records
-
-
 # ==================== 資料庫儲存工具 ====================
 def save_data_batches(table_name, records):
     """[F] 過濾主鍵為空或重複的資料後分批寫入，並如實回報結果。回傳 (成功筆數, 失敗筆數)。"""
@@ -1126,6 +1051,7 @@ if __name__ == "__main__":
     if "5" in choices:
         print("\n--- 步驟 5: 同步大戶持股比例 ---")
         ensure_valid_stocks()
+        from auto_fetch_holder import fetch_holder_distribution  # 大戶持股、期貨的抓法只維護排程用的那一份
         save_data_batches("holder_distribution", fetch_holder_distribution(valid_stocks))
 
     if "6" in choices:
@@ -1141,6 +1067,7 @@ if __name__ == "__main__":
 
     if "9" in choices:
         print("\n--- 步驟 9: 同步期貨三大法人未平倉 ---")
+        from auto_fetch_futures import fetch_futures_institutional
         futures_ins_data = fetch_futures_institutional()
         save_data_batches("futures_institutional", futures_ins_data)
 

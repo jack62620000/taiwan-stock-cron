@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import check_data  # noqa: E402
+import retry  # noqa: E402
 from fake_supabase import FakeClient  # noqa: E402
 
 DAYS = ["2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19"]
@@ -59,7 +60,7 @@ def test_size_unreadable_is_not_failure(monkeypatch):
     class Broken(FakeClient):
         def rpc(self, name, params=None):
             raise RuntimeError("函式不存在")
-    monkeypatch.setattr(check_data.time, "sleep", lambda s: None)
+    monkeypatch.setattr(retry.time, "sleep", lambda s: None)
     text, problems = check_data.check_size(Broken())
     assert problems == []
     assert "讀取失敗" in text

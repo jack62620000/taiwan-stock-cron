@@ -69,7 +69,9 @@ def load_exit_status(stock_ids):
 def exit_row(row, status, triggers, atrs):
     """一筆持股的出場狀態與說明"""
     sid, close = row["stock_id"], float(row["end_price"])
-    stop = stop_price(float(row["buy_price"]), atrs.get(sid))
+    # 持有期間除權息時，原始股價會掉一個股息；停損價也換算成除權息後的價位，才不會誤判跌破停損
+    div_mult = row.get("div_mult")
+    stop = stop_price(float(row["buy_price"]), atrs.get(sid)) / (float(div_mult) if pd.notna(div_mult) and div_mult > 0 else 1)
     st_row = status.loc[sid] if sid in status.index else None
     trig = triggers.loc[sid] if sid in triggers.index else None
     trig_price = float(trig["trigger_price"]) if trig is not None else None

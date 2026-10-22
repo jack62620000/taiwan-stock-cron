@@ -135,7 +135,7 @@ def calc_bollinger(df, period=20, std=2):
         df["BB_LOW"] = None
         return df
     df["BB_MID"] = df["close_price"].rolling(window=period).mean().round(2)
-    bb_std = df["close_price"].rolling(window=period).std()
+    bb_std = df["close_price"].rolling(window=period).std(ddof=0)  # 母體標準差，和動能選股、布林收斂標籤一致
     df["BB_UP"]  = (df["BB_MID"] + std * bb_std).round(2)
     df["BB_LOW"] = (df["BB_MID"] - std * bb_std).round(2)
     return df
@@ -228,7 +228,6 @@ def get_latest_signals(df):
         return {}
 
     last = df.iloc[-1]
-    prev = df.iloc[-2] if len(df) > 1 else last
 
     signals = {}
 
@@ -259,8 +258,6 @@ def get_latest_signals(df):
             "value":  last["MACD"],
             "signal": last["MACD_SIGNAL"],
             "hist":   last["MACD_HIST"],
-            "golden_cross": last["MACD"] > last["MACD_SIGNAL"] and prev["MACD"] <= prev["MACD_SIGNAL"],
-            "dead_cross":   last["MACD"] < last["MACD_SIGNAL"] and prev["MACD"] >= prev["MACD_SIGNAL"],
         }
 
     # KD
@@ -271,17 +268,6 @@ def get_latest_signals(df):
             "D": last["D"],
             "status": status,
             "note": note,
-        }
-
-    # 布林通道
-    if last.get("BB_MID") is not None:
-        signals["Bollinger"] = {
-            "mid": last["BB_MID"],
-            "up":  last["BB_UP"],
-            "low": last["BB_LOW"],
-            "width": round((last["BB_UP"] - last["BB_LOW"]) / last["BB_MID"] * 100, 2),
-            "position": "上軌以上" if close > last["BB_UP"] else (
-                         "下軌以下" if close < last["BB_LOW"] else "通道內"),
         }
 
     return signals

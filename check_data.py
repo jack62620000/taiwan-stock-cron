@@ -15,9 +15,9 @@ GitHub 會把這次排程標成失敗（紅色），點進去就看得到哪天�
 import os
 import statistics
 import sys
-import time
 
 from dotenv import load_dotenv
+from retry import execute as _execute
 from supabase import create_client
 
 load_dotenv()
@@ -34,17 +34,6 @@ CHECK_RECENT = 3   # 只檢查最近 3 天（更早的已經檢查過）
 MIN_RATIO = 0.9
 SIZE_LIMIT_MB = 500  # Supabase 免費額度
 SIZE_WARN_MB = 450   # 2026-10 估計各表存滿保留期限後約 462 MB，超過 450 就要開始處理
-
-
-def _execute(make_request, retries=4):
-    for attempt in range(1, retries + 1):
-        try:
-            return make_request().execute()
-        except Exception as e:
-            if attempt == retries:
-                raise
-            print(f"  連線錯誤，{3 * attempt} 秒後重試：{type(e).__name__}")
-            time.sleep(3 * attempt)
 
 
 def recent_trading_days(sb, n=CHECK_WINDOW):

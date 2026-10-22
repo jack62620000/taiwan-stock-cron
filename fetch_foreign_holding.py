@@ -77,14 +77,6 @@ def fetch_day(day, valid_stocks):
     return holdings, problems
 
 
-def merge_into(records, holdings):
-    """把外資持股併進當天的三大法人資料（每日排程用）"""
-    for r in records:
-        shares, ratio = holdings.get(r["stock_id"], (None, None))
-        r["foreign_hold_shares"], r["foreign_hold_ratio"] = shares, ratio
-    return records
-
-
 def _trading_days(start, end):
     """用大盤指數的日期當作交易日"""
     res = f.supabase.table("market_index").select("date").eq("index_code", "TAIEX") \

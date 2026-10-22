@@ -77,12 +77,12 @@ st.markdown("---")
 
 # ===== 今日大盤 =====
 @st.cache_data(ttl=3600)
-def load_home_data(group_id):
-    """首頁用：加權與櫃買指數、最新評分日前 5 名、目前分組自選股最近股價與評分"""
+def load_home_data(watch_ids):
+    """首頁用：加權與櫃買指數、最新評分日前 5 名、自選股（watch_ids，tuple）最近股價與評分"""
     taiex, tpex = get_market_index("TAIEX", 5), get_market_index("TPEX", 5)
     sig_dates = get_signal_dates(1)
     top = get_top_signals(sig_dates[0], 5) if sig_dates else pd.DataFrame()
-    watch_ids = get_watchlist(group_id)["stock_id"].tolist()
+    watch_ids = list(watch_ids)
     prices = signals = pd.DataFrame()
     if watch_ids:
         since = (date.today() - timedelta(days=14)).isoformat()
@@ -125,7 +125,9 @@ def watch_summary(watch_ids, prices, signals):
     return df
 
 
-taiex, tpex, sig_date, top, watch_ids, prices, signals = load_home_data(current_group()[0])
+taiex, tpex, sig_date, top, watch_ids, prices, signals = load_home_data(
+    # 自選股清單不快取：在其他頁面加入、移除後，回首頁馬上看得到
+    tuple(get_watchlist(current_group()[0])["stock_id"]))
 stock_list = get_stock_list()
 names = dict(zip(stock_list["stock_id"], stock_list["stock_name"].fillna(""))) if not stock_list.empty else {}
 
