@@ -377,7 +377,7 @@ def rebound_followup(days=FOLLOW_DAYS):
     return latest, signal_followup(events, px, load_followup_indexes(days + 5))
 
 
-MOMENTUM_FOLLOW_PICKS = ["兩者同時", "52 週新高＋量增", "剛符合趨勢模板"]
+MOMENTUM_FOLLOW_PICKS = ["兩者同時", "趨勢中回檔再起", "52 週新高＋量增", "剛符合趨勢模板"]
 
 
 def momentum_followup(days=FOLLOW_DAYS):
@@ -393,7 +393,7 @@ def momentum_followup(days=FOLLOW_DAYS):
     if ev.empty:
         return max(dates), ev
     both = ev["trend_template"].astype(bool) & ev["breakout"].astype(bool)
-    flags = [both, ev["breakout"].astype(bool), ev["trend_new"].astype(bool)]
+    flags = [both, ev["pullback"].astype(bool), ev["breakout"].astype(bool), ev["trend_new"].astype(bool)]
     ev["signal"] = ["、".join(n for n, f in zip(MOMENTUM_FOLLOW_PICKS, fs) if f) for fs in zip(*flags)]
     ev = ev.rename(columns={"date": "signal_date", "close_price": "signal_close"}) \
         .merge(get_stock_list()[["stock_id", "stock_name", "industry", "market"]], on="stock_id", how="inner") \

@@ -393,13 +393,13 @@ def get_momentum_latest():
     return _latest_snapshot("momentum_signals", "date")
 
 def get_momentum_events(since):
-    """since 之後出現過的動能訊號（52 週新高＋量增、剛符合趨勢模板；只有 20 日均量夠的股票），依日期排序。
+    """since 之後出現過的動能訊號（52 週新高＋量增、剛符合趨勢模板、趨勢中回檔再起；只有 20 日均量夠的股票），依日期排序。
     momentum.py 只把有訊號的列多留一個月，給每日選股頁的事後追蹤用"""
-    cols = "stock_id, date, close_price, trend_template, trend_new, breakout"
+    cols = "stock_id, date, close_price, trend_template, trend_new, breakout, pullback"
     frames = [pd.DataFrame(_fetch_all(lambda c=c: supabase.table("momentum_signals").select(cols)
                                       .gte("date", since).eq("liquid", True).eq(c, True)
                                       .order("date").order("stock_id")))
-              for c in ("breakout", "trend_new")]
+              for c in ("breakout", "trend_new", "pullback")]
     frames = [f for f in frames if not f.empty]
     if not frames:
         return pd.DataFrame(columns=[c.strip() for c in cols.split(",")])

@@ -23,7 +23,7 @@ from line_push import GOLD, GRAY, _carousels, _f, _num, _row, _sign_color, _text
 
 MAX_MESSAGES = 5          # 一次回覆最多 5 則訊息
 TEXT_MAX = 4900           # 文字訊息上限 5,000 字
-MOMENTUM_PICKS = ["兩者同時", "52 週新高＋量增", "今天剛符合趨勢模板"]
+MOMENTUM_PICKS = ["兩者同時", "趨勢中回檔再起", "52 週新高＋量增", "今天剛符合趨勢模板"]
 
 
 def _bubble(sid, name, industry, tag, rows, note=None):
@@ -138,6 +138,7 @@ def momentum_bubble(r, pick):
         _row("RS", _f(r["rs_rating"], decimals=0)),
         _row("量比", _f(r["vol_ratio"])),
         _row("離52週高%", _f(r["off_high"], "%", 1)),
+        _row("離50日線%", _f(r["off_ma50"], "%", 1)),
         _row("趨勢模板", r["tt"] or "—"),
         _row("新高突破", r["bo"] or "—"),
         _row("停損價", _f(r["stop"])),
@@ -149,19 +150,21 @@ def momentum_bubble(r, pick):
 def momentum_messages(mom):
     """動能股回覆：第一則文字（三種的檔數與欄位解釋），之後每一種一則輪播（依 RS、量比排序，放不下的列代號）"""
     from utils.granville import STOP_RULE
-    from utils.momentum import BREAKOUT_VOL, RS_MIN, momentum_choices, momentum_table
+    from utils.momentum import BREAKOUT_VOL, HOT_PCT, RS_MIN, hot_count, momentum_choices, momentum_table
     if mom.empty:
         return None, [{"type": "text", "text": "還沒有動能選股資料。"}]
     date = mom["date"].max()
     liq = mom[mom["liquid"]]
     choices = momentum_choices(liq)
     lines = [f"🚀 動能股（{date} 收盤後）",
-             f"只判斷 20 日均量 500 張以上的股票，共 {len(liq):,} 檔。同網頁每日選股頁「動能選股」。", ""]
+             f"只判斷 20 日均量 500 張以上的股票，共 {len(liq):,} 檔；已剔除離 50 日線 {HOT_PCT}% 以上的漲多股 "
+             f"{hot_count(liq)} 檔。同網頁每日選股頁「動能選股」。", ""]
     lines += [f"・{pick}：{int(choices[pick].sum())} 檔" for pick in MOMENTUM_PICKS]
     lines += [
         "",
         "【分類說明】",
-        "・兩者同時：同時符合趨勢模板和 52 週新高＋量增，回測最好",
+        "・兩者同時：同時符合趨勢模板和 52 週新高＋量增",
+        "・趨勢中回檔再起：符合趨勢模板，10 日內碰過布林下軌、今天站上中軌；回測 60 日最好，但次數少",
         f"・52 週新高＋量增：收盤創 52 週新高，成交量至少是前 50 日均量的 {BREAKOUT_VOL:g} 倍",
         f"・今天剛符合趨勢模板：今天才符合趨勢模板 8 個條件（含 RS ≥ {RS_MIN}）",
         "",
@@ -169,6 +172,7 @@ def momentum_messages(mom):
         "・RS：相對強度 0～99，贏過多少 % 的股票",
         "・量比：今天成交量 ÷ 前 50 日均量",
         "・離52週高%：0 代表今天就是 52 週新高",
+        f"・離50日線%：收盤離 50 日均線多少 %，{HOT_PCT}% 以上算漲多，不列入",
         f"・停損價：{STOP_RULE}",
         "・每張風險：（收盤 − 停損價）× 1000 股，單位：元",
     ]
