@@ -16,5 +16,6 @@ def test_every_page_calls_guide():
     from utils.glossary import PAGES
     app = Path(__file__).resolve().parent.parent / "app"
     used = {f.read_text(encoding="utf-8-sig").split('render_page_guide("')[1].split('"')[0]
-            for f in [app / "main.py", *sorted((app / "pages").glob("*.py"))]}
+            for f in [app / "main.py", *sorted((app / "pages").glob("*.py")), *sorted((app / "views").glob("*.py"))]
+            if 'render_page_guide("' in f.read_text(encoding="utf-8-sig")}
     assert used == set(PAGES)

@@ -17,22 +17,15 @@ from utils.momentum import BACKTEST_MD, HOT_PCT, RULES_MD, hot_count, momentum_c
 from utils.analysis import (
     FOLLOW_DAYS, MOMENTUM_FOLLOW_PICKS, TRADE_COST_PCT, momentum_followup, render_followup, render_market_warning,
 )
-from utils.ui import require_login, render_metric_cards, style_sign, UP_COLOR, DOWN_COLOR
-require_login()
+from utils.ui import render_metric_cards, style_sign, UP_COLOR, DOWN_COLOR
 
-st.set_page_config(page_title="每日選股訊號", page_icon="🎯", layout="wide")
-st.title("🎯 每日選股訊號")
+# 選股頁的「評分排行」分頁（pages/0_選股.py 用 runpy 執行這個檔案；登入、頁面設定、重新整理按鈕在選股頁）
 render_page_guide("signals")
 st.caption(
     "每個交易日收盤後，依固定規則幫全市場股票打分數："
-    "總分 100 = 籌碼 32 + 資金 8 + 基本面 35 + 技術面 25（規則 v3）。"
+    "總分 100 = 籌碼 32 + 資金 8 + 基本面 35 + 技術面 25（規則 v5）。"
     "排名只列 20 日均量 500 張以上的股票。風險提醒不扣分，僅供參考。"
 )
-
-if st.button("🔄 強制重新整理資料"):
-    st.cache_data.clear()
-    get_stock_list.cache_clear()
-    st.rerun()
 
 render_market_warning()
 

@@ -377,6 +377,14 @@ def get_top_ranks(since, n=10):
             .order("date").order("rank")
     ))
 
+def get_top_ranks(since, n=10):
+    """since 之後每個評分日排名前 n 名（stock_id、date、rank、total_score），依日期、排名排序（選股頁紀錄用）"""
+    return pd.DataFrame(_fetch_all(
+        lambda: supabase.table("daily_signals").select("stock_id, date, rank, total_score")
+            .gte("date", since).lte("rank", n)
+            .order("date").order("rank")
+    ))
+
 def get_signal_history(stock_id, limit=60):
     """單一股票最近 limit 個評分日的分數"""
     return _latest_rows("daily_signals", stock_id, ["date"], limit)

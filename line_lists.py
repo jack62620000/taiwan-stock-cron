@@ -98,7 +98,7 @@ def granville_messages(date, table, rebound=None):
     lo, hi = HOLD_HINT
     lines = [
         f"📐 葛蘭碧：等待法則2（{date} 收盤後）",
-        f"共 {len(waiting)} 檔。同網頁葛蘭碧頁「準備買進」，預設參數（20 日均線、20 日均量 ≥ {GRANVILLE_MIN_VOLUME} 張）。",
+        f"共 {len(waiting)} 檔。同網頁選股頁「均線買賣點」的「準備買進」，預設參數（20 日均線、20 日均量 ≥ {GRANVILLE_MIN_VOLUME} 張）。",
         "",
         f"先出現法則 1，之後回檔再站回均線就是法則 2 的買點；回測是法則 2 出現隔天開盤買進、持有 {lo}～{hi} 個交易日。"
         f"法則 1 出現後 {WATCH_DAYS} 個交易日內沒等到法則 2 就失效。",
@@ -158,7 +158,7 @@ def momentum_messages(mom):
     choices = momentum_choices(liq)
     lines = [f"🚀 動能股（{date} 收盤後）",
              f"只判斷 20 日均量 500 張以上的股票，共 {len(liq):,} 檔；已剔除離 50 日線 {HOT_PCT}% 以上的漲多股 "
-             f"{hot_count(liq)} 檔。同網頁每日選股頁「動能選股」。", ""]
+             f"{hot_count(liq)} 檔。同網頁選股頁「評分排行」的「動能選股」。", ""]
     lines += [f"・{pick}：{int(choices[pick].sum())} 檔" for pick in MOMENTUM_PICKS]
     lines += [
         "",

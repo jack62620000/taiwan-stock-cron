@@ -144,3 +144,20 @@ def render_metric_cards(cards):
             f'<div class="delta" style="color:{color};">{delta or "&nbsp;"}</div></div>'
         )
     st.markdown(_METRIC_CSS + f'<div class="metric-row">{"".join(html)}</div>', unsafe_allow_html=True)
+
+
+# ===== 選股頁的三個分頁 =====
+# 每個分頁是 app/views/ 底下一個檔案，pages/0_選股.py 只執行選到的那一個
+PICKS_TABS = {
+    "🛒 明日買進": "picks.py",      # 大盤在季線上時，隔天開盤買評分前 10 名、持有 10 天（評分＋動能＋葛蘭碧合併的規則）
+    "🏆 評分排行": "signals.py",    # 原「每日選股訊號」：四面向評分排行榜、動能選股、個股分數走勢、規則回測
+    "📐 均線買賣點": "granville.py",  # 原「葛蘭碧八大法則」：法則 1、2 買進預告、賣出警示、事後追蹤
+}
+PICKS_TAB_KEY = "picks_tab"
+
+
+def go_picks_tab(label, tab, key, icon=None):
+    """按鈕：切到選股頁並打開指定分頁（tab 是 PICKS_TABS 的名稱）"""
+    if st.button(label, key=key, icon=icon):
+        st.session_state[PICKS_TAB_KEY] = tab
+        st.switch_page("pages/0_選股.py")

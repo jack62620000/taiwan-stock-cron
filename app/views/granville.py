@@ -17,22 +17,10 @@ from utils.analysis import (
     FOLLOW_DAYS, granville_buy_table, granville_followup, granville_rebound_table, rebound_followup, load_atr, render_followup, render_market_warning,
 )
 from utils.groups import current_group
-from utils.ui import require_login, style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
-require_login()
+from utils.ui import style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
 
-st.set_page_config(
-    page_title="葛蘭碧八大法則",
-    page_icon="📐",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
-st.title("📐 葛蘭碧八大法則選股")
+# 選股頁的「葛蘭碧」分頁（pages/0_選股.py 用 runpy 執行這個檔案；登入、頁面設定、重新整理按鈕在選股頁）
 render_page_guide("granville")
-
-if st.button("🔄 強制重新整理資料"):
-    st.cache_data.clear()
-    get_stock_list.cache_clear()
-    st.rerun()
 
 render_market_warning()
 
