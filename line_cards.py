@@ -7,7 +7,7 @@ LINE 機器人（supabase/functions/line-webhook）收到股票代號或名稱�
 存放位置（不佔資料庫空間，Storage 另外計算，每天覆蓋只留最新一份）：
     archive 桶 / _line_cards / {代號前兩碼}.json   同一個前兩碼的股票放在同一個檔案，{代號: 卡片}
     archive 桶 / _line_cards / index.json          {"date": 評分日, "stocks": {代號: 名稱}}
-    archive 桶 / _line_cards / granville.json、momentum.json   選單「葛蘭碧」「動能股」的回覆（見 line_lists.py）
+    archive 桶 / _line_cards / picks.json、granville.json、momentum.json   選單「明日買進」「均線買賣點」「動能股」的回覆（見 line_lists.py）
 
 和個股分析卡頁逐檔查詢不同，這裡整批載入全市場資料再依股票切開（逐檔查 2,000 檔太慢）；
 取的筆數和分析卡頁相同（股價、法人近 250 個交易日，季報 8 季、營收 12 個月、評分 21 個評分日）。

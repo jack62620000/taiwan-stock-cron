@@ -146,3 +146,34 @@ def stock_tags(ids, prices, momentum):
             if bool(sell.get(sid, False)):
                 tags[sid].append("⚠️ 葛蘭碧賣訊")
     return tags
+
+
+def buy_list():
+    """
+    明日買進清單（網頁選股頁與 LINE 共用）：最新評分日前 TOP_N 名，加上名稱、產業與參考標籤。
+    回傳 (評分日, DataFrame)；沒有資料時是 (None, 空表)
+    """
+    from datetime import date, timedelta
+    from utils.db import (
+        apply_adjustments, get_momentum_latest, get_price_adjustments, get_rows_for_stocks, get_signal_dates,
+        get_stock_list, get_top_signals,
+    )
+    dates = get_signal_dates(n=1)
+    if not dates:
+        return None, pd.DataFrame()
+    top = get_top_signals(dates[0], TOP_N)
+    if top.empty:
+        return dates[0], top
+    ids = sorted(top["stock_id"])
+    since = (date.today() - timedelta(days=200)).isoformat()
+    prices = get_rows_for_stocks("daily_prices", ids, since=since, columns="stock_id, date, close_price")
+    if not prices.empty:
+        prices = apply_adjustments(prices, get_price_adjustments(None, since))
+    tags = stock_tags(ids, prices, get_momentum_latest())
+    info = get_stock_list(include_delisted=True)
+    if not info.empty:
+        top = top.merge(info[["stock_id", "stock_name", "industry"]], on="stock_id", how="left")
+    else:
+        top = top.assign(stock_name="", industry="")
+    top["tags"] = top["stock_id"].map(lambda s: tags.get(s, []))
+    return dates[0], top.sort_values("rank").reset_index(drop=True)

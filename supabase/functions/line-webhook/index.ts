@@ -2,7 +2,7 @@
 //
 // 卡片由 line_cards.py 每晚算好放在 Storage（archive 桶 _line_cards/），這裡只讀檔回覆；
 // 打「自選」時另外讀資料庫的分組與自選股清單（只讀，不寫入）；
-// 「葛蘭碧」「動能股」回覆 line_lists.py 每晚算好的清單（granville.json、momentum.json）。
+// 「明日買進」「均線買賣點」「動能股」回覆 line_lists.py 每晚算好的清單（picks.json、granville.json、momentum.json）。
 // 用 LINE 的回覆訊息（reply）回答，不算每月推播額度。
 //
 // 需要的設定（Supabase → Edge Functions → Secrets）：
@@ -11,7 +11,7 @@
 //   LINE_WATCH_ACCOUNTS（選填）：誰打「自選」可以看哪個網頁帳號的自選股，格式「LINE user ID:網頁帳號」，
 //     多個人用逗號分開。沒列在這裡的人打「自選」會收到說明；LINE user ID 可以在 LINE 打「我的ID」查。
 //     列在這裡的人傳訊息或加好友時，會自動換成有「自選」按鈕的完整選單（line_richmenu.py 建立，別名 watch-full）；
-//     其他人用預設的三格選單。
+//     其他人用預設的四格選單。
 // SUPABASE_URL、SUPABASE_SERVICE_ROLE_KEY 是 Supabase 自動提供的，不用設定。
 // 部署時要關掉 JWT 驗證（LINE 不會帶 Supabase 的登入憑證，改用上面的簽章驗證）。
 

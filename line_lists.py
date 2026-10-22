@@ -1,14 +1,15 @@
 """
-LINE 選單「葛蘭碧」「動能股」的回覆 - 和網頁同一套計算，每晚由 line_cards.py 算好存到 Storage
+LINE 選單「明日買進」「均線買賣點」「動能股」的回覆 - 和網頁同一套計算，每晚由 line_cards.py 算好存到 Storage
 
-    葛蘭碧：葛蘭碧頁「買賣預告 → 準備買進」中狀態為「⏳ 等待法則2」的股票（網頁預設參數、不加篩選），
+    明日買進：選股頁「明日買進」的評分前 10 名與參考標籤（utils.picks.buy_list），大盤在季線下時提醒先不買
+    均線買賣點：選股頁「均線買賣點」（葛蘭碧）「買賣預告 → 準備買進」中狀態為「⏳ 等待法則2」的股票（網頁預設參數、不加篩選），
             欄位、數字、說明文字和網頁表格相同（utils.analysis.granville_buy_table）；
             後面接「急跌反彈候選」（法則 4，utils.analysis.granville_rebound_table），最多一則輪播
-    動能股：每日選股頁「動能選股」的「兩者同時」「52 週新高＋量增」「今天剛符合趨勢模板」三種，
+    動能股：選股頁「評分排行」裡「動能選股」的「兩者同時」「52 週新高＋量增」「今天剛符合趨勢模板」三種，
             欄位和網頁表格相同（utils.momentum.momentum_table）
 
 每檔一張小卡，卡片下方的按鈕可以直接查那檔的完整個股分析卡。
-存放：archive 桶 / _line_cards / granville.json、momentum.json，內容是 {"date": 資料日期, "messages": [LINE 訊息]}，
+存放：archive 桶 / _line_cards / picks.json、granville.json、momentum.json，內容是 {"date": 資料日期, "messages": [LINE 訊息]}，
 LINE 機器人（supabase/functions/line-webhook）收到時原樣回覆，最多 5 則訊息。
 """
 import json
@@ -97,7 +98,7 @@ def granville_messages(date, table, rebound=None):
     rebound = rebound if rebound is not None else pd.DataFrame()
     lo, hi = HOLD_HINT
     lines = [
-        f"📐 葛蘭碧：等待法則2（{date} 收盤後）",
+        f"📐 均線買賣點（葛蘭碧）：等待法則2（{date} 收盤後）",
         f"共 {len(waiting)} 檔。同網頁選股頁「均線買賣點」的「準備買進」，預設參數（20 日均線、20 日均量 ≥ {GRANVILLE_MIN_VOLUME} 張）。",
         "",
         f"先出現法則 1，之後回檔再站回均線就是法則 2 的買點；回測是法則 2 出現隔天開盤買進、持有 {lo}～{hi} 個交易日。"
@@ -128,6 +129,47 @@ def granville_messages(date, table, rebound=None):
         lines += _rest_line(rebound, reb_rest, "代號", "名稱")
     else:
         lines.append("今天沒有出現法則 4 的股票。")
+    return [{"type": "text", "text": "\n".join(lines)[:TEXT_MAX]}] + msgs
+
+
+# ===== 明日買進 =====
+def picks_bubble(r):
+    rows = [
+        _row("排名", f"第 {int(r['rank'])} 名"),
+        _row("總分", _f(r["total_score"], decimals=0)),
+        _row("收盤", _f(r["close_price"])),
+        _row("5日%", _f(r["change_5d"], "%"), _sign_color(r["change_5d"])),
+        _row("20日%", _f(r["change_20d"], "%"), _sign_color(r["change_20d"])),
+    ]
+    note = "　".join(r["tags"]) if r["tags"] else ""
+    reasons = r.get("reasons") or []
+    if reasons:
+        note = (note + "\n" if note else "") + "加分：" + "、".join(reasons[:3])
+    return _bubble(r["stock_id"], r.get("stock_name") or "", r.get("industry"), f"🛒 評分第 {int(r['rank'])} 名",
+                   rows, note=note or None)
+
+
+def picks_messages(date, top, regime):
+    """明日買進回覆：第一則文字（大盤狀態、規則、檔名），之後一則輪播（每檔一張卡）"""
+    from utils.analysis import MARKET_MA
+    from utils.picks import HOLD, TOP_N
+    if top.empty:
+        return [{"type": "text", "text": "還沒有評分資料。"}]
+    ok = bool(regime) and not regime["below"]
+    lines = [f"🛒 明日買進（{date} 收盤後）"]
+    if regime:
+        lines.append(("🟢 大盤在季線上：可以照規則買進" if ok else "🔴 大盤在季線下：先不買新股票")
+                     + f"（加權指數 {regime['close']:,.0f}，{MARKET_MA} 日均線 {regime['ma']:,.0f}，{regime['gap']:+.1f}%）")
+    lines += [
+        "",
+        f"規則：大盤在季線上時，隔天開盤買評分前 {TOP_N} 名，持有 {HOLD} 個交易日後開盤賣出。同網頁選股頁「明日買進」。",
+        "回測（2025-01～2026-10）總報酬 +476%、最大回撤 −15.3%，同期大盤 +105%；期間是大多頭，以後可能明顯較低。",
+        "",
+    ]
+    lines += [f"{int(r['rank'])}. {r['stock_id']} {r.get('stock_name') or ''}（{_f(r['total_score'], decimals=0)} 分）"
+              + (f"　{'　'.join(r['tags'])}" if r["tags"] else "") for _, r in top.iterrows()]
+    lines += ["", "標籤只是參考，不影響買賣：🚀 動能選股訊號、🎯 布林收斂、📐 近 5 日法則 2、⚠️ 漲多或葛蘭碧賣訊。"]
+    msgs, _ = _pack("明日買進", [picks_bubble(r) for _, r in top.iterrows()], 1)
     return [{"type": "text", "text": "\n".join(lines)[:TEXT_MAX]}] + msgs
 
 
@@ -207,20 +249,25 @@ def load_momentum():
 def build_lists():
     """回傳 {檔名: 內容}，給 line_cards.upload 一起上傳"""
     from utils.analysis import granville_default, load_market_regime, market_warning
+    from utils.picks import buy_list
     g_date, table, rebound = granville_default()
     m_date, m_msgs = momentum_messages(load_momentum())
-    warn = market_warning(load_market_regime())
+    p_date, top = buy_list()
+    regime = load_market_regime()
+    warn = market_warning(regime)
     lists = {
         "granville.json": {"date": g_date, "messages": granville_messages(g_date, table, rebound)},
         "momentum.json": {"date": m_date, "messages": m_msgs},
     }
     for content in lists.values():
         add_warning(content["messages"], warn)
+    # 明日買進的第一則已寫大盤狀態，不再加提醒
+    lists["picks.json"] = {"date": p_date, "messages": picks_messages(p_date, top, regime)}
     return lists
 
 
 def add_warning(messages, warn):
-    """大盤在季線下時，把提醒加在第一則文字訊息最前面（同網頁葛蘭碧頁、每日選股頁頂端的提醒）"""
+    """大盤在季線下時，把提醒加在第一則文字訊息最前面（同網頁選股頁各分頁頂端的提醒）"""
     if warn and messages and messages[0].get("type") == "text":
         messages[0]["text"] = (warn + "\n\n" + messages[0]["text"])[:TEXT_MAX]
 
