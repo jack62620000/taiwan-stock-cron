@@ -19,7 +19,7 @@ from utils.analysis import (
 from utils.groups import current_group
 from utils.ui import style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
 
-# 選股頁的「葛蘭碧」分頁（pages/0_選股.py 用 runpy 執行這個檔案；登入、頁面設定、重新整理按鈕在選股頁）
+# 選股頁的「均線買賣點」分頁（pages/0_選股.py 用 runpy 執行這個檔案；登入、頁面設定、重新整理按鈕在選股頁）
 render_page_guide("granville")
 
 render_market_warning()
@@ -529,7 +529,7 @@ with tab_plan:
                                "說明": st.column_config.TextColumn(width="large")},
             )
             add_watch_form(buy_df.rename(columns={"代號": "stock_id", "名稱": "stock_name"}),
-                           "葛蘭碧", latest_date, "granville")
+                           "均線買賣點", latest_date, "granville")
             for r in buy_df.itertuples():
                 chart_labels[r.代號] = f"{r.代號} {r.名稱}｜{r.狀態}"
 
@@ -560,7 +560,7 @@ with tab_plan:
                                "20日均量": st.column_config.Column(help="單位：張")},
             )
             add_watch_form(reb_df.rename(columns={"代號": "stock_id", "名稱": "stock_name"}),
-                           "葛蘭碧法則4", latest_date, "granville4")
+                           "均線買賣點法則4", latest_date, "granville4")
             for r in reb_df.itertuples():
                 chart_labels.setdefault(r.代號, f"{r.代號} {r.名稱}｜急跌反彈候選")
 

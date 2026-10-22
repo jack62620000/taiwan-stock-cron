@@ -23,7 +23,7 @@ def add_watch_form(candidates, source, date, key):
         labels = {r.stock_id: f"{r.stock_id} {r.stock_name}" + ("（已在自選股）" if r.stock_id in existing else "")
                   for r in options.itertuples()}
         st.caption(f"從上面列出的股票挑選加入自選股的「{group_name}」分組（要換分組請到「自選股」頁切換），"
-                   "到「自選股」頁可以同時看葛蘭碧與每日選股的分析。")
+                   "到「自選股」頁可以同時看均線買賣點與評分排行。")
         picked = st.multiselect("股票", list(labels), format_func=labels.get, key=f"watch_pick_{key}")
         if st.button("加入自選股", key=f"watch_add_{key}", type="primary", disabled=not picked):
             new = [sid for sid in picked if sid not in existing]

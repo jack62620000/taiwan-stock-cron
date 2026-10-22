@@ -20,7 +20,7 @@ require_login()
 st.set_page_config(page_title="自選股", page_icon="⭐", layout="wide")
 st.title("⭐ 自選股")
 render_page_guide("watchlist")
-st.caption("把常看的股票加進來，一頁看完最新股價、法人動向與營收，並分別用葛蘭碧法則與每日選股評分分析。"
+st.caption("把常看的股票加進來，一頁看完最新股價、法人動向與營收，並分別用均線買賣點與評分排行分析。"
            "清單存在資料庫，換裝置也看得到；每個人的帳號底下可以分成多個分組。")
 
 if st.button("🔄 強制重新整理資料"):
@@ -94,7 +94,7 @@ def granville_table(ids, prices, ins):
 
 
 def picks_table(ids, signals):
-    """每檔自選股最新的每日選股評分，以及最近 RECENT_DAYS 個評分日的平均分、進前 TOP_N 名的次數"""
+    """每檔自選股最新的評分排行，以及最近 RECENT_DAYS 個評分日的平均分、進前 TOP_N 名的次數"""
     rows = []
     for sid in ids:
         s = signals[signals["stock_id"] == sid].sort_values("date") if not signals.empty else signals
@@ -128,7 +128,7 @@ else:
     sig_dates, signals, prices, ins, revenue = load_watch_data(tuple(watch_ids))
     table = build_table(watch_ids, sig_dates, signals, prices, ins, revenue)
     st.subheader(f"{group_name}：{len(watch_ids)} 檔（評分日 {sig_dates[0] if sig_dates else '—'}）")
-    tab_all, tab_granville, tab_picks = st.tabs(["📋 總覽", "📐 葛蘭碧分析", "🎯 每日選股分析"])
+    tab_all, tab_granville, tab_picks = st.tabs(["📋 總覽", "📐 均線買賣點", "🏆 評分排行"])
 
     with tab_all:
         sign_cols = ["漲跌幅%", "5日%", "20日%", "分數變化", "外資5日(張)", "投信5日(張)", "持股20日變化", "營收年增%"]
@@ -198,7 +198,7 @@ else:
 
     with tab_picks:
         if signals.empty:
-            st.info("自選股還沒有每日選股評分資料。")
+            st.info("自選股還沒有評分資料。")
         else:
             pt = picks_table(watch_ids, signals)
             st.caption(f"最新評分日 {sig_dates[0]}。總分 100 = 籌碼 32 + 資金 8 + 基本面 35 + 技術 25；"
