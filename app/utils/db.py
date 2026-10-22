@@ -254,15 +254,7 @@ def get_stock_ins(stock_id, limit=60):
 def get_latest_ins():
     return _latest_snapshot("stock_ins_daily")
 
-# ===== 融資融券 =====
-# 融資、融券餘額改讀 margin_utilization（與原 margin_trading 的餘額完全相同，省去重複的表）
-def get_margin(stock_id, limit=60):
-    return _latest_rows("margin_utilization", stock_id, ["date"], limit)
-
-def get_latest_margin():
-    return _latest_snapshot("margin_utilization")
-
-# ===== 融資融券使用率 =====
+# ===== 融資融券（餘額、限額、使用率都在 margin_utilization）=====
 def get_margin_utilization(stock_id, limit=60):
     """取得單一股票融資融券使用率歷史"""
     return _latest_rows("margin_utilization", stock_id, ["date"], limit)
@@ -368,14 +360,6 @@ def get_top_signals(date, n=5):
     res = supabase.table("daily_signals").select("*") \
         .eq("date", date).lte("rank", n).order("rank").execute()
     return pd.DataFrame(res.data)
-
-def get_top_ranks(since, n=10):
-    """since 之後每個評分日排名前 n 名（stock_id、date、rank、total_score），依日期、排名排序（選股頁用）"""
-    return pd.DataFrame(_fetch_all(
-        lambda: supabase.table("daily_signals").select("stock_id, date, rank, total_score")
-            .gte("date", since).lte("rank", n)
-            .order("date").order("rank")
-    ))
 
 def get_top_ranks(since, n=10):
     """since 之後每個評分日排名前 n 名（stock_id、date、rank、total_score），依日期、排名排序（選股頁紀錄用）"""

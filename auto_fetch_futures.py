@@ -13,31 +13,12 @@
 import csv
 import io
 import requests
-from supabase import create_client
-from dotenv import load_dotenv
-import os
+import sys
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-load_dotenv()
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
-
-def parse_volume(val_str):
-    if not val_str: return 0
-    val_str = str(val_str).replace(",", "").strip()
-    try: return int(val_str)
-    except ValueError: return 0
-
-def save_data_batches(table_name, records):
-    if not records:
-        print("無資料可儲存")
-        return
-    batch_size = 500
-    for i in range(0, len(records), batch_size):
-        batch = records[i:i + batch_size]
-        try: supabase.table(table_name).upsert(batch).execute()
-        except Exception as e: print(f"儲存 {table_name} 錯誤 (Index {i}): {e}")
-    print(f"成功儲存/更新共 {len(records)} 筆資料至 {table_name}！")
+import fetch_stock_info as f
+from fetch_stock_info import parse_volume
 
 DOWNLOAD_URL = "https://www.taifex.com.tw/cht/3/futContractsDateDown"
 # 下載檔的欄位名稱 → 資料表欄位；期交所改版造成欄位對不上時，就改用 openapi
@@ -148,6 +129,12 @@ if __name__ == "__main__":
     if futures_data:
         dates = sorted({r["date"] for r in futures_data})
         print(f"期交所資料日期：{dates[0]} ~ {dates[-1]}（共 {len(dates)} 天）")
-    save_data_batches("futures_institutional", futures_data)
+    if not futures_data:
+        print("❌ 下載網址和 openapi 都沒有取得資料")
+        sys.exit(1)
+    _, failed = f.save_data_batches("futures_institutional", futures_data)
+    if failed:
+        print(f"❌ 有 {failed} 筆寫入失敗")
+        sys.exit(1)
 
     print("\n✅ 期貨排程執行完畢！")

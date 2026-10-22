@@ -5,7 +5,7 @@ import pandas as pd
 
 from utils.db import (
     get_stock_info, get_daily_prices, get_quarterly, get_revenue, get_stock_ins,
-    get_margin, get_holder, get_margin_utilization, get_market_index,
+    get_holder, get_margin_utilization, get_market_index,
 )
 from utils.indicators import (calc_all, get_latest_signals, level, volume_level, obv_state, macd_zero, LAMP,
                               POSITION_LEVELS, BOLL_LEVELS, BIAS_LEVELS, INF)
@@ -17,9 +17,9 @@ def load_card_data(stock_id):
     quarterly   = get_quarterly(stock_id, limit=8)
     revenue     = get_revenue(stock_id, limit=12)
     ins         = get_stock_ins(stock_id, limit=250)  # 買賣超圖用 60 日、外資持股走勢最多 250 日，卡片取最後 10 日
-    margin      = get_margin(stock_id, limit=1)
     holder      = get_holder(stock_id, limit=5)  # 每週一筆，取 5 週算近 4 週變化（LINE 整批卡片 HOLDER_WEEKS 要一樣）
     utilization = get_margin_utilization(stock_id, limit=21)  # 最新一筆＋近 20 日增減（LINE 整批卡片 MARGIN_DAYS 要一樣）
+    margin      = utilization.tail(1)  # 融資券餘額和使用率在同一張表，不必再查一次
     # 上櫃股票和櫃買指數比，其餘和加權指數比
     index_code  = "TPEX" if (info or {}).get("market") == "上櫃" else "TAIEX"
     index_df    = get_market_index(index_code, limit=250)

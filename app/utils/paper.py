@@ -26,10 +26,10 @@ def evaluate_trades(trades, raw, adj):
     損益已扣買進手續費、賣出手續費與證交稅。
     """
     out = trades.copy()
-    for col in ["end_date", "end_price", "cost", "proceeds", "pnl", "pnl_pct", "hold_days"]:
+    for col in ["end_date", "end_price", "div_mult", "cost", "proceeds", "pnl", "pnl_pct", "hold_days"]:
         out[col] = None
     if out.empty or raw.empty:
-        for col in ["end_price", "cost", "proceeds", "pnl", "pnl_pct", "hold_days"]:
+        for col in ["end_price", "div_mult", "cost", "proceeds", "pnl", "pnl_pct", "hold_days"]:
             out[col] = pd.to_numeric(out[col], errors="coerce")
         return out
     px = raw[["stock_id", "date", "close_price"]].copy()
@@ -54,12 +54,13 @@ def evaluate_trades(trades, raw, adj):
         end_date = str(t["sell_date"]) if sold else str(end_row["date"])
         out.at[i, "end_date"] = end_date
         out.at[i, "end_price"] = end_price
+        out.at[i, "div_mult"] = div_mult
         out.at[i, "cost"] = cost
         out.at[i, "proceeds"] = proceeds
         out.at[i, "pnl"] = proceeds - cost
         out.at[i, "pnl_pct"] = (proceeds - cost) / cost * 100
         out.at[i, "hold_days"] = (pd.to_datetime(end_date) - pd.to_datetime(str(t["buy_date"]))).days
-    for col in ["end_price", "cost", "proceeds", "pnl", "pnl_pct", "hold_days"]:
+    for col in ["end_price", "div_mult", "cost", "proceeds", "pnl", "pnl_pct", "hold_days"]:
         out[col] = pd.to_numeric(out[col], errors="coerce")
     return out
 

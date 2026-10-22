@@ -13,7 +13,7 @@ from utils.ui import (
 )
 from utils.db import (
     get_stock_list, get_latest_prices, get_latest_ins,
-    get_latest_margin, get_latest_holder, get_latest_revenue,
+    get_latest_holder, get_latest_revenue,
     get_latest_quarterly, get_latest_margin_utilization, get_recent_closes,
     get_market_index, get_futures_ins, get_recent_ins
 )
@@ -71,7 +71,6 @@ def load_overview_data():
         get_stock_list,
         get_latest_prices,
         get_latest_ins,
-        get_latest_margin,
         get_latest_margin_utilization,
         get_latest_holder,
         get_latest_revenue,
@@ -84,7 +83,8 @@ def load_overview_data():
     data.append(load_latest_rsi(data[-1]))
     return tuple(data)
 
-stock_list, prices, ins, margin, margin_util, holder, revenue, quarterly, closes, rsi = load_overview_data()
+stock_list, prices, ins, margin_util, holder, revenue, quarterly, closes, rsi = load_overview_data()
+margin = margin_util  # 融資券餘額和使用率在同一張表
 
 # ===== 大盤儀表板 =====
 @st.cache_data(ttl=3600)

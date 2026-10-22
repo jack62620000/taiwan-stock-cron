@@ -9,41 +9,11 @@ import time
 from datetime import date, timedelta
 
 import requests
-from supabase import create_client
-from dotenv import load_dotenv
-import os
 
-load_dotenv()
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+import fetch_stock_info as f
+from fetch_stock_info import get_valid_stock_ids
 
-def get_valid_stock_ids():
-    valid_stocks = set()
-    start = 0
-    page_size = 1000
-    while True:
-        try:
-            res = supabase.table("stock_info").select("stock_id").range(start, start + page_size - 1).execute()
-            data = res.data
-            if not data: break
-            for item in data: valid_stocks.add(item["stock_id"])
-            if len(data) < page_size: break
-            start += page_size
-        except Exception as e:
-            print(f"無法獲取股票清單: {e}"); break
-    return valid_stocks
-
-def save_data_batches(table_name, records):
-    if not records: return
-    batch_size = 500
-    failed = 0
-    for i in range(0, len(records), batch_size):
-        batch = records[i:i + batch_size]
-        try: supabase.table(table_name).upsert(batch).execute()
-        except Exception as e:
-            failed += len(batch)
-            print(f"儲存 {table_name} 錯誤 (Index {i}): {e}")
-    print(f"{table_name}：寫入 {len(records) - failed} 筆，失敗 {failed} 筆")
-    return failed
+supabase = f.supabase
 
 OPENDATA_RETRIES = 3
 # 開放資料之外，用查詢網頁檢查並補齊最近幾週的缺漏
@@ -147,7 +117,7 @@ if __name__ == "__main__":
     holder_data = fetch_holder_distribution(valid_stocks)
     if not holder_data:
         problems.append("集保開放資料沒有取得資料，改用查詢網頁補抓")
-    elif save_data_batches("holder_distribution", holder_data):
+    elif f.save_data_batches("holder_distribution", holder_data)[1]:
         problems.append("開放資料有部分寫入失敗")
 
     print("\n--- 用集保查詢網頁檢查並補齊最近幾週 ---")

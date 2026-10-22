@@ -89,8 +89,6 @@ def fetch_day(day, valid_stocks):
 
     print("--- 下載外資持股 ---")
     holdings, holding_problems = foreign.fetch_day(day, valid_stocks)
-    if holdings:  # 整天都抓不到時不併入，避免把已存的持股蓋成空值
-        foreign.merge_into(twse_ins + tpex_ins, holdings)
 
     print("--- 下載融資融券 ---")
     twse_margin = f.fetch_twse_margin(day, valid_stocks)
@@ -114,6 +112,14 @@ def fetch_day(day, valid_stocks):
         _, failed = f.save_data_batches(table, records)
         if failed:
             problems.append(f"{day} {table} 有 {failed} 筆寫入失敗")
+    # 外資持股另外只寫有抓到的股票：只抓到上市或上櫃其中一邊時，另一邊已存的持股不會被蓋成空值
+    ins_ids = {r["stock_id"] for r in twse_ins + tpex_ins}
+    hold_rows = [{"stock_id": sid, "date": day, "foreign_hold_shares": s, "foreign_hold_ratio": r}
+                 for sid, (s, r) in holdings.items() if sid in ins_ids]
+    if hold_rows:
+        _, failed = f.save_data_batches(foreign.TABLE, hold_rows)
+        if failed:
+            problems.append(f"{day} 外資持股有 {failed} 筆寫入失敗")
     return True, problems
 
 
@@ -161,8 +167,10 @@ def main():
         if failed:
             problems.append(f"{adj.TABLE} 有 {failed} 筆寫入失敗")
 
-    print("\n--- 大盤指數（重抓當月）---")
-    _, index_problems = market.fetch_range(ref[:8] + "01", ref)
+    print("\n--- 大盤指數（重抓當月，以及這次補抓的日期）---")
+    # 排程拖過月底時，ref 已是下個月 1 號；從補抓的第一天或 7 天前開始，月底最後一天才不會漏抓
+    week_ago = (datetime.strptime(ref, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
+    _, index_problems = market.fetch_range(min([ref[:8] + "01", week_ago] + days[:1]), ref)
     problems.extend(index_problems)
 
     day = int(ref[8:10])

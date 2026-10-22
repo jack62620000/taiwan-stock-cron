@@ -21,13 +21,13 @@
 """
 import os
 import sys
-import time
 from datetime import date, datetime, timezone
 
 from supabase import create_client
 from dotenv import load_dotenv
 
 from archive import archive_day
+from retry import execute as _execute
 
 load_dotenv()
 
@@ -48,17 +48,6 @@ def years_ago(day, years):
         return day.replace(year=day.year - years)
     except ValueError:  # 2/29
         return day.replace(year=day.year - years, day=28)
-
-
-def _execute(make_request, retries=4):
-    for attempt in range(1, retries + 1):
-        try:
-            return make_request().execute()
-        except Exception as e:
-            if attempt == retries:
-                raise
-            print(f"  連線錯誤，{3 * attempt} 秒後重試：{type(e).__name__}")
-            time.sleep(3 * attempt)
 
 
 def cleanup(sb, table, col, years, today, dry_run, archive_only=False):

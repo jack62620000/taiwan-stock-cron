@@ -39,3 +39,25 @@ def test_pick_record():
     assert rec.at["B", "status"] == "持有第 2 / 2 天" and not rec.at["B", "market_ok"]
     assert round(rec.at["B", "ret"], 2) == 9.5                   # d3 開盤 50 買、最新收盤 55
     assert rec.at["B", "last_close"] == 55 and pd.isna(rec.at["B", "sell_price"])
+
+
+def test_sector_table_ignores_missing_returns():
+    """新上市股票沒有 20 日漲幅時，不能把產業平均拉向 0"""
+    from utils.sector import sector_table
+    df = pd.DataFrame({"stock_id": ["A", "B", "C"], "industry": ["半導體"] * 3,
+                       "5日%": [10.0, 10.0, None], "20日%": [10.0, 10.0, None], "均成交值": [1.0, 1.0, 8.0]})
+    for weighting in ("等權重", "成交值加權"):
+        row = sector_table(df, weighting).iloc[0]
+        assert round(row["20日%"], 6) == 10.0 and round(row["5日%"], 6) == 10.0
+
+
+def test_evaluate_trades_div_mult():
+    """持有期間除息：div_mult 記下還原比例，模擬持股頁用它換算停損價"""
+    from utils.paper import evaluate_trades
+    trades = pd.DataFrame({"stock_id": ["A"], "buy_date": ["2026-10-01"], "buy_price": [100.0], "shares": [1.0],
+                           "sell_date": [None], "sell_price": [None]})
+    raw = pd.DataFrame({"stock_id": ["A", "A"], "date": ["2026-10-01", "2026-10-02"], "close_price": [100.0, 95.0]})
+    adj = raw.assign(close_price=[95.0, 95.0])  # 10/2 除息 5 元：還原後 10/1 是 95
+    out = evaluate_trades(trades, raw, adj)
+    assert round(out.at[0, "div_mult"], 6) == round(1 / 0.95, 6)
+    assert round(out.at[0, "end_price"] * out.at[0, "div_mult"], 6) == 100.0

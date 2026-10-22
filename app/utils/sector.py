@@ -41,7 +41,7 @@ def sector_table(df, weighting):
             "產業": ind,
             "檔數": len(g),
             "5日%": (g["5日%"] * w).sum() / w[g["5日%"].notna()].sum() if g["5日%"].notna().any() else None,
-            "20日%": (g["20日%"] * w).sum() / w.sum(),
+            "20日%": (g["20日%"] * w).sum() / w[g["20日%"].notna()].sum() if g["20日%"].notna().any() else None,
             "上漲比例%": (g["20日%"] > 0).mean() * 100,
             "外資5日(億)": g["外資5日(億)"].sum() if "外資5日(億)" in g else None,
             "投信5日(億)": g["投信5日(億)"].sum() if "投信5日(億)" in g else None,
