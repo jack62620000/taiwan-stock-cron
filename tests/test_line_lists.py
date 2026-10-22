@@ -107,3 +107,22 @@ def test_rule4_events_first_day_only():
     ev = rule4_events(pd.DataFrame(rows), min_volume=500, days=20)
     assert len(ev) == 1 and ev.loc[0, "stock_id"] == "9999" and ev.loc[0, "bias"] <= -10
     assert rule4_events(pd.DataFrame(rows), min_volume=5000, days=20).empty  # 均量不夠
+
+
+def test_picks_list(use_db):
+    """明日買進：第一則寫大盤狀態與前 10 名，之後一則輪播、每檔一張卡"""
+    use_db()
+    from utils.analysis import load_market_regime
+    from utils.picks import buy_list
+    date, top = buy_list()
+    msgs = line_lists.picks_messages(date, top, load_market_regime())
+    size_ok(msgs)
+    assert "明日買進" in msgs[0]["text"] and "大盤在季線" in msgs[0]["text"]
+    cards = msgs[1]["contents"]["contents"]
+    assert len(cards) == len(top) and cards[0]["footer"]["contents"][0]["action"]["text"] == top.iloc[0]["stock_id"]
+    assert line_lists.picks_messages(None, top.iloc[0:0], None)[0]["text"] == "還沒有評分資料。"
+
+
+def test_build_lists_has_picks(use_db):
+    use_db()
+    assert {"picks.json", "granville.json", "momentum.json"} <= set(line_lists.build_lists())

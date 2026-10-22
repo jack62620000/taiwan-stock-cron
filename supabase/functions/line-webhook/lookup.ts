@@ -16,7 +16,8 @@ const WATCH_WORDS = new Set(["自選", "自選股", "我的自選股"]);
 const MYID_WORDS = new Set(["我的id", "myid", "id"]);
 // 選單清單：每晚由 line_lists.py 算好的回覆檔
 const LIST_WORDS: Record<string, string> = {
-  "葛蘭碧": "granville.json", "等待法則2": "granville.json",
+  "明日買進": "picks.json", "買進": "picks.json", "選股": "picks.json",
+  "均線買賣點": "granville.json", "均線": "granville.json", "葛蘭碧": "granville.json", "等待法則2": "granville.json",
   "動能": "momentum.json", "動能股": "momentum.json", "動能選股": "momentum.json",
 };
 export const MAX_CHOICES = 10; // 名稱對到很多檔時，最多列幾檔讓使用者點選（LINE 快速回覆最多 13 個）
@@ -56,7 +57,8 @@ export function helpText(index: Index | null): string {
     "台積電",
     "",
     "輸入「自選」會回覆你網頁自選股每一檔的分析卡（要先對應網頁帳號：輸入「我的ID」，把那串 ID 給管理者）。",
-    "輸入「葛蘭碧」會列出等待法則 2 與急跌反彈候選（法則 4）的股票；輸入「動能股」會列出動能選股。",
+    "輸入「明日買進」會列出明天開盤要買的評分前 10 名（大盤在季線上才買、持有 10 個交易日）；",
+    "輸入「均線買賣點」會列出等待法則 2（葛蘭碧）與急跌反彈候選（法則 4）的股票；輸入「動能股」會列出動能選股。",
     "",
     "會回覆和網頁「個股分析卡」相同的分析（52 週區間、基本面、營收、籌碼、資金、技術面、葛蘭碧、每日評分、動能）。",
   ];

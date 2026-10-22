@@ -2,16 +2,15 @@ import streamlit as st
 import pandas as pd
 import sys
 import os
-from datetime import date, timedelta
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.glossary import render_page_guide
 from utils.db import (
-    get_stock_list, get_signal_dates, get_top_signals, get_top_ranks, get_market_index, get_momentum_latest,
+    get_stock_list, get_signal_dates, get_top_ranks, get_market_index,
     get_rows_for_stocks, get_price_adjustments, apply_adjustments,
 )
 from utils.analysis import MARKET_MA, TRADE_COST_PCT, load_market_regime
-from utils.picks import BACKTEST_MD, HOLD, RULES_MD, TOP_N, market_ok_by_date, pick_record, stock_tags
+from utils.picks import BACKTEST_MD, HOLD, RULES_MD, TOP_N, buy_list, market_ok_by_date, pick_record
 from utils.watch import add_watch_form
 from utils.ui import render_metric_cards, style_sign
 
@@ -22,11 +21,8 @@ render_page_guide("picks")
 # ===== 載入資料 =====
 @st.cache_data(ttl=3600)
 def load_today():
-    """最新評分日與當天每日選股前 N 名"""
-    dates = get_signal_dates(n=1)
-    if not dates:
-        return None, pd.DataFrame()
-    return dates[0], get_top_signals(dates[0], TOP_N)
+    """最新評分日與當天每日選股前 N 名（含名稱、產業、參考標籤）"""
+    return buy_list()
 
 
 RECORD_DAYS = 20  # 紀錄最近幾個評分日的前 N 名
@@ -51,30 +47,16 @@ def load_record():
 
 
 @st.cache_data(ttl=3600)
-def load_tags(ids):
-    """參考標籤：動能（最新一天）、布林收斂、葛蘭碧（約 200 個日曆天的還原權值收盤價）"""
-    ids = list(ids)
-    since = (date.today() - timedelta(days=200)).isoformat()
-    prices = get_rows_for_stocks("daily_prices", ids, since=since, columns="stock_id, date, close_price")
-    if not prices.empty:
-        prices = apply_adjustments(prices, get_price_adjustments(None, since))
-    return stock_tags(ids, prices, get_momentum_latest())
-
-
-@st.cache_data(ttl=3600)
 def load_names():
     info = get_stock_list(include_delisted=True)
-    if info.empty:
-        return {}, {}
-    return dict(zip(info["stock_id"], info["stock_name"].fillna(""))), dict(zip(info["stock_id"], info["industry"].fillna("")))
+    return dict(zip(info["stock_id"], info["stock_name"].fillna(""))) if not info.empty else {}
 
 
 last, today = load_today()
 if last is None or today.empty:
     st.warning("還沒有評分資料。等今晚的每日排程跑完就會出現。")
     st.stop()
-names, industries = load_names()
-tags = load_tags(tuple(sorted(today["stock_id"])))
+names = load_names()
 regime = load_market_regime()
 market_ok = bool(regime) and not regime["below"]
 
@@ -95,14 +77,14 @@ with tab_buy:
     st.markdown(f"#### {last} 每日選股前 {TOP_N} 名" + ("" if market_ok else "（大盤在季線下，先不買）"))
     view = pd.DataFrame({
         "排名": today["rank"], "代號": today["stock_id"],
-        "名稱": today["stock_id"].map(names), "產業": today["stock_id"].map(industries),
-        "總分": today["total_score"], "參考標籤": today["stock_id"].map(lambda s: "　".join(tags.get(s, []))),
+        "名稱": today["stock_name"], "產業": today["industry"],
+        "總分": today["total_score"], "參考標籤": today["tags"].map("　".join),
     })
     st.dataframe(view, hide_index=True, width="stretch",
                  column_config={"排名": pct(format="%d"), "總分": pct(format="%d", help="滿分 100（規則 v5）"),
                                 "參考標籤": st.column_config.TextColumn(width="large")})
     st.caption(f"隔天開盤買進，持有 {HOLD} 個交易日後開盤賣出。標籤只是參考，不影響買賣。")
-    add_watch_form(today.assign(stock_name=today["stock_id"].map(names)), "選股", last, "picks_page")
+    add_watch_form(today, "選股", last, "picks_page")
 
 with tab_record:
     st.caption(f"最近 {RECORD_DAYS} 個評分日的前 {TOP_N} 名，如果照規則隔天開盤買、第 {HOLD} 個交易日開盤賣，"
