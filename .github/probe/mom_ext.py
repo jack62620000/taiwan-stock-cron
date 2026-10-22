@@ -90,43 +90,50 @@ def main():
         print(pd.DataFrame([stat(n, m) for n, m in items]).set_index("條件").to_string())
 
     ext = (close / ma50 - 1) * 100
-    lowx = close / low52
     g20 = (close / close.shift(20) - 1) * 100
-    offh = (close / high52 - 1) * 100
-    for nm, sig in (("趨勢模板（全部，每天）", tt), ("今天剛符合趨勢模板", tt_new), ("52 週新高＋量增", bo)):
-        show(f"{nm}：全體", [("全部", sig)])
-        show(f"{nm}：離 50 日均線", [("< 5%", sig & (ext < 5)), ("5～10%", sig & (ext >= 5) & (ext < 10)),
-             ("10～20%", sig & (ext >= 10) & (ext < 20)), ("20～30%", sig & (ext >= 20) & (ext < 30)), ("≥ 30%", sig & (ext >= 30))])
-        show(f"{nm}：52 週低點的幾倍", [("1.3～1.6", sig & (lowx < 1.6)), ("1.6～2", sig & (lowx >= 1.6) & (lowx < 2)),
-             ("2～3", sig & (lowx >= 2) & (lowx < 3)), ("≥ 3", sig & (lowx >= 3))])
-        show(f"{nm}：近 20 日漲幅", [("< 5%", sig & (g20 < 5)), ("5～15%", sig & (g20 >= 5) & (g20 < 15)),
-             ("15～30%", sig & (g20 >= 15) & (g20 < 30)), ("≥ 30%", sig & (g20 >= 30))])
-        show(f"{nm}：RS", [("70～80", sig & (rs < 80)), ("80～90", sig & (rs >= 80) & (rs < 90)), ("≥ 90", sig & (rs >= 90))])
-    show("趨勢模板：離 52 週高點", [("新高（0）", tt & (offh >= 0)), ("−5～0%", tt & (offh < 0) & (offh >= -5)),
-         ("−15～−5%", tt & (offh < -5) & (offh >= -15)), ("−25～−15%", tt & (offh < -15))])
-    # ===== 布林通道：碰過下軌後，收盤由下往上站上中軌 =====
-    mid = close.rolling(20, min_periods=20).mean()
-    sdv = close.rolling(20, min_periods=20).std(ddof=0)
-    lower, upper = mid - 2 * sdv, mid + 2 * sdv
-    cross = (close > mid) & (close.shift(1) <= mid.shift(1)) & liq_all
-    touch = lambda n: (close <= lower).astype(float).shift(1).rolling(n, min_periods=1).max().fillna(0) > 0  # noqa: E731
-    b10 = cross & touch(10)
+    ma5 = close.rolling(5, min_periods=5).mean()
+    ma10 = close.rolling(10, min_periods=10).mean()
+    ma20 = close.rolling(20, min_periods=20).mean()
     ma60 = close.rolling(60, min_periods=60).mean()
-    width = (upper - lower) / mid * 100
-    show("布林：站上中軌", [("只站上中軌（沒碰下軌）", cross & ~touch(20)), ("5 日內碰過下軌", cross & touch(5)),
-         ("10 日內碰過下軌", b10), ("20 日內碰過下軌", cross & touch(20))])
-    show("布林：10 日內碰下軌＋站上中軌，再加條件", [
-        ("全部", b10), ("量比 ≥ 1.5", b10 & (vr >= 1.5)), ("中軌上揚", b10 & (mid > mid.shift(1))),
-        ("收盤在 60 日線上", b10 & (close > ma60)), ("收盤在 200 日線上", b10 & (close > ma200)),
-        ("收盤在 60 日線下", b10 & (close <= ma60)), ("RS ≥ 70", b10 & (rs >= 70)),
-        ("通道寬 < 10%", b10 & (width < 10)), ("通道寬 ≥ 20%", b10 & (width >= 20)),
-        ("同時符合趨勢模板", b10 & tt)])
-    show("布林：近 20 日漲幅（10 日內碰下軌＋站上中軌）", [("< 0%", b10 & (g20 < 0)), ("0～10%", b10 & (g20 >= 0) & (g20 < 10)),
-         ("≥ 10%", b10 & (g20 >= 10))])
+    pos52 = (close - low52) / (high52 - low52)       # 0 = 52 週低點，1 = 52 週高點
+    L = liq_all
+    show("對照：現在的動能選股", [("趨勢模板（每天）", tt), ("今天剛符合趨勢模板", tt_new), ("52 週新高＋量增", bo),
+         ("趨勢模板且離 50 日線 < 30%", tt & (ext < 30))])
 
-    pull = tt & (ext >= 0) & (ext < 5) & (close.shift(5) > close)
-    show("趨勢模板回檔候選", [("回到 50 日線 5% 以內、5 日下跌", pull), ("同上且 RS ≥ 80", pull & (rs >= 80))])
+    # ===== 5MA 突破 10MA、20MA =====
+    up10 = (ma5 > ma10) & (ma5.shift(1) <= ma10.shift(1))
+    up20 = (ma5 > ma20) & (ma5.shift(1) <= ma20.shift(1))
+    both = (ma5 > ma10) & (ma5 > ma20)
+    gx = both & ~both.shift(1, fill_value=False) & L   # 今天第一天同時在 10、20 MA 之上
+    show("5MA 突破 10MA、20MA", [
+        ("5MA 穿過 10MA", up10 & L), ("5MA 穿過 20MA", up20 & L), ("5MA 第一天同時在 10、20MA 上", gx),
+        ("同上＋量比 ≥ 1.5", gx & (vr >= 1.5)), ("同上＋20MA 上揚", gx & (ma20 > ma20.shift(1))),
+        ("同上＋收盤在 60MA 上", gx & (close > ma60)), ("同上＋收盤在 200MA 上", gx & (close > ma200)),
+        ("同上＋收盤在 60MA 下", gx & (close <= ma60)), ("同上＋RS ≥ 70", gx & (rs >= 70)),
+        ("同上＋符合趨勢模板", gx & tt), ("同上＋52 週位置 < 30%（低檔）", gx & (pos52 < 0.3))])
 
+    # ===== 低檔盤整後突破 =====
+    hi20p = close.rolling(20, min_periods=20).max().shift(1)
+    lo20p = close.rolling(20, min_periods=20).min().shift(1)
+    rng = (hi20p / lo20p - 1) * 100                  # 前 20 日的高低差
+    brk = (close > hi20p) & L
+    hi40p = close.rolling(40, min_periods=40).max().shift(1)
+    lo40p = close.rolling(40, min_periods=40).min().shift(1)
+    rng40 = (hi40p / lo40p - 1) * 100
+    brk40 = (close > hi40p) & L
+    for lab, low_m in (("52 週位置 < 30%", pos52 < 0.3), ("52 週位置 < 50%", pos52 < 0.5), ("收盤在 200MA 下", close < ma200)):
+        show(f"低檔盤整後突破（低檔＝{lab}）", [
+            ("突破前 20 日高點", brk & low_m), ("前 20 日高低差 < 10%", brk & low_m & (rng < 10)),
+            ("前 20 日高低差 < 15%", brk & low_m & (rng < 15)), ("同上＋量比 ≥ 1.5", brk & low_m & (rng < 15) & (vr >= 1.5)),
+            ("同上＋量比 ≥ 2", brk & low_m & (rng < 15) & (vr >= 2)),
+            ("前 40 日高低差 < 15%", brk40 & low_m & (rng40 < 15)), ("同上＋量比 ≥ 1.5", brk40 & low_m & (rng40 < 15) & (vr >= 1.5)),
+            ("前 40 日高低差 < 20%＋量比 ≥ 1.5", brk40 & low_m & (rng40 < 20) & (vr >= 1.5))])
+    show("盤整後突破（不限低檔）", [
+        ("前 20 日高低差 < 15%＋量比 ≥ 1.5", brk & (rng < 15) & (vr >= 1.5)),
+        ("前 40 日高低差 < 20%＋量比 ≥ 1.5", brk40 & (rng40 < 20) & (vr >= 1.5)),
+        ("前 40 日高低差 < 20%＋量比 ≥ 1.5＋200MA 上", brk40 & (rng40 < 20) & (vr >= 1.5) & (close > ma200)),
+        ("前 40 日高低差 < 20%＋量比 ≥ 1.5＋RS ≥ 70", brk40 & (rng40 < 20) & (vr >= 1.5) & (rs >= 70))])
+    _ = g20
 
 if __name__ == "__main__":
     main()
