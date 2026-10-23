@@ -1,28 +1,11 @@
 import pandas as pd
 import streamlit as st
 
-from utils.picks import HOLD
-
 # 手續費以牌價 0.1425% 計（未打折）、證交稅 0.3%（ETF 實際是 0.1%，這裡一律用 0.3% 保守估計）
 BUY_FEE = 0.001425
 SELL_FEE = 0.001425
 SELL_TAX = 0.003
-PICKS_SOURCE = "明日買進"  # 從選股頁「明日買進」加入的模擬持股：評分日收盤記錄，實際是隔天開盤買
 PAGE = "pages/10_模擬持股.py"
-
-
-def held_days(buy_date, trade_dates):
-    """買進日之後已經過了幾個交易日（買進日當天不算；交易日以有股價的日子為準，颱風假、國定假日不算）"""
-    return sum(1 for d in trade_dates if d > str(buy_date)[:10])
-
-
-def expiry_note(n):
-    """明日買進的賣法：買進後第 HOLD 個交易日開盤賣出。n 是已經過的交易日數"""
-    if n >= HOLD:
-        return f"已持有 {n} 個交易日，超過 {HOLD} 個交易日的到期日，可在下一個交易日開盤賣出"
-    if n == HOLD - 1:
-        return f"已持有 {n} 個交易日，明天開盤是第 {HOLD} 個交易日，到期賣出"
-    return f"持有第 {n} 個交易日，再 {HOLD - n} 個交易日到期"
 
 
 def _price_on(stock_prices, day):

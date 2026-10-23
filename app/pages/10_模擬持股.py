@@ -11,10 +11,9 @@ from utils.db import (
     get_paper_trades, add_paper_trades, sell_paper_trade, delete_paper_trade,
 )
 from utils.groups import group_picker
-from utils.paper import evaluate_trades, expiry_note, held_days, BUY_FEE, PICKS_SOURCE, SELL_FEE, SELL_TAX
+from utils.paper import evaluate_trades, BUY_FEE, SELL_FEE, SELL_TAX
 from utils.granville import STOP_RULE, next_day_triggers, rule_frames, stop_price
 from utils.analysis import load_atr
-from utils.picks import HOLD
 from utils.ui import require_login, render_metric_cards, style_sign
 require_login()
 
@@ -48,14 +47,13 @@ def load_prices(stock_ids, since):
 def load_exit_status(stock_ids):
     """
     持有中股票的出場判斷（葛蘭碧預設參數、20 日均線）：
-    今天是否出現法則 5／6／8、均線價位、乖離，以及明天收盤跌到多少會出現法則 5／6；
-    另外回傳最近的交易日清單（算持有了幾個交易日）。
+    今天是否出現法則 5／6／8、均線價位、乖離，以及明天收盤跌到多少會出現法則 5／6。
     """
     since = str(date.today() - timedelta(days=120))
     raw = get_rows_for_stocks("daily_prices", list(stock_ids), since=since,
                               columns="stock_id, date, close_price")
     if raw.empty:
-        return pd.DataFrame(), pd.DataFrame(), []
+        return pd.DataFrame(), pd.DataFrame()
     adj = apply_adjustments(raw, get_price_adjustments(None, since))
     close = adj.assign(close_price=pd.to_numeric(adj["close_price"], errors="coerce")) \
         .pivot_table(index="date", columns="stock_id", values="close_price", aggfunc="last").sort_index()
@@ -65,10 +63,10 @@ def load_exit_status(stock_ids):
         **{f"r{n}": f["hits"][n].iloc[-1] for n in (5, 6, 8)},
     })
     triggers = next_day_triggers(adj, (5, 6), "賣出", list(stock_ids)).set_index("stock_id")
-    return status, triggers, [str(d)[:10] for d in close.index]
+    return status, triggers
 
 
-def exit_row(row, status, triggers, atrs, trade_dates=()):
+def exit_row(row, status, triggers, atrs):
     """一筆持股的出場狀態與說明"""
     sid, close = row["stock_id"], float(row["end_price"])
     # 持有期間除權息時，原始股價會掉一個股息；停損價也換算成除權息後的價位，才不會誤判跌破停損
@@ -79,15 +77,9 @@ def exit_row(row, status, triggers, atrs, trade_dates=()):
     trig_price = float(trig["trigger_price"]) if trig is not None else None
     trig_note = (f"明天收盤 ≤ {trig_price:,.2f} 元（{float(trig['trigger_pct']):+.2f}%）會出現賣出訊號"
                  if trig is not None else "")
-    n = held_days(row["buy_date"], trade_dates)
-    if row.get("source") == PICKS_SOURCE:
-        n = max(n - 1, 0)  # 記錄的是評分日，實際是隔天開盤才買，到期日從隔天算起
     if close <= stop:
         state = "⛔ 跌破停損"
         note = "收盤已跌破停損價，可考慮明天開盤賣出"
-    elif n >= HOLD - 1:
-        state = "📅 到期賣出"
-        note = expiry_note(n) + "（明日買進的規則）"
     elif st_row is not None and (st_row["r5"] or st_row["r6"]):
         state = "⚠️ 出現賣出訊號"
         note = "今天出現法則 " + "、".join(str(n) for n in (5, 6) if st_row[f"r{n}"]) + "（均線轉弱），可考慮明天開盤賣出"
@@ -101,7 +93,7 @@ def exit_row(row, status, triggers, atrs, trade_dates=()):
     else:
         state = "✅ 續抱"
         note = trig_note or "均線仍往上，明天跌停也不會出現賣出訊號"
-    return {"狀態": state, "到期剩": max(HOLD - n, 0), "停損價": stop, "賣出觸發價": trig_price, "說明": note}
+    return {"狀態": state, "停損價": stop, "賣出觸發價": trig_price, "說明": note}
 
 
 def close_on(stock_id, day):
@@ -174,19 +166,18 @@ if not trades.empty:
 
         st.markdown("**🚦 出場狀態**")
         st.caption(f"停損價是{STOP_RULE.replace('預計買進價', '買進價')}，ATR 依最新資料計算；賣出觸發價是明天收盤跌到多少會出現葛蘭碧法則 5／6"
-                   f"（20 日均線轉弱）。到期剩：照「明日買進」的規則，買進後第 {HOLD} 個交易日開盤賣出，還剩幾個交易日"
-                   "（颱風假、國定假日不算）。依最新收盤計算，僅供參考。")
+                   "（20 日均線轉弱）。依最新收盤計算，僅供參考。")
         held_ids = tuple(sorted(holding["stock_id"].unique()))
-        status, exit_triggers, trade_dates = load_exit_status(held_ids)
+        status, exit_triggers = load_exit_status(held_ids)
         atrs = load_atr(held_ids)
         exits = pd.DataFrame([{"代號": r["stock_id"], "名稱": r["stock_name"], "買進日": r["buy_date"],
                                "買進價": r["buy_price"], "最新收盤": r["end_price"], "報酬%": r["pnl_pct"],
-                               **exit_row(r, status, exit_triggers, atrs, trade_dates)}
+                               **exit_row(r, status, exit_triggers, atrs)}
                               for _, r in holding.iterrows() if pd.notna(r["end_price"])])
         if not exits.empty:
-            order = {"⛔ 跌破停損": 0, "📅 到期賣出": 1, "⚠️ 出現賣出訊號": 2, "🔔 接近賣出": 3, "🔥 過熱": 4, "✅ 續抱": 5}
+            order = {"⛔ 跌破停損": 0, "⚠️ 出現賣出訊號": 1, "🔔 接近賣出": 2, "🔥 過熱": 3, "✅ 續抱": 4}
             exits = exits.sort_values("狀態", key=lambda c: c.map(order), kind="stable")
-            exits = exits[["狀態", "代號", "名稱", "買進日", "買進價", "最新收盤", "報酬%", "到期剩", "停損價", "賣出觸發價", "說明"]]
+            exits = exits[["狀態", "代號", "名稱", "買進日", "買進價", "最新收盤", "報酬%", "停損價", "賣出觸發價", "說明"]]
             st.dataframe(
                 exits.style
                     .format("{:,.2f}", subset=["買進價", "最新收盤", "停損價", "賣出觸發價"], na_rep="")

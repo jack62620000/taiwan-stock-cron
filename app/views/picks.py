@@ -11,7 +11,7 @@ from utils.db import (
 )
 from utils.analysis import MARKET_MA, TRADE_COST_PCT, load_market_regime
 from utils.picks import BACKTEST_MD, HOLD, RULES_MD, TOP_N, buy_list, market_ok_by_date, pick_record
-from utils.paper import PICKS_SOURCE, add_form as add_paper_form
+from utils.paper import add_form as add_paper_form
 from utils.watch import add_watch_form
 from utils.ui import render_metric_cards, style_sign
 
@@ -86,9 +86,7 @@ with tab_buy:
                                 "參考標籤": st.column_config.TextColumn(width="large")})
     st.caption(f"隔天開盤買進，持有 {HOLD} 個交易日後開盤賣出。標籤只是參考，不影響買賣。")
     add_watch_form(today, "選股", last, "picks_page")
-    add_paper_form(today, PICKS_SOURCE, last, "picks_page")
-    st.caption(f"加入模擬持股時先用 {last} 收盤價當買進價（實際是明天開盤買）；"
-               f"模擬持股頁會從明天開始算，第 {HOLD} 個交易日標成「📅 到期賣出」。")
+    add_paper_form(today, "明日買進", last, "picks_page")
 
 with tab_record:
     st.caption(f"最近 {RECORD_DAYS} 個評分日的前 {TOP_N} 名，如果照規則隔天開盤買、第 {HOLD} 個交易日開盤賣，"

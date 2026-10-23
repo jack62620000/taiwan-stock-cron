@@ -61,14 +61,3 @@ def test_evaluate_trades_div_mult():
     out = evaluate_trades(trades, raw, adj)
     assert round(out.at[0, "div_mult"], 6) == round(1 / 0.95, 6)
     assert round(out.at[0, "end_price"] * out.at[0, "div_mult"], 6) == 100.0
-
-
-def test_paper_expiry():
-    """模擬持股的到期賣出：買進日之後的交易日才算，第 HOLD 個交易日開盤賣"""
-    from utils.paper import expiry_note, held_days
-    from utils.picks import HOLD
-    days = [f"2026-10-{d:02d}" for d in (13, 14, 15, 16, 19, 20, 21, 22, 26, 27, 28, 29)]  # 23 颱風假沒有股價
-    assert held_days("2026-10-13", days) == 11
-    assert held_days("2026-10-22", days) == 4
-    assert "再 6 個交易日" in expiry_note(4)
-    assert "明天開盤" in expiry_note(HOLD - 1) and "超過" in expiry_note(HOLD)
