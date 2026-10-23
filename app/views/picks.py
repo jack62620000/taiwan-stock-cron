@@ -10,7 +10,8 @@ from utils.db import (
     get_rows_for_stocks, get_price_adjustments, apply_adjustments,
 )
 from utils.analysis import MARKET_MA, TRADE_COST_PCT, load_market_regime
-from utils.picks import BACKTEST_MD, HOLD, RULES_MD, TOP_N, buy_list, market_ok_by_date, pick_record
+from utils.picks import (BACKTEST_MD, HOLD, OPEN_AVOID_PCT, OPEN_GOOD_PCT, RULES_MD, TOP_N, buy_list,
+                         market_ok_by_date, open_ref, pick_record)
 from utils.paper import add_form as add_paper_form
 from utils.watch import add_watch_form
 from utils.ui import render_metric_cards, style_sign
@@ -79,12 +80,23 @@ with tab_buy:
     view = pd.DataFrame({
         "排名": today["rank"], "代號": today["stock_id"],
         "名稱": today["stock_name"], "產業": today["industry"],
-        "總分": today["total_score"], "參考標籤": today["tags"].map("　".join),
+        "總分": today["total_score"],
     })
+    refs = [open_ref(c) for c in pd.to_numeric(today["close_price"], errors="coerce")]
+    view["收盤價"] = pd.to_numeric(today["close_price"], errors="coerce")
+    view["開盤較佳 ≤"] = [r[0] for r in refs]
+    view["開盤不追"] = [f"{lo:,.2f}～{hi:,.2f}" if lo is not None else "" for _, lo, hi in refs]
+    view["參考標籤"] = today["tags"].map("　".join)
     st.dataframe(view, hide_index=True, width="stretch",
                  column_config={"排名": pct(format="%d"), "總分": pct(format="%d", help="滿分 100（規則 v5）"),
+                                "收盤價": pct(format="%.2f"),
+                                "開盤較佳 ≤": pct(format="%.2f", help=f"明天開盤比今天收盤跌 {abs(OPEN_GOOD_PCT):g}% 以上，"
+                                                                    "過去紀錄平均報酬最好"),
+                                "開盤不追": st.column_config.TextColumn(
+                                    help=f"明天開盤跳空漲 {OPEN_AVOID_PCT[0]:g}～{OPEN_AVOID_PCT[1]:g}%，過去紀錄平均報酬最差"),
                                 "參考標籤": st.column_config.TextColumn(width="large")})
-    st.caption(f"隔天開盤買進，持有 {HOLD} 個交易日後開盤賣出。標籤只是參考，不影響買賣。")
+    st.caption(f"隔天開盤買進，持有 {HOLD} 個交易日後開盤賣出。開盤參考價、標籤都只是參考，不影響買賣"
+               "（開盤參考價的根據見「📖 規則與回測」）。")
     add_watch_form(today, "選股", last, "picks_page")
     add_paper_form(today, "明日買進", last, "picks_page")
 

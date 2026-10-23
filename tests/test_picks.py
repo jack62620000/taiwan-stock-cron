@@ -61,3 +61,13 @@ def test_evaluate_trades_div_mult():
     out = evaluate_trades(trades, raw, adj)
     assert round(out.at[0, "div_mult"], 6) == round(1 / 0.95, 6)
     assert round(out.at[0, "end_price"] * out.at[0, "div_mult"], 6) == 100.0
+
+
+def test_open_ref():
+    """明天開盤參考價：較佳價往下取、不追區間對齊升降單位"""
+    from utils.picks import open_ref, tick_size
+    assert tick_size(9.99) == 0.01 and tick_size(50) == 0.1 and tick_size(1000) == 5.0
+    assert open_ref(100) == (98.0, 101.0, 103.0)
+    good, lo, hi = open_ref(1085)  # 1085 × 0.98 = 1063.3 → 1060（千元以上跳 5 元）；×1.01 = 1095.85 → 1100；×1.03 = 1117.55 → 1115
+    assert (good, lo, hi) == (1060.0, 1100.0, 1115.0)
+    assert open_ref(None) == (None, None, None)
