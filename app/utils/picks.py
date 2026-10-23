@@ -13,6 +13,10 @@ import pandas as pd
 SLOTS = 10            # 同時最多持有幾檔（每檔 1/10 資金）
 HOLD = 10             # 買進後第幾個交易日開盤賣出
 TOP_N = 10            # 每天買進候選：評分前幾名
+# 明天開盤參考價（只當參考，不改買賣規則）：2026-06～10 評分前 10 名、隔天開盤買、持有 10 天共 878 筆，
+# 開盤比評分日收盤跌 2% 以上的平均 +6.6%、勝率 62%；跳空漲 1～3% 的平均 −2.3%、勝率 37%，前後兩段期間方向一致
+OPEN_GOOD_PCT = -2.0
+OPEN_AVOID_PCT = (1.0, 3.0)
 
 BACKTEST_MD = """
 | 設定（大盤在季線上才買） | 總報酬 | 年化 | 最大回撤 | 勝率 |
@@ -36,12 +40,42 @@ RULES_MD = f"""
 3. 賣出：買進後第 {HOLD} 個交易日開盤賣出，不管賺賠。
 4. 回測的做法是最多同時持有 {SLOTS} 檔、每檔約放總資金的 1/{SLOTS}，名額滿了就不買、已持有的不重複買。
 
+**明天開盤參考價（只是參考，不影響買賣）**
+- 開盤比今天收盤跌 {abs(OPEN_GOOD_PCT):g}% 以上：2026-06～10 的紀錄平均報酬最好。
+- 開盤跳空漲 {OPEN_AVOID_PCT[0]:g}～{OPEN_AVOID_PCT[1]:g}%：平均報酬最差，可考慮不追。
+- 只有約 4 個月、878 筆資料，比上面的回測短很多，請當參考。
+
 **標籤只是參考，不影響買賣**
 - 🚀 趨勢模板、新高量增、回檔再起：動能選股的訊號。
 - 🎯 布林收斂：符合趨勢模板，而且布林通道寬度在近 120 日最窄的 20%（回測 60 日超額 +13%）。
 - 📐 法則2：近 5 個交易日出現過葛蘭碧法則 2。
 - ⚠️ 漲多：離 50 日線 30% 以上；⚠️ 均線賣訊：今天出現法則 5、6、7。
 """
+
+def tick_size(price):
+    """台股升降單位"""
+    for limit, tick in ((10, 0.01), (50, 0.05), (100, 0.1), (500, 0.5), (1000, 1.0)):
+        if price < limit:
+            return tick
+    return 5.0
+
+
+def open_ref(close):
+    """
+    明天開盤參考價：(開盤 ≤ 這個價算較佳, 不追區間下限, 不追區間上限)，都對齊升降單位。
+    close 是評分日收盤價；沒有收盤價回傳 (None, None, None)
+    """
+    import math
+    if close is None or pd.isna(close) or close <= 0:
+        return None, None, None
+    close = float(close)
+    def at(pct, rnd):
+        p = close * (1 + pct / 100)
+        t = tick_size(p)
+        return round(rnd(round(p / t, 6)) * t, 2)
+    lo, hi = OPEN_AVOID_PCT
+    return at(OPEN_GOOD_PCT, math.floor), at(lo, math.ceil), at(hi, math.floor)
+
 
 def market_ok_by_date(index_df, ma_days=60):
     """加權指數每天收盤是否在 ma_days 日均線之上：{日期: bool}，均線算不出來的日子為 False"""
