@@ -79,3 +79,24 @@ def test_open_ref():
     good, lo, hi = open_ref(1085)  # 1085 × 0.98 = 1063.3 → 1060（千元以上跳 5 元）；×1.01 = 1095.85 → 1100；×1.03 = 1117.55 → 1115
     assert (good, lo, hi) == (1060.0, 1100.0, 1115.0)
     assert open_ref(None) == (None, None, None)
+
+
+def test_rule_compare():
+    """模擬持股檢討：照規則持有 hold 天開盤賣、出場差異、選股差異"""
+    from utils.paper import BUY_FEE, SELL_FEE, SELL_TAX, rule_compare
+    dates = ["d0", "d1", "d2", "d3"]
+    raw = pd.DataFrame({"stock_id": ["A"] * 4, "date": dates,
+                        "open_price": [100.0, 101.0, 110.0, 120.0], "close_price": [100.0, 105.0, 112.0, 118.0]})
+    trades = pd.DataFrame({"stock_id": ["A", "A"], "buy_date": ["d0", "d2"], "buy_price": [100.0, 112.0],
+                           "pnl_pct": [5.0, 1.0]})
+    out = rule_compare(trades, raw, raw, dates, 2, {"d0": 3.0})
+    fee = (1 - SELL_FEE - SELL_TAX) / (1 + BUY_FEE)
+    assert round(out.at[0, "rule_ret"], 4) == round((110 * fee / 100 - 1) * 100, 4)   # d0 買、d2 開盤賣
+    assert out.at[0, "rule_status"] == "d2 開盤賣" and out.at[0, "top_avg"] == 3.0
+    assert round(out.at[0, "exit_diff"], 4) == round(5.0 - out.at[0, "rule_ret"], 4)
+    assert round(out.at[0, "pick_diff"], 4) == round(out.at[0, "rule_ret"] - 3.0, 4)
+    assert out.at[1, "rule_status"] == "持有第 1 / 2 天" and pd.isna(out.at[1, "pick_diff"])  # 還沒到期用最新收盤
+    assert round(out.at[1, "rule_ret"], 4) == round((118 * fee / 112 - 1) * 100, 4)
+    adj = raw.assign(open_price=raw["open_price"] * [0.9, 0.9, 1, 1], close_price=raw["close_price"] * [0.9, 0.9, 1, 1])
+    out = rule_compare(trades.iloc[:1], raw, adj, dates, 2, {})       # d2 除息：還原比例 1/0.9 算進報酬
+    assert round(out.at[0, "rule_ret"], 4) == round((110 / 0.9 * fee / 100 - 1) * 100, 4)

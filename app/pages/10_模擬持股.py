@@ -8,10 +8,12 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.glossary import render_page_guide
 from utils.db import (
     get_stock_list, get_rows_for_stocks, get_price_adjustments, apply_adjustments,
-    get_paper_trades, add_paper_trades, sell_paper_trade, delete_paper_trade,
+    get_paper_trades, add_paper_trades, sell_paper_trade, delete_paper_trade, get_signal_dates, get_top_ranks,
 )
 from utils.groups import group_picker
-from utils.paper import evaluate_trades, BUY_FEE, SELL_FEE, SELL_TAX
+from utils.paper import evaluate_trades, rule_compare, BUY_FEE, SELL_FEE, SELL_TAX
+from utils.picks import HOLD, TOP_N, pick_record
+from utils.analysis import TRADE_COST_PCT
 from utils.granville import STOP_RULE, next_day_triggers, rule_frames, stop_price
 from utils.analysis import load_atr
 from utils.ui import require_login, render_metric_cards, style_sign
@@ -64,6 +66,33 @@ def load_exit_status(stock_ids):
     })
     triggers = next_day_triggers(adj, (5, 6), "賣出", list(stock_ids)).set_index("stock_id")
     return status, triggers
+
+
+@st.cache_data(ttl=3600)
+def load_rule_compare(stock_ids, first_buy):
+    """
+    檢討用資料：交易日、持股的開盤／收盤價（原始與還原權值），
+    以及每個交易日開盤買前一個評分日前 N 名、持有 HOLD 天的平均報酬 {買進日: %}
+    """
+    n = int((pd.Timestamp.today() - pd.Timestamp(first_buy)).days * 0.75) + 10
+    dates = sorted(get_signal_dates(n=n))
+    # 從第一筆買進日的前一個評分日開始（那天的前 N 名，第一筆買進日開盤買）
+    start = max(sum(d <= first_buy for d in dates) - 2, 0)
+    dates = dates[start:]
+    if len(dates) < 2:
+        return [], pd.DataFrame(), pd.DataFrame(), {}
+    cols = "stock_id, date, open_price, close_price"
+    raw = get_rows_for_stocks("daily_prices", list(stock_ids), since=dates[0], columns=cols)
+    adj = apply_adjustments(raw, get_price_adjustments(None, dates[0])) if not raw.empty else raw
+    top_avg = {}
+    ranks = get_top_ranks(dates[0], TOP_N)
+    if not ranks.empty:
+        top_raw = get_rows_for_stocks("daily_prices", sorted(ranks["stock_id"].unique()), since=dates[0], columns=cols)
+        if not top_raw.empty:
+            top_adj = apply_adjustments(top_raw, get_price_adjustments(None, dates[0]))
+            rec = pick_record(dates, ranks, {}, top_adj, top_raw, HOLD, TRADE_COST_PCT)
+            top_avg = rec.groupby("buy_date")["ret"].mean().to_dict()
+    return dates, raw, adj, top_avg
 
 
 def exit_row(row, status, triggers, atrs):
@@ -219,6 +248,35 @@ if not trades.empty:
             "buy_price": "買進價", "qty": "股數", "sell_date": "賣出日", "sell_price": "賣出價",
             "hold_days": "持有天數", "cost": "成本(元)", "pnl": "損益(元)", "pnl_pct": "報酬%", "note": "備註",
         })
+
+    # ===== 檢討 =====
+    st.subheader("📝 檢討：和照規則比")
+    st.caption(f"「照規則持有」是同一個買進價、買進後第 {HOLD} 個交易日開盤賣（和「明日買進」同一天賣）；"
+               f"「同天前 {TOP_N} 名」是那天開盤照「明日買進」買前 {TOP_N} 名、持有 {HOLD} 天的平均。"
+               "出場差異看你自己決定的賣出時機，選股差異看你挑的股票比規則選的好還是差。還沒到期的用最新收盤價算，"
+               "都已扣手續費和證交稅。")
+    try:
+        r_dates, r_raw, r_adj, r_top = load_rule_compare(ids, str(trades["buy_date"].min())[:10])
+        cmp = rule_compare(result, r_raw, r_adj, r_dates, HOLD, r_top)
+    except Exception:
+        cmp = None
+        st.warning("檢討資料暫時讀取失敗，請稍後按「強制重新整理」再看一次。")
+    if cmp is not None:
+        ex, pk = cmp["exit_diff"].dropna(), cmp["pick_diff"].dropna()
+        render_metric_cards([
+            ("出場差異（平均）", f"{ex.mean():+.2f}%" if len(ex) else "—",
+             "正的代表你的賣出時機比照規則好" if len(ex) else None, ex.mean() if len(ex) else None),
+            ("選股差異（平均）", f"{pk.mean():+.2f}%" if len(pk) else "—",
+             f"正的代表你挑的比前 {TOP_N} 名好" if len(pk) else None, pk.mean() if len(pk) else None),
+        ])
+        review = pd.DataFrame({
+            "代號": cmp["stock_id"], "名稱": cmp["stock_name"], "來源": cmp["source"], "買進日": cmp["buy_date"],
+            "我的報酬%": cmp["pnl_pct"], "照規則持有%": cmp["rule_ret"], "規則賣出": cmp["rule_status"],
+            f"同天前 {TOP_N} 名%": cmp["top_avg"], "出場差異": cmp["exit_diff"], "選股差異": cmp["pick_diff"],
+        })
+        nums = ["我的報酬%", "照規則持有%", f"同天前 {TOP_N} 名%", "出場差異", "選股差異"]
+        st.dataframe(review.style.format("{:+.2f}", subset=nums, na_rep="—").map(style_sign, subset=nums),
+                     hide_index=True, width="stretch", height=min(600, 38 + 35 * len(review)))
 
     with st.expander("🗑️ 刪除紀錄（加錯時使用）"):
         all_labels = {r.id: f"{r.stock_id} {r.stock_name}｜{r.buy_date} 買"
