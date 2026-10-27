@@ -92,6 +92,16 @@ def build_tables():
         {"id": 2, "group_id": 1, "stock_id": "2317", "source": "每日選股", "buy_date": days[-40], "buy_price": 90.0,
          "shares": 2000, "sell_date": days[-10], "sell_price": 95.0, "note": "", "created_at": days[-40] + "T03:00:00+00:00"},
     ]
+    # 照規則自動模擬的分組（一筆持有中、一筆已賣出）
+    t["watch_groups"].append({"id": 2, "owner": "tester", "name": "每日買進測試", "created_at": days[-30] + "T12:00:00+00:00"})
+    t["paper_trades"] += [
+        {"id": 3, "group_id": 2, "stock_id": "3583", "source": "照規則自動", "buy_date": days[-4], "buy_price": 100.0,
+         "shares": 0.95, "sell_date": None, "sell_price": None, "note": f"{days[-5]} 評分第 1 名",
+         "created_at": days[-4] + "T12:00:00+00:00"},
+        {"id": 4, "group_id": 2, "stock_id": "2330", "source": "照規則自動", "buy_date": days[-25], "buy_price": 100.0,
+         "shares": 0.98, "sell_date": days[-15], "sell_price": 103.0, "note": f"{days[-26]} 評分第 2 名",
+         "created_at": days[-25] + "T12:00:00+00:00"},
+    ]
     # 2330 一筆除息事件，測試還原權值
     t["price_adjustments"].append({"stock_id": "2330", "date": days[-30], "event_type": "除息",
                                    "prev_close": 100.0, "ref_price": 98.0, "factor": 0.98, "source": "test"})

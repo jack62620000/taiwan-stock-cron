@@ -111,6 +111,13 @@ jobs:
           MOMENTUM_END: ${{ github.event.inputs.target_date }}
         run: python momentum.py
       # LINE 打字查詢用的分析卡：全部股票的卡片算好存到 Storage（archive 桶 _line_cards/，每天覆蓋，不佔資料庫）
+      - name: Record rule-based paper trades
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          AUTO_PAPER_GROUP_ID: '11'   # 照明日買進規則自動記錄到這個模擬持股分組（每日買進測試）
+        run: python auto_paper.py
       - name: Build LINE lookup cards
         id: cards
         continue-on-error: true
