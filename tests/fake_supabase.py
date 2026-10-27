@@ -79,8 +79,9 @@ class Query:
         self.action, self.payload = "insert", rows
         return self
 
-    def upsert(self, rows, **_):
+    def upsert(self, rows, ignore_duplicates=False, **_):
         self.action, self.payload = "upsert", rows
+        self.ignore_duplicates = ignore_duplicates
         return self
 
     def update(self, values):
@@ -106,6 +107,9 @@ class Query:
                 if keys == ("id",) and "id" not in r:
                     r["id"] = next(self.client.ids)
                 if self.action == "upsert" and keys:
+                    if getattr(self, "ignore_duplicates", False) and \
+                            any(all(x.get(k) == r.get(k) for k in keys) for x in rows):
+                        continue
                     rows[:] = [x for x in rows if any(x.get(k) != r.get(k) for k in keys)]
                 rows.append(r)
             return Result(new)

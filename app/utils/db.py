@@ -472,7 +472,9 @@ def get_watchlist(group_id):
     return pd.DataFrame(res.data, columns=["stock_id", "note", "added_at"])
 
 def add_to_watchlist(group_id, stock_id, note=""):
-    supabase.table("watchlist").upsert({"group_id": group_id, "stock_id": stock_id, "note": note}).execute()
+    """已經在自選股裡就不動，原本的備註不會被新的（或空的）備註蓋掉"""
+    supabase.table("watchlist").upsert({"group_id": group_id, "stock_id": stock_id, "note": note},
+                                       ignore_duplicates=True).execute()
 
 def update_watchlist_note(group_id, stock_id, note):
     supabase.table("watchlist").update({"note": note}).eq("group_id", group_id).eq("stock_id", stock_id).execute()

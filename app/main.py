@@ -4,7 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from datetime import date, timedelta
 from utils.glossary import render_page_guide
-from utils.ui import apply_theme, render_metric_cards, style_sign, go_picks_tab
+from utils.ui import apply_theme, render_metric_cards, index_card, style_sign, go_picks_tab
 from utils.db import (
     get_data_status, get_market_index, get_signal_dates, get_top_signals, get_watchlist,
     get_rows_for_stocks, get_price_adjustments, apply_adjustments, get_stock_list,
@@ -93,15 +93,6 @@ def load_home_data(watch_ids):
             signals = get_rows_for_stocks("daily_signals", watch_ids, since=sig_dates[0],
                                           columns="stock_id, date, total_score, rank")
     return taiex, tpex, (sig_dates[0] if sig_dates else None), top, watch_ids, prices, signals
-
-
-def index_card(label, df):
-    if df.empty:
-        return (label, "—", "無資料", 0)
-    last = df.iloc[-1]
-    close, chg = float(last["close"]), float(last["change"])
-    pct = chg / (close - chg) * 100 if close != chg else 0
-    return (label, f"{close:,.2f}", f"{'▲' if chg > 0 else '▼' if chg < 0 else ''} {abs(chg):,.2f}（{pct:+.2f}%）", chg)
 
 
 def watch_summary(watch_ids, prices, signals):

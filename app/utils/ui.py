@@ -146,6 +146,15 @@ def render_metric_cards(cards):
     st.markdown(_METRIC_CSS + f'<div class="metric-row">{"".join(html)}</div>', unsafe_allow_html=True)
 
 
+def index_card(label, df):
+    """大盤指數卡片（首頁與全台股總覽共用）：df 是 get_market_index 的結果，取最後一筆收盤與漲跌"""
+    if df.empty:
+        return (label, "—", "無資料", 0)
+    last = df.iloc[-1]
+    close, chg = float(last["close"]), float(last["change"])
+    pct = chg / (close - chg) * 100 if close != chg else 0
+    return (label, f"{close:,.2f}", f"{'▲' if chg > 0 else '▼' if chg < 0 else ''} {abs(chg):,.2f}（{pct:+.2f}%）", chg)
+
 # ===== 選股頁的三個分頁 =====
 # 每個分頁是 app/views/ 底下一個檔案，pages/0_選股.py 只執行選到的那一個
 PICKS_TABS = {

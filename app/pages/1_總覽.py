@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.glossary import render_page_guide
 from utils.ui import (
-    require_login, style_sign, style_rate, render_metric_cards, UP_COLOR, DOWN_COLOR
+    require_login, style_sign, style_rate, render_metric_cards, index_card, UP_COLOR, DOWN_COLOR
 )
 from utils.db import (
     get_stock_list, get_latest_prices, get_latest_ins,
@@ -109,14 +109,6 @@ def market_breadth(closes):
         "上漲": (diff > 0).sum(axis=1).values,
         "下跌": (diff < 0).sum(axis=1).values,
     })
-
-def index_card(label, df):
-    if df.empty:
-        return (label, "—", "無資料", 0)
-    last = df.iloc[-1]
-    close, chg = float(last["close"]), float(last["change"])
-    pct = chg / (close - chg) * 100 if close != chg else 0
-    return (label, f"{close:,.2f}", f"{'▲' if chg > 0 else '▼' if chg < 0 else ''} {abs(chg):,.2f}（{pct:+.2f}%）", chg)
 
 taiex, tpex, futures = load_market_data()
 breadth = market_breadth(closes)
