@@ -445,6 +445,11 @@ def get_groups(owner):
     res = supabase.table("watch_groups").select("id, name").eq("owner", owner).order("id").execute()
     return pd.DataFrame(res.data, columns=["id", "name"])
 
+def get_group(group_id):
+    """一個分組 {id, owner, name, created_at}；沒有時回傳 None"""
+    res = supabase.table("watch_groups").select("id, owner, name, created_at").eq("id", group_id).limit(1).execute()
+    return res.data[0] if res.data else None
+
 def create_group(owner, name):
     supabase.table("watch_groups").insert({"owner": owner, "name": name}).execute()
 
