@@ -98,3 +98,51 @@ def add_form(candidates, source, buy_date, key):
             st.page_link(PAGE, label="前往模擬持股頁", icon="💼")
         except Exception:  # 單獨執行這一頁（沒有從 main.py 進入）時找不到其他頁面
             st.caption("到「模擬持股」頁查看損益、決定何時賣出。")
+
+
+def rule_compare(trades, raw, adj, dates, hold, top_avg):
+    """
+    模擬持股和「照明日買進規則」對照（檢討用）。
+    trades：evaluate_trades 的結果；raw、adj：stock_id、date、open_price、close_price 的原始與還原權值價格；
+    dates：交易日（由舊到新）；hold：規則持有幾個交易日；top_avg：{買進日: 同一天開盤買前 N 名、持有 hold 天的平均報酬%}。
+    照規則持有：同一個買進價，在買進日之後第 hold 個交易日開盤賣（和明日買進同一天賣），還沒到期的用最新收盤。
+    出場差異 = 實際報酬 − 照規則持有；選股差異 = 照規則持有 − 同天前 N 名平均。報酬都扣手續費和證交稅。
+    """
+    cols = ["rule_ret", "rule_status", "top_avg", "exit_diff", "pick_diff"]
+    out = trades.copy()
+    for c in cols:
+        out[c] = None
+    if out.empty or raw.empty or not dates:
+        return out
+    px = raw[["stock_id", "date"]].copy()
+    for c in ["open_price", "close_price"]:
+        px[c] = pd.to_numeric(raw[c], errors="coerce")
+        px["m_" + c] = pd.to_numeric(adj[c], errors="coerce").values / px[c]
+    px = px.set_index(["stock_id", "date"])
+    latest = raw.assign(close_price=pd.to_numeric(raw["close_price"], errors="coerce")) \
+        .dropna(subset=["close_price"]).sort_values("date").groupby("stock_id")["date"].last()
+    for i, t in out.iterrows():
+        sid, buy_day = t["stock_id"], str(t["buy_date"])
+        k = sum(d <= buy_day for d in dates) - 1
+        if k < 0 or (sid, dates[k]) not in px.index:
+            continue
+        buy_mult = px.at[(sid, dates[k]), "m_close_price"]
+        exit_k = k + hold
+        if exit_k < len(dates) and (sid, dates[exit_k]) in px.index:
+            row, price_col = px.loc[(sid, dates[exit_k])], "open_price"
+            out.at[i, "rule_status"] = f"{dates[exit_k]} 開盤賣"
+        elif exit_k >= len(dates) and sid in latest.index:
+            row, price_col = px.loc[(sid, latest[sid])], "close_price"
+            out.at[i, "rule_status"] = f"持有第 {len(dates) - 1 - k} / {hold} 天"
+        else:
+            continue
+        end, mult = row[price_col], row["m_" + price_col] / buy_mult
+        if pd.isna(end) or pd.isna(mult):
+            continue
+        out.at[i, "rule_ret"] = (end * mult * (1 - SELL_FEE - SELL_TAX) / (float(t["buy_price"]) * (1 + BUY_FEE)) - 1) * 100
+        out.at[i, "top_avg"] = top_avg.get(dates[k])
+    for c in ["rule_ret", "top_avg"]:
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+    out["exit_diff"] = pd.to_numeric(out["pnl_pct"], errors="coerce") - out["rule_ret"]
+    out["pick_diff"] = out["rule_ret"] - out["top_avg"]
+    return out
