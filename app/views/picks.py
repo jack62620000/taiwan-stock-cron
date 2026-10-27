@@ -11,7 +11,7 @@ from utils.db import (
 )
 from utils.analysis import MARKET_MA, TRADE_COST_PCT, load_market_regime
 from utils.picks import (BACKTEST_MD, HOLD, OPEN_AVOID_PCT, OPEN_GOOD_PCT, RULES_MD, TOP_N, buy_list,
-                         market_ok_by_date, open_ref, pick_record)
+                         market_ok_by_date, market_status, open_ref, pick_record)
 from utils.paper import add_form as add_paper_form
 from utils.watch import add_watch_form
 from utils.ui import render_metric_cards, style_sign
@@ -39,7 +39,7 @@ def load_record():
     ranks = get_top_ranks(dates[0], TOP_N)
     if ranks.empty:
         return pd.DataFrame()
-    market_ok = market_ok_by_date(get_market_index("TAIEX", limit=MARKET_MA + RECORD_DAYS + 10), MARKET_MA)
+    market_ok = market_ok_by_date(get_market_index("TAIEX", limit=MARKET_MA + RECORD_DAYS + 10))
     prices = get_rows_for_stocks("daily_prices", sorted(ranks["stock_id"].unique()), since=dates[0],
                                  columns="stock_id, date, open_price, close_price")
     if prices.empty:
@@ -59,24 +59,21 @@ if last is None or today.empty:
     st.warning("還沒有評分資料。等今晚的每日排程跑完就會出現。")
     st.stop()
 names = load_names()
-regime = load_market_regime()
-market_ok = bool(regime) and not regime["below"]
+market_ok, market_text = market_status(load_market_regime())
 
-# ===== 大盤狀態 =====
+# ===== 大盤狀態：月線和季線都在上才買 =====
 if market_ok:
-    st.success(f"🟢 加權指數 {regime['close']:,.0f} 在 {MARKET_MA} 日均線（季線）{regime['ma']:,.0f} 之上"
-               f"（{regime['gap']:+.1f}%，{regime['date']}）：可以照規則買進。")
-elif regime:
-    st.error(f"🔴 加權指數 {regime['close']:,.0f} 在 {MARKET_MA} 日均線（季線）{regime['ma']:,.0f} 之下"
-             f"（{regime['gap']:+.1f}%，{regime['date']}）：先不買新股票。")
+    st.success(market_text)
+elif market_text:
+    st.error(market_text)
 else:
-    st.warning("加權指數資料不足，無法判斷大盤是否在季線上。")
+    st.warning("加權指數資料不足，無法判斷大盤是否在月線和季線上。")
 
 tab_buy, tab_record, tab_rules = st.tabs(["🛒 明天開盤買進", "📒 紀錄", "📖 規則與回測"])
 
 pct = st.column_config.NumberColumn
 with tab_buy:
-    st.markdown(f"#### {last} 評分前 {TOP_N} 名" + ("" if market_ok else "（大盤在季線下，先不買）"))
+    st.markdown(f"#### {last} 評分前 {TOP_N} 名" + ("" if market_ok else "（大盤不在月線和季線上，先不買）"))
     view = pd.DataFrame({
         "排名": today["rank"], "代號": today["stock_id"],
         "名稱": today["stock_name"], "產業": today["industry"],
@@ -111,7 +108,7 @@ with tab_record:
     if rec is not None and rec.empty:
         st.info("還沒有紀錄。")
     elif rec is not None:
-        only_ok = st.checkbox("只看大盤在季線上的日子（規則會買的）", value=True)
+        only_ok = st.checkbox("只看大盤在月線和季線上的日子（規則會買的）", value=True)
         r = rec[rec["market_ok"]] if only_ok else rec
         sold = r[r["status"] == "已賣出"]["ret"].dropna()
         held = r[r["status"] != "已賣出"]["ret"].dropna()
@@ -136,7 +133,7 @@ with tab_record:
                    f"{OPEN_AVOID_PCT[0]:g}～{OPEN_AVOID_PCT[1]:g}%；其他：兩者之外。筆數少時差異不代表什麼，累積越多越準。")
         table = pd.DataFrame({
             "評分日": r["signal_date"], "排名": r["rank"], "代號": r["stock_id"], "名稱": r["stock_id"].map(names),
-            "大盤": r["market_ok"].map({True: "季線上", False: "季線下"}), "買進日": r["buy_date"],
+            "大盤": r["market_ok"].map({True: "可買", False: "不買"}), "買進日": r["buy_date"],
             "狀態": r["status"], "買進價": r["buy_price"], "開盤漲跌%": r["open_gap"], "開盤落點": r["open_zone"],
             "賣出日": r["sell_date"], "賣出價": r["sell_price"], "最新收盤": r["last_close"], "報酬%": r["ret"],
         })

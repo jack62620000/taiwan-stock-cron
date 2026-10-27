@@ -453,18 +453,24 @@ def render_followup(df, extra_cols=None):
 # 回測（2025-02～2026-10，持有 20 日）：季線下的買進訊號平均明顯較差，所以提醒但不擋訊號
 # =====================================================================
 MARKET_MA = 60
+MARKET_MA_SHORT = 20  # 月線：明日買進要月線和季線都在上才買
 
 
 def market_regime(index_df, ma_days=MARKET_MA):
-    """加權指數最新收盤和 ma_days 日均線，回傳 {date, close, ma, gap, below}；資料不足回傳 None"""
+    """
+    加權指數最新收盤和 ma_days 日均線（季線）、MARKET_MA_SHORT 日均線（月線），
+    回傳 {date, close, ma, gap, below, ma_short, gap_short, below_short}；資料不足回傳 None
+    """
     if index_df is None or index_df.empty:
         return None
     close = pd.to_numeric(index_df.sort_values("date")["close"], errors="coerce").dropna()
     if len(close) < ma_days:
         return None
     last, ma = float(close.iloc[-1]), float(close.tail(ma_days).mean())
+    ma_s = float(close.tail(MARKET_MA_SHORT).mean())
     return {"date": str(index_df["date"].max())[:10], "close": last, "ma": ma,
-            "gap": (last / ma - 1) * 100, "below": last < ma}
+            "gap": (last / ma - 1) * 100, "below": last < ma,
+            "ma_short": ma_s, "gap_short": (last / ma_s - 1) * 100, "below_short": last < ma_s}
 
 
 @st.cache_data(ttl=3600)
