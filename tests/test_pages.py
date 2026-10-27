@@ -96,6 +96,18 @@ def test_add_to_watchlist_from_stock_card(use_db):
         r for r in client.tables["watchlist"] if r["stock_id"] == "1101").items()
 
 
+def test_add_to_watchlist_keeps_existing_note(use_db):
+    """已經在自選股的股票再加一次，原本的備註不會被蓋掉"""
+    import utils.db as db
+    client = use_db()
+    existing = client.tables["watchlist"][0]
+    existing["note"] = "等回測月線再買"
+    db.add_to_watchlist(existing["group_id"], existing["stock_id"], "")
+    rows = [r for r in client.tables["watchlist"]
+            if r["group_id"] == existing["group_id"] and r["stock_id"] == existing["stock_id"]]
+    assert [r["note"] for r in rows] == ["等回測月線再買"]
+
+
 PICKS_PAGE = "0_選股.py"  # 葛蘭碧、每日選股都是選股頁的分頁
 
 
