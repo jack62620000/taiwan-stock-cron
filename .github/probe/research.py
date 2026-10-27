@@ -155,16 +155,28 @@ def main():
         return sc.pivot(index="date", columns="stock_id", values=col).reindex(index=dates, columns=cols)
     tie = (wide("chip").fillna(0) * 1e-3 + np.log1p(wide("lots").fillna(0)) * 1e-6)
 
+    def above(ma):
+        return (taiex_all > taiex_all.rolling(ma, min_periods=ma).mean()).reindex(dates).fillna(False).values
+
     def mkt_ok(ma):
+        """ma：None 不過濾、數字、("and"/"or", [均線...])"""
         if ma is None:
-            return np.ones((len(dates), len(cols)), dtype=bool)
-        ok = (taiex_all > taiex_all.rolling(ma, min_periods=ma).mean()).reindex(dates).fillna(False).values
+            ok = np.ones(len(dates), dtype=bool)
+        elif isinstance(ma, tuple):
+            arr = [above(m) for m in ma[1]]
+            ok = np.logical_and.reduce(arr) if ma[0] == "and" else np.logical_or.reduce(arr)
+        else:
+            ok = above(ma)
         return np.repeat(ok[:, None], len(cols), axis=1)
 
-    def run(total, ma=60, top=10):
+    def run(total, ma=60, top=10, half_top=None):
+        """half_top：季線上但月線下的日子只買前 half_top 名（其餘照 top）"""
         tot = total + tie
         rk = tot.rank(axis=1, ascending=False, method="first")
         sig = (rk <= top).values & mkt_ok(ma)
+        if half_top is not None:
+            weak = np.repeat((above(60) & ~above(20))[:, None], len(cols), axis=1)
+            sig = np.where(weak, (rk <= half_top).values & mkt_ok(60), sig)
         trades, eq = simulate(sig, tot.fillna(-1e9).values, O, C, None, top, start_i, hold=HOLD)
         return summarize(trades, eq, dates, start_i, mid_i)
 
@@ -183,9 +195,15 @@ def main():
           f"（前半 {(taiex.iloc[mid_i] / taiex.iloc[start_i] - 1) * 100:.1f}%、後半 {(taiex.iloc[-1] / taiex.iloc[mid_i] - 1) * 100:.1f}%）")
     print("\n===== B1. 大盤過濾：前 10 名、10 檔等額、持有 10 日 =====")
     rows = []
-    for ma, name in [(60, "季線上才買（現在）"), (None, "不過濾"), (20, "月線上才買"), (120, "半年線上才買")]:
+    for ma, name in [(60, "季線上才買（現在）"), (None, "不過濾"), (20, "月線上才買"), (120, "半年線上才買"),
+                     (("and", [20, 60]), "月線和季線都在上才買"), (("or", [20, 60]), "月線或季線其中一條在上就買")]:
         days_ok = mkt_ok(ma)[start_i:, 0].mean() * 100
         rows.append({"過濾": name, "可買天數%": round(days_ok, 0), **run(T, ma)})
+    for half_top in (5, 3, 0):
+        days_ok = mkt_ok(60)[start_i:, 0].mean() * 100
+        rows.append({"過濾": f"季線上才買，月線下只買前 {half_top} 名", "可買天數%": round(days_ok, 0),
+                     **run(T, 60, half_top=half_top)})
+    print("（「月線下只買前 N 名」：季線上、月線下的日子新買進只買前 N 名，其餘空位留現金）")
     print(pd.DataFrame(rows).set_index("過濾").to_string())
 
     print("\n===== B2. 每天前 10 名之後 10 日的平均報酬，依當天大盤在季線上／下分開 =====")
