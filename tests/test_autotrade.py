@@ -21,7 +21,7 @@ def test_buys_top_ranks_next_open_and_sells_after_hold():
     first = [b for b in buys if b["buy_date"] == D[1]]
     assert [b["stock_id"] for b in first] == ["A", "B"]
     assert first[0]["sell_date"] == D[4] and first[0]["note"] == f"{D[0]} 評分第 1 名"
-    assert first[0]["shares"] * 1000 == 4992   # 500,000 ÷ (100 × 1.001425) 取整數股
+    assert first[0]["shares"] * 1000 == 998   # 100,000 ÷ (100 × 1.001425) 取整數股
     assert done == D[-1] and sells == []
 
 

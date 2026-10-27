@@ -14,7 +14,7 @@ from utils.paper import BUY_FEE, SELL_FEE, SELL_TAX
 from utils.picks import HOLD, SLOTS
 
 SOURCE = "照規則自動"
-START_CASH = 1_000_000      # 起始資金（元）
+START_CASH = 200_000        # 起始資金（元）
 
 
 def _ok(v):
