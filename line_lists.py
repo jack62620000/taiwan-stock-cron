@@ -1,7 +1,7 @@
 """
 LINE 選單「明日買進」「均線買賣點」「動能股」的回覆 - 和網頁同一套計算，每晚由 line_cards.py 算好存到 Storage
 
-    明日買進：選股頁「明日買進」的評分前 10 名與參考標籤（utils.picks.buy_list），大盤在季線下時提醒先不買
+    明日買進：選股頁「明日買進」的評分前 10 名與參考標籤（utils.picks.buy_list），大盤不在月線和季線上時提醒先不買
     均線買賣點：選股頁「均線買賣點」（葛蘭碧）「買賣預告 → 準備買進」中狀態為「⏳ 等待法則2」的股票（網頁預設參數、不加篩選），
             欄位、數字、說明文字和網頁表格相同（utils.analysis.granville_buy_table）；
             後面接「急跌反彈候選」（法則 4，utils.analysis.granville_rebound_table），最多一則輪播
@@ -155,19 +155,17 @@ def picks_bubble(r):
 
 def picks_messages(date, top, regime):
     """明日買進回覆：第一則文字（大盤狀態、規則、檔名），之後一則輪播（每檔一張卡）"""
-    from utils.analysis import MARKET_MA
-    from utils.picks import HOLD, OPEN_AVOID_PCT, OPEN_GOOD_PCT, TOP_N
+    from utils.picks import HOLD, OPEN_AVOID_PCT, OPEN_GOOD_PCT, TOP_N, market_status
     if top.empty:
         return [{"type": "text", "text": "還沒有評分資料。"}]
-    ok = bool(regime) and not regime["below"]
     lines = [f"🛒 明日買進（{date} 收盤後）"]
-    if regime:
-        lines.append(("🟢 大盤在季線上：可以照規則買進" if ok else "🔴 大盤在季線下：先不買新股票")
-                     + f"（加權指數 {regime['close']:,.0f}，{MARKET_MA} 日均線 {regime['ma']:,.0f}，{regime['gap']:+.1f}%）")
+    _, market_text = market_status(regime)
+    if market_text:
+        lines.append(market_text)
     lines += [
         "",
-        f"規則：大盤在季線上時，隔天開盤買評分前 {TOP_N} 名，持有 {HOLD} 個交易日後開盤賣出。同網頁選股頁「明日買進」。",
-        "回測（2025-01～2026-10）總報酬 +476%、最大回撤 −15.3%，同期大盤 +105%；期間是大多頭，以後可能明顯較低。",
+        f"規則：大盤在月線和季線上時，隔天開盤買評分前 {TOP_N} 名，持有 {HOLD} 個交易日後開盤賣出。同網頁選股頁「明日買進」。",
+        "回測（2025-02～2026-10）總報酬 +473%、最大回撤 −12.9%，同期大盤 +103%；期間是大多頭，以後可能明顯較低。",
         "",
     ]
     lines += [f"{int(r['rank'])}. {r['stock_id']} {r.get('stock_name') or ''}（{_f(r['total_score'], decimals=0)} 分）"

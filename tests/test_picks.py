@@ -19,7 +19,7 @@ def test_stock_tags():
 def test_market_ok_by_date():
     from utils.picks import market_ok_by_date
     idx = pd.DataFrame({"date": [f"2026-01-{i:02d}" for i in range(1, 6)], "close": [10, 10, 10, 13, 7]})
-    ok = market_ok_by_date(idx, ma_days=3)
+    ok = market_ok_by_date(idx, ma_days=(3,))
     assert ok == {"2026-01-01": False, "2026-01-02": False, "2026-01-03": False,
                   "2026-01-04": True, "2026-01-05": False}
 
@@ -100,3 +100,24 @@ def test_rule_compare():
     adj = raw.assign(open_price=raw["open_price"] * [0.9, 0.9, 1, 1], close_price=raw["close_price"] * [0.9, 0.9, 1, 1])
     out = rule_compare(trades.iloc[:1], raw, adj, dates, 2, {})       # d2 除息：還原比例 1/0.9 算進報酬
     assert round(out.at[0, "rule_ret"], 4) == round((110 / 0.9 * fee / 100 - 1) * 100, 4)
+
+
+def test_market_ok_needs_both_lines():
+    """明日買進：月線和季線都在上才買"""
+    from utils.picks import market_ok_by_date
+    idx = pd.DataFrame({"date": [f"2026-01-{i:02d}" for i in range(1, 7)], "close": [10, 10, 10, 10, 12, 10.5]})
+    ok = market_ok_by_date(idx, ma_days=(2, 4))
+    assert ok["2026-01-05"] is True                 # 12 在 2 日線 11、4 日線 10.5 之上
+    assert ok["2026-01-06"] is False                # 10.5 在 4 日線 10.625 之下
+
+
+def test_market_status():
+    from utils.picks import market_status
+    base = {"date": "2026-10-27", "close": 100.0, "ma": 95.0, "gap": 5.3, "ma_short": 98.0, "gap_short": 2.0}
+    ok, text = market_status({**base, "below": False, "below_short": False})
+    assert ok and text.startswith("🟢") and "月線和季線之上" in text
+    ok, text = market_status({**base, "below": False, "below_short": True})
+    assert not ok and "在月線之下" in text
+    ok, text = market_status({**base, "below": True, "below_short": True})
+    assert not ok and "在月線和季線之下" in text
+    assert market_status(None) == (False, None)

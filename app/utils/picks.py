@@ -6,6 +6,8 @@
 - 買進：大盤（加權指數）收盤在 60 日均線之上時，隔天開盤買評分前 10 名（已持有的跳過、名額滿了不買）
 - 賣出：買進後第 10 個交易日開盤賣出（固定天數）
 總報酬 +476%（同期加權指數 +105%），最大回撤 −15.3%，勝率 57%。
+2026-10-27 大盤過濾改成月線（20 日）和季線（60 日）都在上才買：2025-02～2026-10 回測總報酬 +473%（季線 +488%）、
+最大回撤 −12.9%（季線 −15.3%）；其中一條在上就買、月線下只買前幾名都比較差。
 動能、布林、葛蘭碧加進分數（v6）回測都沒有比較好，所以只當標籤參考。
 """
 import pandas as pd
@@ -19,23 +21,27 @@ OPEN_GOOD_PCT = -2.0
 OPEN_AVOID_PCT = (1.0, 3.0)
 
 BACKTEST_MD = """
-| 設定（大盤在季線上才買） | 總報酬 | 年化 | 最大回撤 | 勝率 |
+| 大盤過濾（前 10 名、持有 10 天） | 總報酬 | 年化 | 最大回撤 | 勝率 |
 |---|---|---|---|---|
-| **前 10 名、持有 10 天（採用）** | **+476%** | **165%** | **−15.3%** | **57%** |
-| 前 10 名、持有 5 天 | +294% | — | — | — |
-| 前 10 名、持有 20 天 | +306% | — | −20.9% | — |
-| 前 10 名、持有 3 天 | +130% | — | — | — |
-| 同期加權指數 | +105% | — | −26.7% | — |
+| **月線和季線都在上才買（採用）** | **+473%** | **177%** | **−12.9%** | **58%** |
+| 季線上才買（舊規則） | +488% | 181% | −15.3% | 57% |
+| 月線上才買 | +433% | 165% | −12.9% | 59% |
+| 月線或季線其中一條在上就買 | +339% | 137% | −20.2% | 57% |
+| 不看大盤 | +230% | 101% | −28.3% | 54% |
+| 同期加權指數 | +103% | — | — | — |
 
-- 期間 2025-01～2026-10，評分隔天開盤買、到期那天開盤賣，一買一賣扣約 0.6% 成本。
-- 前半段 +74%、後半段 +231%，兩段都贏大盤；但這段期間是大多頭，參數也是用同一段資料挑出來的，以後的報酬可能明顯較低。
+- 期間 2025-02～2026-10，評分隔天開盤買、到期那天開盤賣，一買一賣扣約 0.6% 成本。
+- 採用的規則前半段 +92%、後半段 +198%，兩段都贏大盤；比舊規則少賺一點，但回撤較小。
+- 這段期間是大多頭，參數也是用同一段資料挑出來的，以後的報酬可能明顯較低。
+- 持有天數（季線規則時比較）：持有 10 天 +476%，5 天 +294%、20 天 +306%、3 天 +130%，所以採用 10 天。
+- 大盤在季線下的日子，前 10 名之後 10 天平均 −0.3%；在季線上平均 +4.0%。
 - 把動能（趨勢模板、RS、新高）、布林收斂、葛蘭碧法則 2 加分或賣訊扣分做成 v6，15 種設定平均都沒有比 v5 好，所以只當標籤。
 - 葛蘭碧法則 4（急跌反彈）當買點每一種組合都賠錢；用跌破月線當賣出也比較差。
 """
 
 RULES_MD = f"""
 **規則**
-1. 看大盤：加權指數收盤在 60 日均線（季線）之上才買；在季線下就不買新股票。
+1. 看大盤：加權指數收盤同時在 20 日均線（月線）和 60 日均線（季線）之上才買；跌破其中一條就不買新股票。
 2. 買進：隔天開盤買評分前 {TOP_N} 名。
 3. 賣出：買進後第 {HOLD} 個交易日開盤賣出，不管賺賠。
 4. 回測的做法是最多同時持有 {SLOTS} 檔、每檔約放總資金的 1/{SLOTS}，名額滿了就不買、已持有的不重複買。
@@ -87,14 +93,30 @@ def open_zone(close, open_price):
     return "不追" if lo <= open_price <= hi else "其他"
 
 
-def market_ok_by_date(index_df, ma_days=60):
-    """加權指數每天收盤是否在 ma_days 日均線之上：{日期: bool}，均線算不出來的日子為 False"""
+def market_ok_by_date(index_df, ma_days=(20, 60)):
+    """加權指數每天收盤是否同時在 ma_days 每一條均線之上：{日期: bool}，均線算不出來的日子為 False"""
     if index_df is None or index_df.empty:
         return {}
     df = index_df.sort_values("date")
     close = pd.to_numeric(df["close"], errors="coerce")
-    ma = close.rolling(ma_days, min_periods=ma_days).mean()
-    return {str(d)[:10]: bool(c > m) if pd.notna(m) else False for d, c, m in zip(df["date"], close, ma)}
+    ok = pd.Series(True, index=close.index)
+    for n in ma_days:
+        ok &= (close > close.rolling(n, min_periods=n).mean()).fillna(False)
+    return {str(d)[:10]: bool(o) for d, o in zip(df["date"], ok)}
+
+
+def market_status(regime):
+    """明日買進的大盤判斷：(可不可以買, 說明文字)；月線和季線都在上才買，資料不足時 (False, None)"""
+    if not regime or regime.get("ma_short") is None:
+        return False, None
+    from utils.analysis import MARKET_MA, MARKET_MA_SHORT
+    ok = not regime["below"] and not regime["below_short"]
+    lines = (f"月線（{MARKET_MA_SHORT} 日）{regime['ma_short']:,.0f}（{regime['gap_short']:+.1f}%）、"
+             f"季線（{MARKET_MA} 日）{regime['ma']:,.0f}（{regime['gap']:+.1f}%）")
+    if ok:
+        return True, f"🟢 加權指數 {regime['close']:,.0f} 在月線和季線之上：可以照規則買進（{lines}，{regime['date']}）"
+    which = "月線和季線" if regime["below"] and regime["below_short"] else "季線" if regime["below"] else "月線"
+    return False, f"🔴 加權指數 {regime['close']:,.0f} 在{which}之下：先不買新股票（{lines}，{regime['date']}）"
 
 
 def pick_record(dates, ranks, market_ok, prices, raw=None, hold=HOLD, cost_pct=0.0):

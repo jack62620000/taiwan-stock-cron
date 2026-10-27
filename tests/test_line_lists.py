@@ -117,7 +117,7 @@ def test_picks_list(use_db):
     date, top = buy_list()
     msgs = line_lists.picks_messages(date, top, load_market_regime())
     size_ok(msgs)
-    assert "明日買進" in msgs[0]["text"] and "大盤在季線" in msgs[0]["text"]
+    assert "明日買進" in msgs[0]["text"] and "月線和季線" in msgs[0]["text"]
     cards = msgs[1]["contents"]["contents"]
     assert len(cards) == len(top) and cards[0]["footer"]["contents"][0]["action"]["text"] == top.iloc[0]["stock_id"]
     assert "開盤較佳" in json.dumps(cards[0], ensure_ascii=False) and "開盤參考價" in msgs[0]["text"]
