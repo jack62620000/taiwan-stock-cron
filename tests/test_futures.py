@@ -55,3 +55,37 @@ def test_download_retries_until_yesterday(monkeypatch):
     monkeypatch.setattr(fut.requests, "post", fake_post)
     assert len(fut.fetch_from_download()) == 3
     assert len(calls) == 2 and calls[0] > calls[1]
+
+
+def test_download_steps_back_over_holidays(monkeypatch):
+    """結束日碰到連假（週末＋補假＋颱風假）也要一路往前退到最近的交易日，不能直接判定失敗"""
+    calls = []
+
+    class Resp:
+        def __init__(self, body):
+            self.content = body.encode("cp950")
+
+        def raise_for_status(self):
+            pass
+
+    def fake_post(url, data, **_):
+        calls.append(data["queryEndDate"])
+        return Resp("<html>DateTime error</html>" if len(calls) <= 5 else SAMPLE)
+
+    monkeypatch.setattr(fut.requests, "post", fake_post)
+    assert len(fut.fetch_from_download()) == 3
+    assert len(calls) == 6 and calls == sorted(calls, reverse=True)
+
+
+def test_download_gives_up_after_range(monkeypatch):
+    """整段都查不到（期交所網站壞掉）才回空，交給 openapi"""
+    class Resp:
+        content = "<html>DateTime error</html>".encode("cp950")
+
+        def raise_for_status(self):
+            pass
+
+    calls = []
+    monkeypatch.setattr(fut.requests, "post", lambda url, data, **_: calls.append(1) or Resp())
+    assert fut.fetch_from_download(days=7) == []
+    assert len(calls) == 7
