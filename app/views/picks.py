@@ -122,17 +122,31 @@ with tab_record:
             ("持有中", f"{len(held)} 筆", None, None),
             ("持有中平均（至今）", f"{held.mean():+.2f}%" if len(held) else "—", None, held.mean() if len(held) else None),
         ])
+        zones = []
+        for z in ["較佳", "其他", "不追"]:
+            zr = r[r["open_zone"] == z]
+            zs = zr[zr["status"] == "已賣出"]["ret"].dropna()
+            zones.append({"開盤落點": z, "筆數": len(zr), "已賣出": len(zs),
+                          "已賣出平均%": zs.mean() if len(zs) else None,
+                          "勝率": f"{(zs > 0).mean():.0%}" if len(zs) else "—"})
+        st.markdown("**開盤落點比較**（驗證「明天開盤參考價」）")
+        st.dataframe(pd.DataFrame(zones).style.format("{:+.2f}", subset=["已賣出平均%"], na_rep="—")
+                     .map(style_sign, subset=["已賣出平均%"]), hide_index=True)
+        st.caption(f"較佳：開盤比評分日收盤跌 {abs(OPEN_GOOD_PCT):g}% 以上；不追：跳空漲 "
+                   f"{OPEN_AVOID_PCT[0]:g}～{OPEN_AVOID_PCT[1]:g}%；其他：兩者之外。筆數少時差異不代表什麼，累積越多越準。")
         table = pd.DataFrame({
             "評分日": r["signal_date"], "排名": r["rank"], "代號": r["stock_id"], "名稱": r["stock_id"].map(names),
             "大盤": r["market_ok"].map({True: "季線上", False: "季線下"}), "買進日": r["buy_date"],
-            "狀態": r["status"], "買進價": r["buy_price"], "賣出日": r["sell_date"], "賣出價": r["sell_price"],
-            "最新收盤": r["last_close"], "報酬%": r["ret"],
+            "狀態": r["status"], "買進價": r["buy_price"], "開盤漲跌%": r["open_gap"], "開盤落點": r["open_zone"],
+            "賣出日": r["sell_date"], "賣出價": r["sell_price"], "最新收盤": r["last_close"], "報酬%": r["ret"],
         })
         st.dataframe(
             table.style.format("{:.0f}", subset=["排名"]).format("{:,.2f}", subset=["買進價", "賣出價", "最新收盤"], na_rep="")
-                .format("{:+.2f}", subset=["報酬%"], na_rep="—").map(style_sign, subset=["報酬%"]),
+                .format("{:+.2f}", subset=["報酬%", "開盤漲跌%"], na_rep="—")
+                .map(style_sign, subset=["報酬%", "開盤漲跌%"]),
             hide_index=True, width="stretch", height=min(42 + 35 * len(table), 600))
-        st.caption("買進價、賣出價是當天的開盤價；還沒賣出的看最新收盤。報酬用還原權值計算，中間有除權息也不會失真。")
+        st.caption("買進價、賣出價是當天的開盤價；還沒賣出的看最新收盤。開盤漲跌% 是買進日開盤比評分日收盤漲跌多少。"
+                   "報酬用還原權值計算，中間有除權息也不會失真。")
 
 with tab_rules:
     st.markdown(RULES_MD)

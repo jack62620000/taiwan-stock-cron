@@ -77,6 +77,16 @@ def open_ref(close):
     return at(OPEN_GOOD_PCT, math.floor), at(lo, math.ceil), at(hi, math.floor)
 
 
+def open_zone(close, open_price):
+    """評分日收盤 close、隔天開盤 open_price 落在哪：「較佳」「不追」「其他」，缺價格回傳 None（門檻同 open_ref）"""
+    good, lo, hi = open_ref(close)
+    if good is None or open_price is None or pd.isna(open_price):
+        return None
+    if open_price <= good:
+        return "較佳"
+    return "不追" if lo <= open_price <= hi else "其他"
+
+
 def market_ok_by_date(index_df, ma_days=60):
     """加權指數每天收盤是否在 ma_days 日均線之上：{日期: bool}，均線算不出來的日子為 False"""
     if index_df is None or index_df.empty:
@@ -96,7 +106,7 @@ def pick_record(dates, ranks, market_ok, prices, raw=None, hold=HOLD, cost_pct=0
     還沒到期的用最新收盤價算「至今」報酬。最新評分日還沒買進，不列入。
     """
     cols = ["signal_date", "rank", "stock_id", "total_score", "market_ok", "buy_date", "sell_date",
-            "status", "buy_price", "sell_price", "last_close", "ret"]
+            "status", "signal_close", "buy_price", "open_gap", "open_zone", "sell_price", "last_close", "ret"]
     if ranks.empty or len(dates) < 2:
         return pd.DataFrame(columns=cols)
     pos = {d: i for i, d in enumerate(dates)}
@@ -105,10 +115,11 @@ def pick_record(dates, ranks, market_ok, prices, raw=None, hold=HOLD, cost_pct=0
         for c in ["open_price", "close_price"]:
             df[c] = pd.to_numeric(df[c], errors="coerce")
         return (df.set_index(["stock_id", "date"])["open_price"],
-                df.dropna(subset=["close_price"]).sort_values("date").groupby("stock_id")["close_price"].last())
+                df.dropna(subset=["close_price"]).sort_values("date").groupby("stock_id")["close_price"].last(),
+                df.set_index(["stock_id", "date"])["close_price"])
 
-    opens, last_close = lookup(prices)
-    raw_opens, raw_close = lookup(raw if raw is not None else prices)
+    opens, last_close, _ = lookup(prices)
+    raw_opens, raw_close, raw_closes = lookup(raw if raw is not None else prices)
     rows = []
     for r in ranks.itertuples():
         i = pos.get(r.date)
@@ -119,18 +130,21 @@ def pick_record(dates, ranks, market_ok, prices, raw=None, hold=HOLD, cost_pct=0
         sold = sell_i < len(dates)
         buy = opens.get((r.stock_id, buy_date))
         now = opens.get((r.stock_id, dates[sell_i])) if sold else last_close.get(r.stock_id)
+        prev, buy_raw = raw_closes.get((r.stock_id, r.date)), raw_opens.get((r.stock_id, buy_date))
         rows.append({
             "signal_date": r.date, "rank": r.rank, "stock_id": r.stock_id, "total_score": r.total_score,
             "market_ok": bool(market_ok.get(r.date)), "buy_date": buy_date,
             "sell_date": dates[sell_i] if sold else None,
             "status": "已賣出" if sold else f"持有第 {len(dates) - 1 - i} / {hold} 天",
-            "buy_price": raw_opens.get((r.stock_id, buy_date)),
+            "signal_close": prev, "buy_price": buy_raw,
+            "open_gap": (buy_raw / prev - 1) * 100 if prev and buy_raw and pd.notna(prev) and pd.notna(buy_raw) else None,
+            "open_zone": open_zone(prev, buy_raw),
             "sell_price": raw_opens.get((r.stock_id, dates[sell_i])) if sold else None,
             "last_close": None if sold else raw_close.get(r.stock_id),
             "ret": (now / buy - 1) * 100 - cost_pct if buy and now and pd.notna(buy) and pd.notna(now) else None,
         })
     df = pd.DataFrame(rows, columns=cols)
-    for c in ["buy_price", "sell_price", "last_close", "ret"]:
+    for c in ["signal_close", "buy_price", "open_gap", "sell_price", "last_close", "ret"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     return df.sort_values(["signal_date", "rank"], ascending=[False, True]).reset_index(drop=True)
 

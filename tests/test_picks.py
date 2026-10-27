@@ -29,8 +29,8 @@ def test_pick_record():
     dates = ["d0", "d1", "d2", "d3", "d4"]
     ranks = pd.DataFrame({"date": ["d0", "d2", "d4"], "stock_id": ["A", "B", "C"], "rank": [1, 1, 1],
                           "total_score": [90, 80, 70]})
-    prices = pd.DataFrame({"stock_id": ["A", "A", "B", "B"], "date": ["d1", "d3", "d3", "d4"],
-                           "open_price": [100, 110, 50, 51], "close_price": [101, 111, 51, 55]})
+    prices = pd.DataFrame({"stock_id": ["A", "A", "A", "B", "B", "B"], "date": ["d0", "d1", "d3", "d2", "d3", "d4"],
+                           "open_price": [103, 100, 110, 49, 50, 51], "close_price": [103, 101, 111, 49.5, 51, 55]})
     rec = pick_record(dates, ranks, {"d0": True, "d2": False}, prices, hold=2, cost_pct=0.5).set_index("stock_id")
     assert rec.at["A", "buy_price"] == 100 and rec.at["A", "sell_price"] == 110
     assert "C" not in rec.index                                  # 最新評分日還沒買進
@@ -39,6 +39,14 @@ def test_pick_record():
     assert rec.at["B", "status"] == "持有第 2 / 2 天" and not rec.at["B", "market_ok"]
     assert round(rec.at["B", "ret"], 2) == 9.5                   # d3 開盤 50 買、最新收盤 55
     assert rec.at["B", "last_close"] == 55 and pd.isna(rec.at["B", "sell_price"])
+    assert rec.at["A", "open_zone"] == "較佳" and round(rec.at["A", "open_gap"], 2) == -2.91  # 收 103、開 100
+    assert rec.at["B", "open_zone"] == "不追" and round(rec.at["B", "open_gap"], 2) == 1.01   # 收 49.5、開 50
+
+
+def test_open_zone():
+    from utils.picks import open_zone
+    assert open_zone(100, 98) == "較佳" and open_zone(100, 102) == "不追" and open_zone(100, 100) == "其他"
+    assert open_zone(100, 104) == "其他" and open_zone(None, 100) is None and open_zone(100, None) is None
 
 
 def test_sector_table_ignores_missing_returns():
