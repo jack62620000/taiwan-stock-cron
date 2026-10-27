@@ -21,6 +21,8 @@ where group_id is null;
 alter table public.watchlist alter column group_id set not null;
 alter table public.watchlist drop constraint if exists watchlist_pkey;
 alter table public.watchlist add primary key (group_id, stock_id);
+-- 主鍵第一欄是 group_id，外鍵 stock_id 另外建索引（Supabase 效能建議）
+create index if not exists watchlist_stock_id_idx on public.watchlist (stock_id);
 
 -- 模擬持股：加分組欄位
 alter table public.paper_trades add column if not exists group_id bigint

@@ -134,10 +134,14 @@ def granville_messages(date, table, rebound=None):
 
 # ===== 明日買進 =====
 def picks_bubble(r):
+    from utils.picks import open_ref
+    good, lo, hi = open_ref(_num(r["close_price"]))
     rows = [
         _row("排名", f"第 {int(r['rank'])} 名"),
         _row("總分", _f(r["total_score"], decimals=0)),
         _row("收盤", _f(r["close_price"])),
+        _row("開盤較佳 ≤", _f(good)),
+        _row("開盤不追", f"{_f(lo)}～{_f(hi)}" if lo is not None else "—"),
         _row("5日%", _f(r["change_5d"], "%"), _sign_color(r["change_5d"])),
         _row("20日%", _f(r["change_20d"], "%"), _sign_color(r["change_20d"])),
     ]
@@ -152,7 +156,7 @@ def picks_bubble(r):
 def picks_messages(date, top, regime):
     """明日買進回覆：第一則文字（大盤狀態、規則、檔名），之後一則輪播（每檔一張卡）"""
     from utils.analysis import MARKET_MA
-    from utils.picks import HOLD, TOP_N
+    from utils.picks import HOLD, OPEN_AVOID_PCT, OPEN_GOOD_PCT, TOP_N
     if top.empty:
         return [{"type": "text", "text": "還沒有評分資料。"}]
     ok = bool(regime) and not regime["below"]
@@ -168,7 +172,9 @@ def picks_messages(date, top, regime):
     ]
     lines += [f"{int(r['rank'])}. {r['stock_id']} {r.get('stock_name') or ''}（{_f(r['total_score'], decimals=0)} 分）"
               + (f"　{'　'.join(r['tags'])}" if r["tags"] else "") for _, r in top.iterrows()]
-    lines += ["", "標籤只是參考，不影響買賣：🚀 動能選股訊號、🎯 布林收斂、📐 近 5 日法則 2、⚠️ 漲多或均線賣訊。"]
+    lines += ["", "標籤只是參考，不影響買賣：🚀 動能選股訊號、🎯 布林收斂、📐 近 5 日法則 2、⚠️ 漲多或均線賣訊。",
+              f"卡片上的開盤參考價也只是參考：明天開盤比收盤跌 {abs(OPEN_GOOD_PCT):g}% 以上（開盤較佳 ≤）過去平均報酬最好，"
+              f"跳空漲 {OPEN_AVOID_PCT[0]:g}～{OPEN_AVOID_PCT[1]:g}%（開盤不追）過去平均報酬最差。"]
     msgs, _ = _pack("明日買進", [picks_bubble(r) for _, r in top.iterrows()], 1)
     return [{"type": "text", "text": "\n".join(lines)[:TEXT_MAX]}] + msgs
 
