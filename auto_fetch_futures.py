@@ -62,10 +62,13 @@ def parse_download_csv(text):
 
 def fetch_from_download(days=7):
     """期交所網頁下載網址：抓最近幾天的臺股期貨三大法人。
-    查詢範圍若包含期交所還沒公布的日子（例如今天收盤前）會回錯誤，所以失敗時改查到昨天為止。"""
+    查詢的結束日只要不是已公布的交易日（今天收盤前、週末、國定假日、颱風假）就會回錯誤，
+    所以失敗時結束日往前一天再查，直到碰到最近一個交易日。
+    例如 2026-10-27 清晨執行時，10/27 還沒公布、10/26 補假、10/24～25 週末、10/23 颱風假，要退到 10/22 才查得到。"""
     today = datetime.now(ZoneInfo("Asia/Taipei")).date()
     start = today - timedelta(days=days)
-    for end in (today, today - timedelta(days=1)):
+    for back in range(days):
+        end = today - timedelta(days=back)
         form = {"queryStartDate": start.strftime("%Y/%m/%d"), "queryEndDate": end.strftime("%Y/%m/%d"),
                 "commodityId": "TXF"}
         try:
