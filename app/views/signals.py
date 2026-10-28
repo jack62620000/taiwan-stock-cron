@@ -19,7 +19,7 @@ from utils.analysis import (
 )
 from utils.ui import render_metric_cards, style_sign, UP_COLOR, DOWN_COLOR
 
-# 選股頁的「評分排行」分頁（pages/0_選股.py 用 runpy 執行這個檔案；登入、頁面設定、重新整理按鈕在選股頁）
+# 選股頁的「評分排行」分頁（pages/1_選股.py 用 runpy 執行這個檔案；登入、頁面設定、重新整理按鈕在選股頁）
 render_page_guide("signals")
 st.caption(
     "每個交易日收盤後，依固定規則幫全市場股票打分數："

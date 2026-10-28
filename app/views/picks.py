@@ -16,7 +16,7 @@ from utils.paper import add_form as add_paper_form
 from utils.watch import add_watch_form
 from utils.ui import render_metric_cards, style_sign
 
-# 選股頁的「明日買進」分頁（pages/0_選股.py 用 runpy 執行這個檔案；登入、頁面設定、重新整理按鈕在選股頁）
+# 選股頁的「明日買進」分頁（pages/1_選股.py 用 runpy 執行這個檔案；登入、頁面設定、重新整理按鈕在選股頁）
 render_page_guide("picks")
 
 
