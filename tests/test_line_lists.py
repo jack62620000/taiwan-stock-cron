@@ -126,4 +126,6 @@ def test_picks_list(use_db):
 
 def test_build_lists_has_picks(use_db):
     use_db()
-    assert {"picks.json", "granville.json", "momentum.json"} <= set(line_lists.build_lists())
+    lists = line_lists.build_lists()
+    assert {"picks.json", "granville.json", "momentum.json", "market.json"} <= set(lists)
+    assert lists["market.json"]["messages"][0]["text"].startswith(("🧭 大盤趨勢", "大盤資料不足"))

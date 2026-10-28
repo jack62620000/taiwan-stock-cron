@@ -1,5 +1,5 @@
 """
-LINE 選單「明日買進」「均線買賣點」「動能股」的回覆 - 和網頁同一套計算，每晚由 line_cards.py 算好存到 Storage
+LINE 選單「明日買進」「均線買賣點」「動能股」「大盤趨勢」的回覆 - 和網頁同一套計算，每晚由 line_cards.py 算好存到 Storage
 
     明日買進：選股頁「明日買進」的評分前 10 名與參考標籤（utils.picks.buy_list），大盤不在月線和季線上時提醒先不買
     均線買賣點：選股頁「均線買賣點」（葛蘭碧）「買賣預告 → 準備買進」中狀態為「⏳ 等待法則2」的股票（網頁預設參數、不加篩選），
@@ -7,9 +7,10 @@ LINE 選單「明日買進」「均線買賣點」「動能股」的回覆 - 和
             後面接「急跌反彈候選」（法則 4，utils.analysis.granville_rebound_table），最多一則輪播
     動能股：選股頁「評分排行」裡「動能選股」的「兩者同時」「52 週新高＋量增」「今天剛符合趨勢模板」三種，
             欄位和網頁表格相同（utils.momentum.momentum_table）
+    大盤趨勢：和網頁首頁、總覽的「🧭 大盤趨勢」相同（utils.market_trend），一則文字訊息
 
 每檔一張小卡，卡片下方的按鈕可以直接查那檔的完整個股分析卡。
-存放：archive 桶 / _line_cards / picks.json、granville.json、momentum.json，內容是 {"date": 資料日期, "messages": [LINE 訊息]}，
+存放：archive 桶 / _line_cards / picks.json、granville.json、momentum.json、market.json，內容是 {"date": 資料日期, "messages": [LINE 訊息]}，
 LINE 機器人（supabase/functions/line-webhook）收到時原樣回覆，最多 5 則訊息。
 """
 import json
@@ -253,6 +254,7 @@ def load_momentum():
 def build_lists():
     """回傳 {檔名: 內容}，給 line_cards.upload 一起上傳"""
     from utils.analysis import granville_default, load_market_regime, market_warning
+    from utils.market_trend import compute_market_trend, trend_text
     from utils.picks import buy_list
     g_date, table, rebound = granville_default()
     m_date, m_msgs = momentum_messages(load_momentum())
@@ -267,6 +269,9 @@ def build_lists():
         add_warning(content["messages"], warn)
     # 明日買進的第一則已寫大盤狀態，不再加提醒
     lists["picks.json"] = {"date": p_date, "messages": picks_messages(p_date, top, regime)}
+    trend = compute_market_trend()
+    lists["market.json"] = {"date": trend["date"] if trend else None,
+                            "messages": [{"type": "text", "text": trend_text(trend)[:TEXT_MAX]}]}
     return lists
 
 

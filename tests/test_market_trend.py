@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from utils.market_trend import analyze, foreign_amount
+from utils.market_trend import analyze, foreign_amount, trend_text
 
 
 def _index(closes):
@@ -43,3 +43,10 @@ def test_foreign_amount():
     closes = pd.DataFrame({"stock_id": ["A", "B", "A"], "date": ["d1", "d1", "d2"], "close_price": [500, 100, 600]})
     amt = foreign_amount(ins, closes)
     assert list(amt.round(2)) == [3.0, 3.0]   # (5 億 − 2 億)、3 億
+
+
+def test_trend_text():
+    r = analyze(_index(list(np.linspace(20000, 40000, 260))))
+    text = trend_text(r)
+    assert text.startswith("🧭 大盤趨勢（") and "🔴 選股濾網：" in text and "\n" in text
+    assert trend_text(None) == "大盤資料不足，暫時無法分析趨勢。"

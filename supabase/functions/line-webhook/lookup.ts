@@ -19,6 +19,7 @@ const LIST_WORDS: Record<string, string> = {
   "明日買進": "picks.json", "買進": "picks.json", "選股": "picks.json",
   "均線買賣點": "granville.json", "均線": "granville.json", "葛蘭碧": "granville.json", "等待法則2": "granville.json",
   "動能": "momentum.json", "動能股": "momentum.json", "動能選股": "momentum.json",
+  "大盤趨勢": "market.json", "大盤": "market.json",
 };
 export const MAX_CHOICES = 10; // 名稱對到很多檔時，最多列幾檔讓使用者點選（LINE 快速回覆最多 13 個）
 
@@ -83,6 +84,9 @@ export function helpText(index: Index | null): string {
     "・趨勢中回檔再起：符合趨勢模板，前 10 個交易日碰過布林下軌，今天站上布林中軌（20 日均線）",
     "・兩者同時：同時符合趨勢模板和 52 週新高＋量增；今天剛符合趨勢模板：今天才 8 個條件全部符合",
     "・離 50 日均線 30% 以上的漲多股不列入",
+    "",
+    "【🧭 大盤趨勢】",
+    "和網頁首頁的大盤趨勢相同：加權指數在哪幾條均線之上或之下、月線和季線的方向、距高點多遠、量能、外資現股買賣超金額、外資台指期淨未平倉的增減、上下最近的支撐壓力，以及「明日買進」的大盤濾網是綠燈還是紅燈。",
     "",
     "以上僅供參考，不構成投資建議。",
   ];

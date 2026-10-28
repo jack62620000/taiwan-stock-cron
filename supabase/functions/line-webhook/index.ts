@@ -2,7 +2,7 @@
 //
 // 卡片由 line_cards.py 每晚算好放在 Storage（archive 桶 _line_cards/），這裡只讀檔回覆；
 // 打「自選」時另外讀資料庫的分組與自選股清單（只讀，不寫入）；
-// 「明日買進」「均線買賣點」「動能股」回覆 line_lists.py 每晚算好的清單（picks.json、granville.json、momentum.json）。
+// 「明日買進」「均線買賣點」「動能股」「大盤趨勢」回覆 line_lists.py 每晚算好的清單（picks.json、granville.json、momentum.json、market.json）。
 // 用 LINE 的回覆訊息（reply）回答，不算每月推播額度。
 //
 // 需要的設定（Supabase → Edge Functions → Secrets）：

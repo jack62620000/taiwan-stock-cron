@@ -46,6 +46,7 @@ test("自選與我的ID", () => {
   assert.deepEqual(lookup("均線買賣點", index), { kind: "list", file: "granville.json" });
   assert.deepEqual(lookup("明日買進", index), { kind: "list", file: "picks.json" });
   assert.deepEqual(lookup("動能股", index), { kind: "list", file: "momentum.json" });
+  assert.deepEqual(lookup("大盤趨勢", index), { kind: "list", file: "market.json" });
 });
 
 test("帳號設定", () => {
