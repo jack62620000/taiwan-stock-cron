@@ -41,10 +41,19 @@ def test_no_trade_day_is_gray(prices):
 def test_levels_and_markers(prices):
     charts = build_charts(prices, 120, overlays=("布林通道",), levels={"停損價": (95.5, "#ea580c"), "空的": (None, "#000")})
     titles = [s["options"]["title"] for s in charts[0]["series"][1:]]
-    assert titles == ["停損價", "布林上軌", "布林下軌"]
-    level = charts[0]["series"][1]["data"]
-    assert len(level) == 120 and {p["value"] for p in level} == {95.5}
+    assert titles == ["布林上軌", "布林中軌", "布林下軌"]
+    assert charts[0]["series"][0]["priceLines"] == [
+        {"price": 95.5, "color": "#ea580c", "lineWidth": 1, "lineStyle": 2, "axisLabelVisible": True, "title": "停損價"}]
     marks = charts[0]["series"][0]["markers"]
     assert marks and all(m["time"] in set(prices["date"].tail(120)) for m in marks)
     assert {m["shape"] for m in marks} <= {"arrowUp", "arrowDown", "circle"}
+    assert all(m["text"] == "" and m["label"][0] in "買賣過" for m in marks)
     assert "markers" not in build_charts(prices, 120, markers=False)[0]["series"][0]
+
+
+def test_render_html(prices):
+    from utils.kline import render_html
+    charts = build_charts(prices, 60)
+    html, height = render_html(charts)
+    assert "TradingView Lightweight Charts" in html and "__CONF__" not in html and "__LIB__" not in html
+    assert height == sum(c["chart"]["height"] for c in charts) + 52
