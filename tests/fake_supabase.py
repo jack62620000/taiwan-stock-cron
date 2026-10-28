@@ -186,6 +186,12 @@ class FakeStorage:
     def from_(self, bucket):
         return FakeBucket(self.buckets.setdefault(bucket, {}))
 
+    def list_buckets(self):
+        return [{"name": n} for n in self.buckets]
+
+    def create_bucket(self, name, options=None):
+        self.buckets.setdefault(name, {})
+
 
 class FakeClient:
     def __init__(self, tables=None, rpcs=None):

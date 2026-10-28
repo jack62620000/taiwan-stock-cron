@@ -2,10 +2,11 @@
 台股 ETF 排程與回補（GitHub Actions：.github/workflows/etf_update.yml）
 
 用環境變數 ETF_JOB 選擇工作：
-  daily    平日盤後：ETF 清單、每日價量、三大法人、淨值折溢價、配息；並補最近幾個交易日的缺漏
+  daily    平日盤後：ETF 清單、每日價量、三大法人、淨值折溢價、配息；並補最近幾個交易日的缺漏，
+           最後清除超過保留期限的舊資料（先封存到 ETF 資料庫的 Storage 再刪除，期限見 RETENTION）
   weekly   週六：集保持股分級（開放資料最新一週）
   monthly  每月：投信公會月資料（重抓最近兩個月），並補上上櫃 ETF 的基金統編
-  backfill 歷史回補：DATASETS 選 prices,monthly,holder,dividends（逗號分隔），區間 BACKFILL_START～BACKFILL_END
+  backfill 歷史回補：DATASETS 選 prices,ins,monthly,holder,dividends（逗號分隔），區間 BACKFILL_START～BACKFILL_END
            （上櫃 ETF 的歷史配息來源只有預告表，回補只含上市 ETF）
 其他設定：
   TARGET_DATE   daily 要抓的日期（YYYY-MM-DD，留空為台灣今天）
@@ -30,27 +31,41 @@ RECENT_TRADING_DAYS = 5
 # 回補單次執行的時間上限（GitHub Actions 單一工作最多 6 小時），到了就停下，下次用同一區間接續
 BACKFILL_MAX_MINUTES = 320
 
+# 保留期限和個股相同（見 cleanup_old_data.py）：(資料表, 日期欄位, 保留年數)
+# 價量 3 年、法人 2 年、集保 2 年；淨值是每日資料，比照價量 3 年；配息、月資料、ETF 清單是小表，全部保留
+RETENTION = [
+    ("etf_daily_prices", "date", 3),
+    ("etf_nav", "date", 3),
+    ("etf_ins_daily", "date", 2),
+    ("etf_holder_distribution", "week_date", 2),
+]
+ANCHOR_ETF = "0050"     # 每天都有交易，用它找出過期的日期
+MAX_DAYS_PER_RUN = 10   # 每張表每次最多刪這麼多天
+ARCHIVE_BUCKET = "archive"
+
 
 def save(table, records):
     return f.save(table, records, dry_run=DRY_RUN)
 
 
 # ==================== daily ====================
-def fetch_prices_and_ins(day, with_list=False):
+def fetch_prices_and_ins(day, with_list=False, with_prices=True, with_ins=True):
     """抓一天的上市＋上櫃價量與法人並寫入，回傳 (價量筆數, 法人筆數, ETF 清單列)"""
     problems = []
     twse, tpex_rows = [], []
-    try:
-        twse = f.fetch_twse_prices(day)
-    except Exception as e:
-        problems.append(f"上市行情：{e}")
-    try:
-        tpex_rows = f.fetch_tpex_price_rows(day)
-    except Exception as e:
-        problems.append(f"上櫃行情：{e}")
+    if with_prices or with_list:
+        try:
+            twse = f.fetch_twse_prices(day)
+        except Exception as e:
+            problems.append(f"上市行情：{e}")
+        try:
+            tpex_rows = f.fetch_tpex_price_rows(day)
+        except Exception as e:
+            problems.append(f"上櫃行情：{e}")
     prices = twse + f.parse_tpex_prices(tpex_rows, day)
     ins = []
-    if prices:
+    # 只補法人時不先抓行情；休市日法人來源本來就會回傳空資料
+    if with_ins and (prices or not with_prices):
         for label, fn in (("上市法人", f.fetch_twse_ins), ("上櫃法人", f.fetch_tpex_ins)):
             try:
                 ins += fn(day)
@@ -58,8 +73,10 @@ def fetch_prices_and_ins(day, with_list=False):
                 problems.append(f"{label}：{e}")
     for p in problems:
         print(f"⚠️ {day} {p}")
-    save("etf_daily_prices", prices)
-    save("etf_ins_daily", ins)
+    if with_prices:
+        save("etf_daily_prices", prices)
+    if with_ins:
+        save("etf_ins_daily", ins)
     listing = f.tpex_etf_list(tpex_rows, day) if with_list else []
     return len(prices), len(ins), listing
 
@@ -127,6 +144,7 @@ def run_daily(day):
     if not dividends:
         problems.append("配息三個來源都沒有取得資料")
     problems += fill_recent_gaps(day)
+    problems += cleanup_expired(f.today_taipei())
 
     if n_price is not None:
         if n_price < MIN_DAILY_ROWS:
@@ -201,19 +219,49 @@ def run_monthly():
     return problems
 
 
+# ==================== 清除過期資料 ====================
+def cleanup_expired(today):
+    """各表超過保留期限的資料先封存再刪除，一次處理一天、每表最多 MAX_DAYS_PER_RUN 天。回傳問題清單"""
+    from cleanup_old_data import years_ago
+    if DRY_RUN:
+        return []
+    problems = []
+    try:
+        f.ensure_bucket(ARCHIVE_BUCKET)
+    except Exception as e:
+        return [f"清除過期資料：無法建立封存用的 Storage 桶（{e}）"]
+    for table, col, years in RETENTION:
+        cutoff = years_ago(today, years).isoformat()
+        try:
+            days = [r[col] for r in f.db().table(table).select(col).eq("etf_id", ANCHOR_ETF)
+                    .lt(col, cutoff).order(col).limit(MAX_DAYS_PER_RUN).execute().data]
+            total = 0
+            for d in days:
+                f.archive_day(table, col, d, ARCHIVE_BUCKET)  # 封存失敗會丟出錯誤，這天就不會被刪
+                res = f.db().table(table).delete(count="exact", returning="minimal").eq(col, d).execute()
+                total += res.count or 0
+            if days:
+                print(f"{table}：保留 {years} 年（{cutoff} 起），封存並刪除 {days[0]}～{days[-1]} 共 {total:,} 筆")
+        except Exception as e:
+            problems.append(f"{table} 清除過期資料失敗：{e}")
+    return problems
+
+
 # ==================== backfill ====================
-def backfill_daily(start, end, deadline):
+def backfill_daily(start, end, deadline, with_prices=True, with_ins=True):
     days = f.trading_days(start, end)
-    print(f"價量與法人回補：{start} ～ {end}，共 {len(days)} 個平日")
+    label = "、".join(x for x, on in (("價量", with_prices), ("法人", with_ins)) if on)
+    print(f"{label}回補：{start} ～ {end}，共 {len(days)} 個平日")
     problems = []
     for i, d in enumerate(days):
         if time.time() > deadline:
             return problems + [f"已到執行時間上限，{d} 之後還沒補，請用同一區間再執行一次接續"]
-        if not DRY_RUN and f.count_rows("etf_daily_prices", date=d) >= MIN_DAILY_ROWS \
-                and f.count_rows("etf_ins_daily", date=d) >= MIN_DAILY_ROWS:
+        need_prices = with_prices and (DRY_RUN or f.count_rows("etf_daily_prices", date=d) < MIN_DAILY_ROWS)
+        need_ins = with_ins and (DRY_RUN or f.count_rows("etf_ins_daily", date=d) < MIN_DAILY_ROWS)
+        if not (need_prices or need_ins):
             continue
         print(f"\n[{i + 1}/{len(days)}] {d}")
-        fetch_prices_and_ins(d)
+        fetch_prices_and_ins(d, with_prices=need_prices, with_ins=need_ins)
     return problems
 
 
@@ -305,12 +353,13 @@ def backfill_dividends(start, end):
 def run_backfill():
     start = os.getenv("BACKFILL_START") or (f.today_taipei() - timedelta(days=365)).isoformat()
     end = os.getenv("BACKFILL_END") or f.today_taipei().isoformat()
-    datasets = [d.strip() for d in (os.getenv("DATASETS") or "prices,monthly,holder,dividends").split(",") if d.strip()]
+    datasets = [d.strip() for d in (os.getenv("DATASETS") or "prices,ins,monthly,holder,dividends").split(",")
+                if d.strip()]
     deadline = time.time() + BACKFILL_MAX_MINUTES * 60
     print(f"========== ETF 歷史回補 {start} ～ {end}：{', '.join(datasets)} ==========")
     problems = []
     if "prices" in datasets or "ins" in datasets:
-        problems += backfill_daily(start, end, deadline)
+        problems += backfill_daily(start, end, deadline, "prices" in datasets, "ins" in datasets)
     if "monthly" in datasets:
         problems += backfill_monthly(start, end, deadline)
     if "dividends" in datasets:

@@ -218,3 +218,52 @@ def test_recent_months():
     from datetime import date
     assert u.recent_months(2, date(2026, 1, 12)) == ["2025-12", "2025-11"]
     assert u.month_range("2025-11-03", "2026-02-01") == ["2025-11", "2025-12", "2026-01", "2026-02"]
+
+
+def test_cleanup_archives_then_deletes_expired_days():
+    """價量保留 3 年、法人 2 年：過期的日子先封存到 Storage 再刪除，沒過期的不動"""
+    import gzip
+    from fake_supabase import FakeClient
+    client = FakeClient({
+        "etf_daily_prices": [{"etf_id": e, "date": d, "close_price": 1.0}
+                             for d in ("2023-10-27", "2023-10-30") for e in ("0050", "00679B")],
+        "etf_ins_daily": [{"etf_id": "0050", "date": d, "foreign_net_shares": 1}
+                          for d in ("2024-10-25", "2024-10-28")],
+        "etf_nav": [], "etf_holder_distribution": [],
+    })
+    f._client = client
+    try:
+        assert u.cleanup_expired(__import__("datetime").date(2026, 10, 28)) == []
+    finally:
+        f._client = None
+    assert {r["date"] for r in client.tables["etf_daily_prices"]} == {"2023-10-30"}
+    assert {r["date"] for r in client.tables["etf_ins_daily"]} == {"2024-10-28"}
+    files = client.storage.buckets["archive"]
+    assert set(files) == {"etf_daily_prices/2023/2023-10-27.csv.gz", "etf_ins_daily/2024/2024-10-25.csv.gz"}
+    assert gzip.decompress(files["etf_daily_prices/2023/2023-10-27.csv.gz"]).decode().count("\n") == 3
+
+
+def test_cleanup_keeps_data_when_archive_fails(monkeypatch):
+    from fake_supabase import FakeClient
+    client = FakeClient({"etf_daily_prices": [{"etf_id": "0050", "date": "2020-01-02"}],
+                         "etf_nav": [], "etf_ins_daily": [], "etf_holder_distribution": []})
+    f._client = client
+
+    def broken(*_, **__):
+        raise RuntimeError("上傳失敗")
+    monkeypatch.setattr(f, "archive_day", broken)
+    try:
+        problems = u.cleanup_expired(__import__("datetime").date(2026, 10, 28))
+    finally:
+        f._client = None
+    assert problems and "etf_daily_prices" in problems[0]
+    assert len(client.tables["etf_daily_prices"]) == 1
+
+
+def test_backfill_ins_only_skips_prices(monkeypatch):
+    calls = []
+    monkeypatch.setattr(f, "trading_days", lambda s, e: ["2025-01-02"])
+    monkeypatch.setattr(f, "count_rows", lambda table, **_: 0)
+    monkeypatch.setattr(u, "fetch_prices_and_ins", lambda d, **kw: calls.append((d, kw)) or (0, 0, []))
+    u.backfill_daily("2025-01-01", "2025-01-03", float("inf"), with_prices=False, with_ins=True)
+    assert calls == [("2025-01-02", {"with_prices": False, "with_ins": True})]
