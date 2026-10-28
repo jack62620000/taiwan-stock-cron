@@ -38,7 +38,7 @@ def _line(df, col, color, title, width=2, style=0):
     data = [{"time": t, "value": round(float(v), 2)} for t, v in zip(df["time"], df[col]) if pd.notna(v)]
     return {"type": "Line", "data": data,
             "options": {"color": color, "lineWidth": width, "lineStyle": style, "title": title,
-                        "priceLineVisible": False, "lastValueVisible": False, "crosshairMarkerVisible": False}}
+                        "priceLineVisible": False, "crosshairMarkerVisible": False}}
 
 
 def _hist(df, col, colors, title, fmt=None):
@@ -112,7 +112,7 @@ def build_charts(prices_ta, days, overlays=("均線",), sub="外資買賣超", i
         full_close = full.set_index("date")["close_price"].where(~full.set_index("date")["no_trade"].fillna(False).astype(bool)) \
             if "no_trade" in full.columns else full.set_index("date")["close_price"]
         price["markers"] = granville_markers(df, full_close)
-    # 水平價位線（停損價、觸發價、52 週高低）：右側價格軸標出名稱和價格，不會撐大縱軸範圍
+    # 水平價位線（停損價、觸發價、52 週高低）：右側價格軸標出價格、價格右邊寫名稱，不會撐大縱軸範圍
     price["priceLines"] = [
         {"price": round(float(p), 2), "color": c, "lineWidth": 1, "lineStyle": 2, "axisLabelVisible": True, "title": name}
         for name, (p, c) in (levels or {}).items() if p is not None and pd.notna(p)
@@ -158,6 +158,9 @@ _TEMPLATE = """
   #legend { color: __TEXT__; font-size: 13px; line-height: 20px; min-height: 40px; padding: 2px 4px 4px; }
   #legend b { font-weight: 600; }
   #legend .k { color: __MUTED__; margin-left: 10px; }
+  .row { display: flex; }
+  .names { position: relative; width: __NAMES_W__px; flex: none; overflow: hidden; }
+  .names div { position: absolute; left: 4px; font-size: 12px; line-height: 16px; white-space: nowrap; }
 </style>
 <div id="legend"></div>
 <div id="charts"></div>
@@ -167,19 +170,32 @@ _TEMPLATE = """
   const CONF = __CONF__;
   const UP = "__UP__", DOWN = "__DOWN__";
   const box = document.getElementById("charts");
+  const NAMES_W = __NAMES_W__;      // 價格軸右邊放線名稱的欄寬
   const charts = [], lookups = [];   // lookups：每條線 {名稱, 顏色, 日期→值}
+  const names = [];                  // names[i]：第 i 張圖要標名稱的線 {文字, 顏色, 價格（函式）, 線}
   let candleMap = null, prevClose = {}, volMap = null;
   const fmt = (v, d = 2) => v == null ? "—" : v.toLocaleString("zh-TW", {minimumFractionDigits: d, maximumFractionDigits: d});
   CONF.forEach((c, i) => {
-    const el = document.createElement("div");
-    box.appendChild(el);
-    const chart = LightweightCharts.createChart(el, Object.assign({}, c.chart, {width: box.clientWidth || 700}));
+    const row = document.createElement("div"), el = document.createElement("div"), col = document.createElement("div");
+    row.className = "row"; col.className = "names"; col.style.height = c.chart.height + "px";
+    row.append(el, col);
+    box.appendChild(row);
+    const chart = LightweightCharts.createChart(el, Object.assign({}, c.chart, {width: (box.clientWidth || 700) - NAMES_W}));
     charts.push(chart);
+    names.push({col: col, items: []});
     c.series.forEach(s => {
-      const api = chart["add" + s.type + "Series"](s.options || {});
+      const opt = s.options || {};
+      // 名稱不畫在價格標籤左邊，改由右邊的欄位顯示
+      const api = chart["add" + s.type + "Series"](Object.assign({}, opt, {title: ""}));
       api.setData(s.data);
       if (s.markers && s.markers.length) api.setMarkers(s.markers);
-      (s.priceLines || []).forEach(pl => api.createPriceLine(pl));
+      (s.priceLines || []).forEach(pl => {
+        api.createPriceLine(Object.assign({}, pl, {title: ""}));
+        if (pl.title) names[i].items.push({text: pl.title, color: pl.color, price: () => pl.price, api: api});
+      });
+      const last = s.data[s.data.length - 1];
+      if (opt.title && last && opt.lastValueVisible !== false)
+        names[i].items.push({text: opt.title, color: opt.color || last.color, price: () => last.value, api: api});
       const m = new Map(s.data.map(d => [d.time, d]));
       if (s.type === "Candlestick") {
         candleMap = m;
@@ -233,8 +249,28 @@ _TEMPLATE = """
     });
   }));
   legend(lastTime);
+
+  // 價格軸右邊的線名稱：對準價格標籤的高度，太擠時往下錯開；縮放或拖拉後每一格畫面重新對齊
+  names.forEach(n => n.items.forEach(it => {
+    it.el = document.createElement("div");
+    it.el.textContent = it.text;
+    it.el.style.color = it.color || "__TEXT__";
+    n.col.appendChild(it.el);
+  }));
+  function placeNames() {
+    names.forEach(n => {
+      const h = n.col.clientHeight;
+      const pos = n.items.map(it => ({it: it, y: it.api.priceToCoordinate(it.price())}))
+        .filter(p => { const ok = p.y != null && p.y >= 0 && p.y <= h; p.it.el.style.display = ok ? "" : "none"; return ok; })
+        .sort((a, b) => a.y - b.y);
+      let prev = -Infinity;
+      pos.forEach(p => { const top = Math.max(p.y - 8, prev + 16); p.it.el.style.top = top + "px"; prev = top; });
+    });
+    requestAnimationFrame(placeNames);
+  }
+  requestAnimationFrame(placeNames);
   charts.forEach(ch => ch.timeScale().fitContent());
-  new ResizeObserver(() => charts.forEach(ch => ch.applyOptions({width: box.clientWidth}))).observe(box);
+  new ResizeObserver(() => charts.forEach(ch => ch.applyOptions({width: box.clientWidth - NAMES_W}))).observe(box);
 })();
 </script>
 """
@@ -245,5 +281,5 @@ def render_html(charts):
     html = (_TEMPLATE.replace("__LIB__", LIB.read_text(encoding="utf-8"))
             .replace("__CONF__", json.dumps(charts, ensure_ascii=False))
             .replace("__BG__", BG_COLOR).replace("__TEXT__", TEXT).replace("__MUTED__", MUTED)
-            .replace("__UP__", UP_COLOR).replace("__DOWN__", DOWN_COLOR))
+            .replace("__UP__", UP_COLOR).replace("__DOWN__", DOWN_COLOR).replace("__NAMES_W__", "96"))
     return html, sum(c["chart"]["height"] for c in charts) + 52
