@@ -7,6 +7,7 @@ import altair as alt
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from utils.market_trend import load_market_trend, render as render_market_trend
 from utils.glossary import render_page_guide
 from utils.ui import (
     require_login, style_sign, style_rate, render_metric_cards, index_card, UP_COLOR, DOWN_COLOR
@@ -138,6 +139,7 @@ with tab_market:
         cards.append(("外資台指期淨未平倉", f"{oi.iloc[-1]:,.0f} 口",
                       f"較前一日 {oi_chg:+,.0f} 口", oi_chg))
     render_metric_cards(cards)
+    render_market_trend(load_market_trend())
 
     chart_left, chart_right = st.columns(2)
     with chart_left:

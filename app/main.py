@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from datetime import date, timedelta
+from utils.market_trend import load_market_trend, render as render_market_trend
 from utils.glossary import render_page_guide
 from utils.ui import apply_theme, render_metric_cards, index_card, style_sign, go_picks_tab
 from utils.db import (
@@ -123,6 +124,7 @@ stock_list = get_stock_list()
 names = dict(zip(stock_list["stock_id"], stock_list["stock_name"].fillna(""))) if not stock_list.empty else {}
 
 render_metric_cards([index_card("加權指數", taiex), index_card("櫃買指數", tpex)])
+render_market_trend(load_market_trend())
 
 top_col, watch_col = st.columns(2)
 with top_col:
@@ -185,7 +187,7 @@ with st.expander("ℹ️ 功能說明與資料來源"):
 | 功能 | 說明 |
 |------|------|
 | 🧭 選股 | 三個分頁：🛒 明日買進（大盤在月線和季線上才買評分前 10 名、持有 10 個交易日賣出；動能、布林、葛蘭碧當參考標籤，以及最近 20 個評分日照規則買賣的買進價、賣出價與漲跌紀錄）、🏆 評分排行、📐 均線買賣點 |
-| 📊 全台股總覽 | 分成三個分頁：大盤（指數、成交值、漲跌家數、外資台指期）、類股輪動（各產業近 5 日、20 日漲幅排行、輪動象限、外資與投信買賣超金額、產業內個股）、全台股數據（基本資訊、價值面、成長面、籌碼面、資金面、技術指標） |
+| 📊 全台股總覽 | 分成三個分頁：大盤（指數、成交值、漲跌家數、外資台指期，以及大盤趨勢分析：均線、量能、外資現股與台指期、支撐壓力）、類股輪動（各產業近 5 日、20 日漲幅排行、輪動象限、外資與投信買賣超金額、產業內個股）、全台股數據（基本資訊、價值面、成長面、籌碼面、資金面、技術指標） |
 | 🗂️ 個股分析卡 | 深度數據分析卡（互動 K 線圖，可疊加均線、布林通道、葛蘭碧買賣點與停損價），含52週區間、基本面、籌碼面、技術面燈號，以及均線買賣點、評分排行、動能條件（趨勢模板、52 週新高）與 ATR 停損價 |
 | 🔮 期貨三大法人 | 臺股期貨未平倉口數與契約金額，多日數據表格 |
 | 🏦 台股外資法人 | 全台股外資買賣超多日橫向表格，支援連續買賣超篩選 |
