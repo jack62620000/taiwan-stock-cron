@@ -47,6 +47,7 @@ def test_levels_and_markers(prices):
     marks = charts[0]["series"][0]["markers"]
     assert marks and all(m["time"] in set(prices["date"].tail(120)) for m in marks)
     assert {m["shape"] for m in marks} <= {"arrowUp", "arrowDown", "circle"}
+    assert all(m["text"] == "" and m["label"][0] in "買賣過" for m in marks)
     assert "markers" not in build_charts(prices, 120, markers=False)[0]["series"][0]
 
 

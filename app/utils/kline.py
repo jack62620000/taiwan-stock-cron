@@ -50,10 +50,16 @@ def _hist(df, col, colors, title, fmt=None):
     return {"type": "Histogram", "data": data, "options": opts}
 
 
+# 左上角顯示的葛蘭碧法則簡稱
+RULE_SHORT = {1: "突破均線", 2: "跌破後站回", 3: "回檔不破均線", 4: "負乖離過大",
+              5: "跌破均線", 6: "突破後跌回", 7: "反彈不過均線", 8: "正乖離過大"}
+
+
 def granville_markers(df, full_close, rules=tuple(STABLE_RULES)):
     """
     圖上的葛蘭碧標記（預設只標回測穩定的法則，和「均線買賣點」預設相同）：
-    買進法則在 K 棒下方紅色 ▲、賣出法則在上方綠色 ▼、過熱（法則 8）上方灰點。
+    買進法則在 K 棒下方紅色 ▲、賣出法則在上方綠色 ▼、過熱（法則 8）上方灰點，圖上不寫字；
+    label 是滑鼠移到那天時左上角顯示的說明（例如「買2 跌破後站回」），畫圖前會拿掉。
     full_close：完整期間的收盤價（以日期為索引），均線要用比圖更長的資料才算得出來。
     """
     f = rule_frames(full_close.to_frame("s"))
@@ -67,14 +73,14 @@ def granville_markers(df, full_close, rules=tuple(STABLE_RULES)):
             continue
         sides = {RULES[n][0] for n in hit}
         t = d   # 日期字串 YYYY-MM-DD 就是圖的時間
-        label = "、".join(str(n) for n in hit)
+        label = "、".join(f"{RULES[n][0][0]}{n} {RULE_SHORT[n]}" for n in hit)
         if "買進" in sides:
-            out.append({"time": t, "position": "belowBar", "color": UP_COLOR, "shape": "arrowUp",
-                        "text": f"買{label}" if sides == {"買進"} else label})
+            m = {"position": "belowBar", "color": UP_COLOR, "shape": "arrowUp"}
         elif "賣出" in sides:
-            out.append({"time": t, "position": "aboveBar", "color": DOWN_COLOR, "shape": "arrowDown", "text": f"賣{label}"})
+            m = {"position": "aboveBar", "color": DOWN_COLOR, "shape": "arrowDown"}
         else:
-            out.append({"time": t, "position": "aboveBar", "color": MUTED, "shape": "circle", "text": "過熱"})
+            m = {"position": "aboveBar", "color": MUTED, "shape": "circle"}
+        out.append({"time": t, **m, "text": "", "label": label})
     return out
 
 
@@ -178,7 +184,7 @@ _TEMPLATE = """
   const NAMES_W = __NAMES_W__;      // 價格軸右邊放指標數值和名稱的欄寬
   const charts = [], lookups = [];   // lookups：每條線 {名稱, 顏色, 日期→值}
   const names = [];                  // names[i]：第 i 張圖要標的線 {名稱, 顏色, 價格（函式）, 線, 小數位, 數值是否也放右欄}
-  let candleMap = null, prevClose = {}, volMap = null;
+  let candleMap = null, prevClose = {}, volMap = null, gvMap = {};   // gvMap：日期→葛蘭碧標記
   const fmt = (v, d = 2) => v == null ? "—" : v.toLocaleString("zh-TW", {minimumFractionDigits: d, maximumFractionDigits: d});
   CONF.forEach((c, i) => {
     const row = document.createElement("div"), el = document.createElement("div"), col = document.createElement("div");
@@ -195,7 +201,10 @@ _TEMPLATE = """
       const digits = (opt.priceFormat || {}).type === "volume" ? 0 : 2;
       const api = chart["add" + s.type + "Series"](Object.assign({}, opt, {title: ""}, isVol ? {} : {lastValueVisible: false}));
       api.setData(s.data);
-      if (s.markers && s.markers.length) api.setMarkers(s.markers);
+      if (s.markers && s.markers.length) {
+        api.setMarkers(s.markers.map(({label, ...mk}) => mk));
+        s.markers.forEach(mk => { gvMap[mk.time] = mk; });
+      }
       (s.priceLines || []).forEach(pl => {
         api.createPriceLine(Object.assign({}, pl, {title: "", axisLabelVisible: false}));
         if (pl.title) names[i].items.push({text: pl.title, color: pl.color, price: () => pl.price, api: api, digits: 2, value: true});
@@ -230,6 +239,8 @@ _TEMPLATE = """
       + "<span class='k'>低</span> " + fmt(c.low) + "<span class='k'>收</span> <b style='color:" + col + "'>" + fmt(c.close) + "</b>"
       + (chg == null ? "" : " <span style='color:" + col + "'>(" + (chg > 0 ? "+" : "") + chg.toFixed(2) + "%)</span>")
       + (v ? "<span class='k'>量</span> " + fmt(v.value, 0) + " 張" : "");
+    const gv = gvMap[time];
+    if (gv) html += "<span class='k'>葛蘭碧</span> <b style='color:" + gv.color + "'>" + gv.label + "</b>";
     let extra = "";
     lookups.forEach(l => {
       const p = l.map.get(time);
