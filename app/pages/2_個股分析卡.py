@@ -9,14 +9,15 @@ from utils.glossary import render_page_guide
 from utils.db import (
     get_stock_list,
     get_watchlist, add_to_watchlist, remove_from_watchlist, get_signal_history, get_rows_for_stocks, get_adjustment_events,
+    get_daily_prices, get_stock_ins,
 )
 from utils.analysis import granville_status
 from utils.card import PEER_TOP, card_metrics, peer_comparison, trend_text, load_card_data as _load_card_data
-from utils.indicators import LAMP
+from utils.indicators import LAMP, calc_all
 from utils.granville import STOP_RULE
 from utils.momentum import BACKTEST_MD, RULES_MD, momentum_summary
 from utils.groups import current_group
-from utils.kline import SUB_CHARTS, build_charts, render_html
+from utils.kline import PERIODS, SUB_CHARTS, align_to_bars, build_charts, render_html, resample_bars, resample_ins
 from utils.ui import require_login, render_metric_cards, go_picks_tab, style_sign, UP_COLOR, DOWN_COLOR, ACCENT, GLOW, MUTED, WARN_COLOR
 import streamlit.components.v1 as components
 require_login()
@@ -75,6 +76,13 @@ elif st.button(f"⭐ 加入自選股「{watch_group}」"):
 @st.cache_data(ttl=3600)
 def load_card_data(stock_id):
     return _load_card_data(stock_id)
+
+@st.cache_data(ttl=3600)
+def load_long_history(stock_id):
+    """週線、月線用：資料庫裡這檔全部的日股價（還原權值）和法人買賣超（最多 LONG_DAYS 筆）"""
+    return get_daily_prices(stock_id, limit=LONG_DAYS), get_stock_ins(stock_id, limit=LONG_DAYS)
+
+LONG_DAYS = 1000  # 約 4 年的交易日；Supabase 一次最多回傳 1000 筆
 
 @st.cache_data(ttl=3600)
 def load_events(stock_id, since):
@@ -612,7 +620,9 @@ if no_trade_days:
     st.caption(f"⏸️ 近 {len(prices_ta)} 個交易日中有 {len(no_trade_days)} 天沒有成交（停牌或無人交易），"
                "圖上以灰色標示，這些天視為股價不變。")
 st.caption("股價已還原權值：除權息、減資、變更面額之前的價格依參考價等比例調整，均線與各項指標不會因此出現假跳空；最新股價不受影響。")
-c1, c2 = st.columns(2)
+c0, c1, c2 = st.columns([2, 3, 3])
+with c0:
+    period = st.radio("K 線", list(PERIODS), horizontal=True, key="kline_period")
 with c1:
     range_days = st.radio(
         "顯示區間", [60, 120, 250], index=1, horizontal=True,
@@ -633,10 +643,23 @@ if "價位線" in overlays:
                        "賣出觸發": (g_now["賣出觸發價"], DOWN_COLOR)})
 chart_df = prices_ta.tail(range_days).copy()
 chart_df["date"] = chart_df["date"].astype(str)
-charts = build_charts(prices_ta, range_days, overlays=overlays, sub=sub_chart, ins=ins,
-                      levels=levels, markers="買賣點" in overlays, events=load_events(stock_id, prices["date"].min()))
+if PERIODS[period] is None:
+    charts = build_charts(prices_ta, range_days, overlays=overlays, sub=sub_chart, ins=ins,
+                          levels=levels, markers="買賣點" in overlays, events=load_events(stock_id, prices["date"].min()))
+else:
+    code = PERIODS[period]
+    long_prices, long_ins = load_long_history(stock_id)
+    bars = calc_all(resample_bars(long_prices, code))
+    charts = build_charts(bars, len(bars), overlays=overlays, sub=sub_chart, ins=resample_ins(long_ins, bars, code),
+                          levels=levels, markers=False,
+                          events=align_to_bars(load_events(stock_id, long_prices["date"].min()), bars, code))
 kline_html, kline_height = render_html(charts)
 components.html(kline_html, height=kline_height)
+if PERIODS[period] is not None:
+    unit = "週" if period == "週線" else "個月"
+    st.caption(f"{period}：每根 K 棒是一{unit}，用 {long_prices['date'].min()} 以來的日股價合併（共 {len(bars)} 根），"
+               f"成交量和外資買賣超是那段期間的加總；MA5／MA20／MA60 是 5、20、60 根 K 棒的平均（也就是 5、20、60 {unit}）。"
+               "週線、月線不標葛蘭碧買賣點（法則是用日線的 20 日均線回測的），「顯示區間」只影響日線。")
 st.caption(
     "可以用滑鼠拖拉、滾輪縮放；滑鼠移到哪一天，左上角就顯示那天的開高低收、漲跌、成交量和各條線的數值。K 棒紅漲綠跌、灰色是沒有成交的日子。"
     "「買賣點」：葛蘭碧法則裡回測穩定的幾條，K 棒下方紅色 ▲ 是買進法則（2、4），上方綠色 ▼ 是賣出法則（7），滑鼠移過去左上角會寫出是哪一條；"
