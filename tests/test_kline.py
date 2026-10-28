@@ -57,3 +57,17 @@ def test_render_html(prices):
     html, height = render_html(charts)
     assert "TradingView Lightweight Charts" in html and "__CONF__" not in html and "__LIB__" not in html
     assert height == sum(c["chart"]["height"] for c in charts) + 52
+
+
+def test_event_markers(prices):
+    """除權息、減資標在成交量上方，左上角說明除息金額；圖範圍外的事件不標"""
+    d = prices["date"]
+    events = pd.DataFrame({"date": [d.iloc[0], d.iloc[-10], d.iloc[-5]],
+                           "event_type": ["除權息", "除權息", "減資"],
+                           "prev_close": [100.0, 50.0, 20.0], "ref_price": [97.0, 48.5, 25.0]})
+    charts = build_charts(prices, 60, events=events)
+    marks = charts[1]["series"][0]["markers"]
+    assert [m["time"] for m in marks] == [d.iloc[-10], d.iloc[-5]]
+    assert marks[0]["kind"] == "除權息" and marks[0]["label"] == "−1.50 元（-3.0%）"
+    assert marks[1]["kind"] == "減資" and "參考價 25.00" in marks[1]["label"]
+    assert "markers" not in build_charts(prices, 60)[1]["series"][0]
