@@ -8,7 +8,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.glossary import render_page_guide
 from utils.db import (
     get_stock_list,
-    get_watchlist, add_to_watchlist, remove_from_watchlist, get_signal_history, get_rows_for_stocks,
+    get_watchlist, add_to_watchlist, remove_from_watchlist, get_signal_history, get_rows_for_stocks, get_adjustment_events,
 )
 from utils.analysis import granville_status
 from utils.card import card_metrics, trend_text, load_card_data as _load_card_data
@@ -75,6 +75,11 @@ elif st.button(f"⭐ 加入自選股「{watch_group}」"):
 @st.cache_data(ttl=3600)
 def load_card_data(stock_id):
     return _load_card_data(stock_id)
+
+@st.cache_data(ttl=3600)
+def load_events(stock_id, since):
+    """K 線圖上標記的除權息、減資、變更面額"""
+    return get_adjustment_events(stock_id, since)
 
 info, prices, quarterly, revenue, ins, margin, holder, utilization, index_df = load_card_data(stock_id)
 
@@ -592,7 +597,7 @@ if "價位線" in overlays:
 chart_df = prices_ta.tail(range_days).copy()
 chart_df["date"] = chart_df["date"].astype(str)
 charts = build_charts(prices_ta, range_days, overlays=overlays, sub=sub_chart, ins=ins,
-                      levels=levels, markers="買賣點" in overlays)
+                      levels=levels, markers="買賣點" in overlays, events=load_events(stock_id, prices["date"].min()))
 kline_html, kline_height = render_html(charts)
 components.html(kline_html, height=kline_height)
 st.caption(
@@ -600,6 +605,7 @@ st.caption(
     "「買賣點」：葛蘭碧法則裡回測穩定的幾條，K 棒下方紅色 ▲ 是買進法則（2、4），上方綠色 ▼ 是賣出法則（7），滑鼠移過去左上角會寫出是哪一條；"
     "灰點是過熱（法則 8，回測多半續漲，只提醒追高風險）；只看收盤和 20 日均線，沒有套用外資、MACD、量能確認條件。"
     "「價位線」：52 週高低點，以及停損價、明天收盤的買進／賣出觸發價（和上面「均線買賣點」相同）。"
+    "股價已還原權值，除權息那天不會跳空；成交量上方的橘色方塊是除權息、減資或變更面額的日子，滑鼠移過去左上角會寫出除息多少元。"
 )
 
 # ===== 相對大盤強弱 =====

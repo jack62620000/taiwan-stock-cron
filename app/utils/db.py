@@ -223,6 +223,13 @@ def get_price_adjustments(stock_id=None, after_date=None):
         return q.order("date", desc=False).order("stock_id", desc=False).order("event_type", desc=False)
     return pd.DataFrame(_fetch_all(make_query))
 
+def get_adjustment_events(stock_id, after_date=None):
+    """個股的除權息、減資、變更面額事件（含前一天收盤和參考價），給 K 線圖標記用"""
+    q = supabase.table("price_adjustments").select("date, event_type, prev_close, ref_price").eq("stock_id", stock_id)
+    if after_date is not None:
+        q = q.gte("date", str(after_date))
+    return pd.DataFrame(q.order("date", desc=False).execute().data)
+
 def apply_adjustments(prices, events):
     """
     把股價換成還原權值價格。prices 需有 stock_id、date 欄位，有哪些價格欄位就還原哪些；

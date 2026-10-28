@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from utils.granville import RULES, STABLE_RULES, rule_frames
-from utils.ui import ACCENT, BG_COLOR, BORDER, DOWN_COLOR, GLOW, MUTED, TEXT, UP_COLOR
+from utils.ui import ACCENT, BG_COLOR, BORDER, DOWN_COLOR, GLOW, MUTED, TEXT, UP_COLOR, WARN_COLOR
 
 NO_TRADE_COLOR = "#9ca3af"
 MA_COLORS = {"MA5": ACCENT, "MA20": GLOW, "MA60": "#a78bfa"}
@@ -84,11 +84,39 @@ def granville_markers(df, full_close, rules=tuple(STABLE_RULES)):
     return out
 
 
-def build_charts(prices_ta, days, overlays=("均線",), sub="外資買賣超", ins=None, levels=None, markers=True):
+def event_markers(df, events):
+    """
+    除權息、減資、變更面額那天在成交量上方標橘色方塊；label 是滑鼠移到那天時左上角的說明，
+    左上角寫「除權息 −3.50 元（−2.1%）」（前一天收盤減參考價），減資、變更面額寫參考價和前一天收盤。
+    圖上的股價已經還原權值，所以那天看不到跳空，靠這個標記知道發生過什麼事。
+    """
+    if events is None or events.empty:
+        return []
+    shown = set(df["date"])
+    out = []
+    for r in events.sort_values("date").itertuples():
+        d = str(r.date)[:10]
+        if d not in shown:
+            continue
+        prev, ref = pd.to_numeric(r.prev_close, errors="coerce"), pd.to_numeric(r.ref_price, errors="coerce")
+        if str(r.event_type).startswith("除") and pd.notna(prev) and pd.notna(ref) and prev > 0:
+            label = f"−{prev - ref:,.2f} 元（{(ref / prev - 1) * 100:+.1f}%）"
+        elif pd.notna(prev) and pd.notna(ref):
+            label = f"參考價 {ref:,.2f}（前一天收盤 {prev:,.2f}）"
+        else:
+            label = ""
+        out.append({"time": d, "position": "aboveBar", "color": WARN_COLOR, "shape": "square", "text": "",
+                    "label": label, "kind": r.event_type})
+    return out
+
+
+def build_charts(prices_ta, days, overlays=("均線",), sub="外資買賣超", ins=None, levels=None, markers=True,
+                 events=None):
     """
     prices_ta：個股分析卡算好指標的日線（date、open/high/low/close_price、volume、no_trade、MA5/20/60、BB_UP/LOW、K、D、MACD_HIST）；
     days：顯示最近幾個交易日；overlays：主圖要疊的「均線」「布林通道」；sub：副圖（SUB_CHARTS 其中之一或 None）；
-    ins：法人買賣超（date、foreign_net_shares、sitca_net_shares）；levels：主圖水平價位線 {名稱: (價格, 顏色)}。
+    ins：法人買賣超（date、foreign_net_shares、sitca_net_shares）；levels：主圖水平價位線 {名稱: (價格, 顏色)}；
+    events：還原權值事件（date、event_type、prev_close、ref_price），標在成交量上方。
     回傳每張圖的設定 [{"chart": 圖表選項, "series": [{"type", "data", "options", "markers"?, "priceLines"?}]}]。
     """
     full = prices_ta.copy()
@@ -133,10 +161,13 @@ def build_charts(prices_ta, days, overlays=("均線",), sub="外資買賣超", i
         main += [_line(df, "BB_LOW", BB_COLOR, "布林下軌", 1, 2)]
 
     vol = df.assign(lots=df["volume"] / 1000)
+    vol_series = _hist(vol, "lots", bar_color, "成交量（張）", {"type": "volume"})
+    ev = event_markers(df, events)
+    if ev:
+        vol_series["markers"] = ev
     charts = [
         {"chart": _chart(360), "series": main},
-        {"chart": _chart(110, time_visible=sub is None),
-         "series": [_hist(vol, "lots", bar_color, "成交量（張）", {"type": "volume"})]},
+        {"chart": _chart(110, time_visible=sub is None), "series": [vol_series]},
     ]
     sub_series = None
     if sub == "外資買賣超" and ins is not None and not ins.empty and "foreign_net_shares" in ins.columns:
@@ -189,7 +220,7 @@ _TEMPLATE = """
   CONF.forEach(c => { c.chart.height = Math.floor(c.chart.height * scale); });
   const charts = [], lookups = [];   // lookups：每條線 {名稱, 顏色, 日期→值}
   const names = [];                  // names[i]：第 i 張圖要標的線 {名稱, 顏色, 價格（函式）, 線, 小數位}
-  let candleMap = null, prevClose = {}, volMap = null, gvMap = {};   // gvMap：日期→葛蘭碧標記
+  let candleMap = null, prevClose = {}, volMap = null, gvMap = {};   // gvMap：日期→那天的標記（葛蘭碧、除權息等）
   const fmt = (v, d = 2) => v == null ? "—" : v.toLocaleString("zh-TW", {minimumFractionDigits: d, maximumFractionDigits: d});
   CONF.forEach((c, i) => {
     const row = document.createElement("div"), el = document.createElement("div"), col = document.createElement("div");
@@ -206,8 +237,8 @@ _TEMPLATE = """
       const api = chart["add" + s.type + "Series"](Object.assign({}, opt, {title: "", lastValueVisible: false}));
       api.setData(s.data);
       if (s.markers && s.markers.length) {
-        api.setMarkers(s.markers.map(({label, ...mk}) => mk));
-        s.markers.forEach(mk => { gvMap[mk.time] = mk; });
+        api.setMarkers(s.markers.map(({label, kind, ...mk}) => mk));
+        s.markers.forEach(mk => { (gvMap[mk.time] = gvMap[mk.time] || []).push(mk); });
       }
       (s.priceLines || []).forEach(pl => {
         api.createPriceLine(Object.assign({}, pl, {title: "", axisLabelVisible: false}));
@@ -243,8 +274,9 @@ _TEMPLATE = """
       + "<span class='k'>低</span> " + fmt(c.low) + "<span class='k'>收</span> <b style='color:" + col + "'>" + fmt(c.close) + "</b>"
       + (chg == null ? "" : " <span style='color:" + col + "'>(" + (chg > 0 ? "+" : "") + chg.toFixed(2) + "%)</span>")
       + (v ? "<span class='k'>量</span> " + fmt(v.value, 0) + " 張" : "");
-    const gv = gvMap[time];
-    if (gv) html += "<span class='k'>葛蘭碧</span> <b style='color:" + gv.color + "'>" + gv.label + "</b>";
+    (gvMap[time] || []).forEach(gv => {
+      html += "<span class='k'>" + (gv.kind || "葛蘭碧") + "</span> <b style='color:" + gv.color + "'>" + gv.label + "</b>";
+    });
     let extra = "";
     lookups.forEach(l => {
       const p = l.map.get(time);
