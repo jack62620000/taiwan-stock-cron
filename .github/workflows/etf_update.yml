@@ -1,0 +1,71 @@
+name: ETF 資料同步
+
+# 寫入 ETF 專用的 Supabase 專案（secrets：ETF_SUPABASE_URL、ETF_SUPABASE_KEY），和主資料庫的排程互不影響
+on:
+  schedule:
+    # 平日台灣時間晚上 6:40（UTC 10:40）- 價量、法人、淨值折溢價、配息、ETF 清單
+    - cron: '40 10 * * 1-5'
+    # 週六台灣時間早上 9:36（UTC 01:36）- 集保持股分級
+    - cron: '36 1 * * 6'
+    # 每月 10、15、25 日台灣時間早上 10:16（UTC 02:16）- 投信公會月資料（公布日不固定，重抓最近兩個月）
+    - cron: '16 2 10,15,25 * *'
+  workflow_dispatch:
+    inputs:
+      job:
+        description: '要執行的工作'
+        type: choice
+        options: [daily, weekly, monthly, backfill]
+        default: daily
+      target_date:
+        description: 'daily：補抓指定日期（YYYY-MM-DD，留空為今天）'
+        type: string
+        default: ''
+      backfill_start:
+        description: 'backfill：開始日期（YYYY-MM-DD，留空為一年前）'
+        type: string
+        default: ''
+      backfill_end:
+        description: 'backfill：結束日期（YYYY-MM-DD，留空為今天）'
+        type: string
+        default: ''
+      datasets:
+        description: 'backfill：要回補的資料（prices＝價量與法人、monthly＝投信公會月資料、holder＝集保、dividends＝配息，逗號分隔）'
+        type: string
+        default: 'prices,monthly,holder,dividends'
+      dry_run:
+        description: '試跑：只下載與解析，不寫入資料庫'
+        type: boolean
+        default: false
+
+# 同一時間只跑一個 ETF 工作，避免同時連證交所被擋
+concurrency:
+  group: etf-update
+  cancel-in-progress: false
+
+jobs:
+  etf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run ETF update
+        env:
+          ETF_SUPABASE_URL: ${{ secrets.ETF_SUPABASE_URL }}
+          ETF_SUPABASE_KEY: ${{ secrets.ETF_SUPABASE_KEY }}
+          ETF_JOB: >-
+            ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.job ||
+                github.event.schedule == '36 1 * * 6' && 'weekly' ||
+                github.event.schedule == '16 2 10,15,25 * *' && 'monthly' || 'daily' }}
+          TARGET_DATE: ${{ github.event.inputs.target_date }}
+          BACKFILL_START: ${{ github.event.inputs.backfill_start }}
+          BACKFILL_END: ${{ github.event.inputs.backfill_end }}
+          DATASETS: ${{ github.event.inputs.datasets }}
+          ETF_DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '' }}
+        run: python -u etf_update.py
