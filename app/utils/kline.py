@@ -168,7 +168,7 @@ _TEMPLATE = """
   #legend b { font-weight: 600; }
   #legend .k { color: __MUTED__; margin-left: 10px; }
   .row { display: flex; }
-  .names { position: relative; width: __NAMES_W__px; flex: none; overflow: hidden; }
+  .names { position: relative; flex: none; overflow: hidden; }
   .names div { position: absolute; left: 4px; font-size: 12px; line-height: 16px; white-space: nowrap; }
   .names .v { display: inline-block; min-width: 48px; padding: 0 4px; margin-right: 6px; border-radius: 2px; text-align: right; }
 </style>
@@ -180,14 +180,20 @@ _TEMPLATE = """
   const CONF = __CONF__;
   const UP = "__UP__", DOWN = "__DOWN__";
   const box = document.getElementById("charts");
-  const NAMES_W = __NAMES_W__;      // 價格軸右邊放指標數值和名稱的欄寬
+  // 手機等窄畫面：右邊欄位只放數值不放名稱（名稱看左上角），左上角固定留 5 行，圖高度依比例縮小，避免最下面的圖被切掉
+  const NARROW = (box.clientWidth || 700) < 560;
+  const NAMES_W = NARROW ? 64 : __NAMES_W__;      // 價格軸右邊放指標數值和名稱的欄寬
+  if (NARROW) document.getElementById("legend").style.minHeight = "100px";
+  const total = CONF.reduce((a, c) => a + c.chart.height, 0);
+  const scale = NARROW ? Math.min(1, (window.innerHeight - 112) / total) : 1;
+  CONF.forEach(c => { c.chart.height = Math.floor(c.chart.height * scale); });
   const charts = [], lookups = [];   // lookups：每條線 {名稱, 顏色, 日期→值}
   const names = [];                  // names[i]：第 i 張圖要標的線 {名稱, 顏色, 價格（函式）, 線, 小數位}
   let candleMap = null, prevClose = {}, volMap = null, gvMap = {};   // gvMap：日期→葛蘭碧標記
   const fmt = (v, d = 2) => v == null ? "—" : v.toLocaleString("zh-TW", {minimumFractionDigits: d, maximumFractionDigits: d});
   CONF.forEach((c, i) => {
     const row = document.createElement("div"), el = document.createElement("div"), col = document.createElement("div");
-    row.className = "row"; col.className = "names"; col.style.height = c.chart.height + "px";
+    row.className = "row"; col.className = "names"; col.style.height = c.chart.height + "px"; col.style.width = NAMES_W + "px";
     row.append(el, col);
     box.appendChild(row);
     const chart = LightweightCharts.createChart(el, Object.assign({}, c.chart, {width: (box.clientWidth || 700) - NAMES_W}));
@@ -283,9 +289,11 @@ _TEMPLATE = """
       v.textContent = fmt(it.price(), it.digits);
       it.el.appendChild(v);
     }
-    const t = document.createElement("span");
-    t.textContent = it.text; t.style.color = col;
-    it.el.appendChild(t);
+    if (!NARROW) {
+      const t = document.createElement("span");
+      t.textContent = it.text; t.style.color = col;
+      it.el.appendChild(t);
+    }
     n.col.appendChild(it.el);
   }));
   function placeNames() {

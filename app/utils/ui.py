@@ -64,6 +64,11 @@ h2, h3 { color: #e2e8f0 !important; font-size: 1.05rem !important; letter-spacin
 .stTabs [aria-selected="true"] { color: #fbbf24 !important; }
 .stTabs [data-baseweb="tab-highlight"] { background-color: #fbbf24 !important; }
 hr { border-color: #1e3a6e !important; }
+/* 手機：標題縮小、頂端空白變少 */
+@media (max-width: 640px) {
+    h1 { font-size: 1.75rem !important; }
+    [data-testid="stMainBlockContainer"] { padding-top: 3.5rem !important; }
+}
 </style>
 """
 
@@ -127,6 +132,7 @@ _METRIC_CSS = """
 .metric-card .value { font-size: 24px; font-weight: 700; color: #e2e8f0; margin: 2px 0;
                       font-family: 'IBM Plex Mono', 'Noto Sans TC', monospace; }
 .metric-card .delta { font-size: 13px; font-weight: 600; color: #94a3b8; }
+@media (max-width: 640px) { .metric-card .value { font-size: 19px; } }
 </style>
 """
 

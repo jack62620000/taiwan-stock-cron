@@ -282,6 +282,7 @@ body{{background:transparent;font-family:"IBM Plex Mono","Noto Sans TC",monospac
 .rv12{{background:var(--inn);border:1px solid var(--bdr);border-radius:6px;padding:6px 8px;}}
 @media(max-width:700px){{.rv12g{{grid-template-columns:repeat(3,1fr);}}}}
 @media(max-width:700px){{.tg4{{grid-template-columns:repeat(2,1fr);}}}}
+@media(max-width:700px){{.kg{{grid-template-columns:repeat(2,1fr) !important;}}}}
 .tb{{background:var(--inn);border:1px solid var(--bdr);border-radius:6px;padding:14px 12px;text-align:center;}}
 .tlb{{font-size:13.5px;font-weight:700;color:var(--tp);letter-spacing:1px;margin-bottom:9px;}}
 .tbdg{{display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:16px;font-weight:700;padding:5px 14px;border-radius:20px;white-space:nowrap;}}
