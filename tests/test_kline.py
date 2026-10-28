@@ -71,3 +71,24 @@ def test_event_markers(prices):
     assert marks[0]["kind"] == "除權息" and marks[0]["label"] == "−1.50 元（-3.0%）"
     assert marks[1]["kind"] == "減資" and "參考價 25.00" in marks[1]["label"]
     assert "markers" not in build_charts(prices, 60)[1]["series"][0]
+
+
+def test_resample_weekly_monthly():
+    from utils.kline import align_to_bars, resample_bars, resample_ins
+    days = ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-09", "2026-10-12", "2026-10-13", "2026-11-02"]
+    prices = pd.DataFrame({"date": days,
+                           "open_price": [10, 11, None, 12, 20, 21, 30],
+                           "high_price": [11, 13, None, 12.5, 22, 23, 31],
+                           "low_price": [9, 10.5, None, 11.5, 19, 20, 29],
+                           "close_price": [10.5, 12, None, 12.2, 21, 22, 30.5],
+                           "volume": [1000, 2000, None, 3000, 4000, 5000, 6000]})
+    w = resample_bars(prices, "W-FRI")
+    assert list(w["date"]) == ["2026-10-09", "2026-10-13", "2026-11-02"]   # 日期是那週最後一個交易日（含沒成交的日子）
+    assert w.iloc[0][["open_price", "high_price", "low_price", "close_price", "volume"]].tolist() == [10, 13, 9, 12.2, 6000]
+    m = resample_bars(prices, "M")
+    assert list(m["date"]) == ["2026-10-13", "2026-11-02"] and m.iloc[0]["open_price"] == 10 and m.iloc[0]["close_price"] == 22
+    ins = pd.DataFrame({"date": days, "foreign_net_shares": [1000, 2000, 0, -500, 4000, 0, 7000]})
+    wi = resample_ins(ins, w, "W-FRI")
+    assert wi.set_index("date")["foreign_net_shares"].to_dict() == {"2026-10-09": 2500, "2026-10-13": 4000, "2026-11-02": 7000}
+    ev = pd.DataFrame({"date": ["2026-10-07", "2025-01-02"], "event_type": ["除息", "除息"]})
+    assert list(align_to_bars(ev, w, "W-FRI")["date"]) == ["2026-10-09"]   # 圖上範圍以外的事件拿掉

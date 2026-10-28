@@ -87,6 +87,16 @@ def test_stock_card_shows_all_sections(use_db):
     assert "近 3 月年增率" in html and "券資比" in html  # 營收、資金面的延伸數據
 
 
+@pytest.mark.parametrize("period", ["週線", "月線"])
+def test_stock_card_weekly_monthly(use_db, period):
+    """K 線切換週線、月線：圖照畫、說明寫出共幾根 K 棒"""
+    use_db()
+    at = run_page(APP / "pages" / "2_個股分析卡.py", card_stock_id="2330")
+    next(r for r in at.radio if r.key == "kline_period").set_value(period).run()
+    assert errors(at) == []
+    assert any(c.value.startswith(f"{period}：每根 K 棒") for c in at.caption)
+
+
 def test_stock_card_recent(use_db):
     """最近查看：列出這次看過的其他股票，點一下就換成那檔"""
     use_db()

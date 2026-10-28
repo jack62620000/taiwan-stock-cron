@@ -19,6 +19,8 @@ NO_TRADE_COLOR = "#9ca3af"
 MA_COLORS = {"MA5": ACCENT, "MA20": GLOW, "MA60": "#a78bfa"}
 BB_COLOR = "#64748b"
 SUB_CHARTS = ["外資買賣超", "MACD", "KD"]
+# K 線週期：日線直接用日股價；週線、月線由日股價合併（pandas 的週期代碼，週線以週五為一週結束）
+PERIODS = {"日線": None, "週線": "W-FRI", "月線": "M"}
 
 
 def _chart(height, time_visible=False):
@@ -108,6 +110,53 @@ def event_markers(df, events):
         out.append({"time": d, "position": "aboveBar", "color": WARN_COLOR, "shape": "square", "text": "",
                     "label": label, "kind": r.event_type})
     return out
+
+
+def _period_key(dates, period):
+    return pd.to_datetime(pd.Series(dates).astype(str).str[:10]).dt.to_period(period).values
+
+
+def resample_bars(prices, period):
+    """
+    日股價合併成週線或月線：開盤取期間第一個有成交的開盤、最高最低取極值、收盤取最後一個成交日、成交量加總；
+    每根 K 棒的日期是那段期間最後一個交易日（圖上的時間）。整段都沒有成交時收盤留空，calc_all 會當成股價不變。
+    """
+    if prices.empty:
+        return prices
+    d = prices.copy()
+    d["date"] = d["date"].astype(str).str[:10]
+    for c in ["open_price", "high_price", "low_price", "close_price", "volume"]:
+        d[c] = pd.to_numeric(d[c], errors="coerce")
+    d["key"] = _period_key(d["date"], period)
+    traded = d[d["close_price"].notna()]
+    g = traded.groupby("key")
+    out = pd.DataFrame({"date": d.groupby("key")["date"].last()})
+    out["open_price"] = g["open_price"].first().fillna(g["close_price"].first())
+    out["high_price"] = g["high_price"].max()
+    out["low_price"] = g["low_price"].min()
+    out["close_price"] = g["close_price"].last()
+    out["volume"] = d.groupby("key")["volume"].sum(min_count=1)
+    return out.sort_index().reset_index(drop=True)
+
+
+def align_to_bars(df, bars, period):
+    """把每天的資料（法人買賣超、除權息事件）的日期換成所屬那根週／月 K 棒的日期"""
+    if df is None or df.empty or bars.empty:
+        return df
+    bar_date = dict(zip(_period_key(bars["date"], period), bars["date"].astype(str)))
+    out = df.copy()
+    out["date"] = [bar_date.get(k) for k in _period_key(out["date"], period)]
+    return out[out["date"].notna()]
+
+
+def resample_ins(ins, bars, period):
+    """法人買賣超（股）依週／月加總，日期對到 K 棒"""
+    a = align_to_bars(ins, bars, period)
+    if a is None or a.empty:
+        return a
+    cols = [c for c in ("foreign_net_shares", "sitca_net_shares", "dealers_net_shares") if c in a.columns]
+    a[cols] = a[cols].apply(pd.to_numeric, errors="coerce")
+    return a.groupby("date", as_index=False)[cols].sum(min_count=1)
 
 
 def build_charts(prices_ta, days, overlays=("均線",), sub="外資買賣超", ins=None, levels=None, markers=True,
