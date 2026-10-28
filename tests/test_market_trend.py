@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from utils.market_trend import analyze, foreign_amount, trend_text
+from utils.market_trend import analyze, foreign_amount, last_change, trend_text, verdict_history
 
 
 def _index(closes):
@@ -50,3 +50,17 @@ def test_trend_text():
     text = trend_text(r)
     assert text.startswith("🧭 大盤趨勢（") and "🔴 選股濾網：" in text and "\n" in text
     assert trend_text(None) == "大盤資料不足，暫時無法分析趨勢。"
+
+
+def test_verdict_history():
+    # 一路漲 250 天後回檔：色帶最後一天和今天的結論一樣，而且看得到從多頭轉成回檔
+    closes = list(np.linspace(20000, 40000, 300)) + list(np.linspace(40000, 37600, 10))
+    r = analyze(_index(closes))
+    hist = r["history"]
+    assert len(hist) == 60 and hist[-1][0] == r["date"] and hist[-1][1] == r["verdict"]
+    assert hist[0][1] == "多頭"
+    day, before, after = last_change(hist)
+    assert before == "多頭" and after != "多頭"
+    assert "最近一次轉變" in trend_text(r)
+    assert last_change([("d1", "盤整", 0), ("d2", "盤整", 0)]) is None
+    assert verdict_history(_index([100.0] * 30)) == []

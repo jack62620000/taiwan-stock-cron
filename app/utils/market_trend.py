@@ -11,7 +11,8 @@ import streamlit as st
 from utils.ui import BORDER, DOWN_COLOR, MUTED, PANEL, TEXT, UP_COLOR
 
 MA_NAMES = {5: "5 日線", 20: "月線", 60: "季線", 120: "半年線", 240: "年線"}
-INDEX_DAYS = 260   # 年線要 240 天，多抓一點算均線方向
+HISTORY_DAYS = 60  # 趨勢色帶看近幾個交易日
+INDEX_DAYS = 320   # 年線要 240 天，加上算均線方向和色帶最前面那天要的天數
 
 
 def foreign_amount(ins, closes):
@@ -46,6 +47,45 @@ def _streak(values):
         else:
             break
     return sign, n
+
+
+def _verdict(close):
+    """依收盤價（由舊到新）判斷最後一天的趨勢：回傳 (結論, tone)。長線看年線，中短線看月線、季線"""
+    c = close.iloc[-1]
+    ma = {n: close.rolling(n).mean() for n in (20, 60, 240)}
+    last = {n: s.iloc[-1] for n, s in ma.items() if pd.notna(s.iloc[-1])}
+    slope = {n: _slope(ma[n]) for n in last}
+    long_up = 240 in last and c > last[240] and slope.get(240) == "上揚"
+    up_short = 20 in last and 60 in last and c > last[20] > last[60]
+    down_short = 20 in last and 60 in last and c < last[20] < last[60]
+    if up_short and slope.get(60) == "上揚":
+        return "多頭", 1
+    if down_short and slope.get(60) == "下彎":
+        return "空頭", -1
+    if long_up and 20 in last and c < last[20]:
+        return "長多格局中的回檔", 0
+    if 60 in last and c > last.get(20, c) and slope.get(60) == "下彎":
+        return "空頭中的反彈", 0
+    return "盤整", 0
+
+
+def verdict_history(index_df, days=HISTORY_DAYS):
+    """近 days 個交易日每天的趨勢結論：[(日期, 結論, tone)]，由舊到新；每天只用到當天為止的資料"""
+    if index_df is None or len(index_df) < 61:
+        return []
+    df = index_df.sort_values("date")
+    close = pd.to_numeric(df["close"], errors="coerce").reset_index(drop=True)
+    dates = df["date"].astype(str).str[:10].tolist()
+    start = max(60, len(close) - days)
+    return [(dates[i], *_verdict(close.iloc[:i + 1])) for i in range(start, len(close))]
+
+
+def last_change(history):
+    """最近一次結論改變：(日期, 之前的結論, 之後的結論)；色帶期間都沒變回傳 None"""
+    for k in range(len(history) - 1, 0, -1):
+        if history[k][1] != history[k - 1][1]:
+            return history[k][0], history[k - 1][1], history[k][1]
+    return None
 
 
 def analyze(index_df, foreign=None, futures=None):
@@ -132,26 +172,44 @@ def analyze(index_df, foreign=None, futures=None):
     items.append(("選股濾網", "在月線和季線之上，「明日買進」綠燈，照規則可以買。" if ok
                   else "沒有同時站上月線和季線，「明日買進」紅燈，照規則不新買。", 1 if ok else -1))
 
-    # 結論：長線看年線與半年線，中短線看月線、季線
+    # 結論：長線看年線，中短線看月線、季線
+    verdict, tone = _verdict(close)
     long_up = 240 in last and c > last[240] and slope.get(240) == "上揚"
-    up_short = 20 in last and 60 in last and c > last[20] > last[60]
-    down_short = 20 in last and 60 in last and c < last[20] < last[60]
-    if up_short and slope.get(60) == "上揚":
-        verdict, tone = "多頭", 1
-    elif down_short and slope.get(60) == "下彎":
-        verdict, tone = "空頭", -1
-    elif long_up and 20 in last and c < last[20]:
-        verdict, tone = "長多格局中的回檔", 0
-    elif 60 in last and c > last.get(20, c) and slope.get(60) == "下彎":
-        verdict, tone = "空頭中的反彈", 0
-    else:
-        verdict, tone = "盤整", 0
     long_txt = "長線（年線）仍往上" if long_up else "長線（年線）轉弱" if 240 in last else "長線資料不足"
     short_txt = ("中短線站在月線和季線之上" if ok else
                  "中短線跌破月線" + ("、仍守季線" if 60 in last and c > last[60] else "和季線") if 20 in last and c < last[20]
                  else "中短線在月線之上、季線之下")
     summary = f"{verdict}：{long_txt}，{short_txt}。"
-    return {"date": str(df["date"].iloc[-1])[:10], "verdict": verdict, "tone": tone, "summary": summary, "items": items}
+    return {"date": str(df["date"].iloc[-1])[:10], "verdict": verdict, "tone": tone, "summary": summary, "items": items,
+            "history": verdict_history(df)}
+
+
+# 色帶的顏色：多頭紅、空頭綠，回檔淺紅、反彈淺綠，盤整灰
+VERDICT_COLORS = {"多頭": UP_COLOR, "長多格局中的回檔": "#fca5a5", "盤整": "#64748b",
+                  "空頭中的反彈": "#86efac", "空頭": DOWN_COLOR}
+
+
+def _history_html(history):
+    """近 60 天趨勢色帶：每天一格，滑鼠移上去看日期和結論；下面寫最近一次轉變和各結論的天數"""
+    if not history:
+        return ""
+    cells = "".join(
+        f'<div title="{d}　{v}" style="flex:1;height:18px;background:{VERDICT_COLORS[v]};"></div>' for d, v, _ in history)
+    counts = {}
+    for _, v, _ in history:
+        counts[v] = counts.get(v, 0) + 1
+    legend = "".join(
+        f'<span style="white-space:nowrap;margin-right:10px;"><span style="display:inline-block;width:10px;height:10px;'
+        f'background:{VERDICT_COLORS[v]};border-radius:2px;margin-right:4px;"></span>{v} {counts[v]} 天</span>'
+        for v in VERDICT_COLORS if v in counts)
+    chg = last_change(history)
+    chg_txt = (f"最近一次轉變：{chg[0]} 由「{chg[1]}」轉為「{chg[2]}」。" if chg
+               else f"近 {len(history)} 個交易日都是「{history[-1][1]}」。")
+    return (f'<div style="margin-top:10px;font-size:0.85rem;color:{TEXT};">近 {len(history)} 個交易日趨勢'
+            f'<span style="color:{MUTED};">（{history[0][0]} ～ {history[-1][0]}）</span></div>'
+            f'<div style="display:flex;gap:1px;margin:4px 0;border-radius:3px;overflow:hidden;">{cells}</div>'
+            f'<div style="font-size:0.8rem;color:{TEXT};">{chg_txt}</div>'
+            f'<div style="font-size:0.78rem;color:{MUTED};margin-top:2px;line-height:1.6;">{legend}</div>')
 
 
 def render(result):
@@ -169,6 +227,7 @@ def render(result):
         f'<div style="font-size:1.05rem;font-weight:700;color:{color(result["tone"])};margin-bottom:6px;">'
         f'🧭 大盤趨勢：{result["summary"]}</div>'
         f'<table style="border-collapse:collapse;font-size:0.92rem;">{rows}</table>'
+        f'{_history_html(result.get("history"))}'
         f'<div style="color:{MUTED};font-size:0.8rem;margin-top:6px;">'
         f'資料日期 {result["date"]}。依加權指數均線、成交值、外資現股與台指期淨未平倉推算的趨勢判斷，不是漲跌預測；'
         f'紅色偏多、綠色偏空、灰色中性。</div></div>',
@@ -197,6 +256,9 @@ def trend_text(result):
     mark = {1: "🔴", -1: "🟢", 0: "⚪"}
     lines = [f"🧭 大盤趨勢（{result['date']} 收盤）", "", result["summary"], ""]
     lines += [f"{mark[t]} {k}：{v}" for k, v, t in result["items"]]
+    chg = last_change(result.get("history") or [])
+    if chg:
+        lines += ["", f"📅 最近一次轉變：{chg[0]} 由「{chg[1]}」轉為「{chg[2]}」。"]
     lines += ["", "🔴 偏多、🟢 偏空、⚪ 中性。依加權指數均線、成交值、外資現股與台指期淨未平倉推算的趨勢判斷，不是漲跌預測。",
               "同網頁首頁和全台股總覽的「🧭 大盤趨勢」。"]
     return "\n".join(lines)
