@@ -164,6 +164,8 @@ _TEMPLATE = """
   .row { display: flex; }
   .names { position: relative; width: __NAMES_W__px; flex: none; overflow: hidden; }
   .names div { position: absolute; left: 4px; font-size: 12px; line-height: 16px; white-space: nowrap; }
+  .names .v { display: inline-block; min-width: 48px; padding: 0 4px; margin-right: 6px; border-radius: 2px; text-align: right; }
+  .names .n { margin-left: 62px; }   /* 沒有數值框的（成交量）名稱和其他名稱對齊 */
 </style>
 <div id="legend"></div>
 <div id="charts"></div>
@@ -173,9 +175,9 @@ _TEMPLATE = """
   const CONF = __CONF__;
   const UP = "__UP__", DOWN = "__DOWN__";
   const box = document.getElementById("charts");
-  const NAMES_W = __NAMES_W__;      // 價格軸右邊放線名稱的欄寬
+  const NAMES_W = __NAMES_W__;      // 價格軸右邊放指標數值和名稱的欄寬
   const charts = [], lookups = [];   // lookups：每條線 {名稱, 顏色, 日期→值}
-  const names = [];                  // names[i]：第 i 張圖要標名稱的線 {文字, 顏色, 價格（函式）, 線}
+  const names = [];                  // names[i]：第 i 張圖要標的線 {名稱, 顏色, 價格（函式）, 線, 小數位, 數值是否也放右欄}
   let candleMap = null, prevClose = {}, volMap = null;
   const fmt = (v, d = 2) => v == null ? "—" : v.toLocaleString("zh-TW", {minimumFractionDigits: d, maximumFractionDigits: d});
   CONF.forEach((c, i) => {
@@ -188,17 +190,20 @@ _TEMPLATE = """
     names.push({col: col, items: []});
     c.series.forEach(s => {
       const opt = s.options || {};
-      // 名稱不畫在價格標籤左邊，改由右邊的欄位顯示
-      const api = chart["add" + s.type + "Series"](Object.assign({}, opt, {title: ""}));
+      // 價格軸只留股價和成交量；指標（均線、價位線、副圖）的數值和名稱都放到價格軸右邊的欄位
+      const isVol = i === 1 && s.type === "Histogram";
+      const digits = (opt.priceFormat || {}).type === "volume" ? 0 : 2;
+      const api = chart["add" + s.type + "Series"](Object.assign({}, opt, {title: ""}, isVol ? {} : {lastValueVisible: false}));
       api.setData(s.data);
       if (s.markers && s.markers.length) api.setMarkers(s.markers);
       (s.priceLines || []).forEach(pl => {
-        api.createPriceLine(Object.assign({}, pl, {title: ""}));
-        if (pl.title) names[i].items.push({text: pl.title, color: pl.color, price: () => pl.price, api: api});
+        api.createPriceLine(Object.assign({}, pl, {title: "", axisLabelVisible: false}));
+        if (pl.title) names[i].items.push({text: pl.title, color: pl.color, price: () => pl.price, api: api, digits: 2, value: true});
       });
       const last = s.data[s.data.length - 1];
       if (opt.title && last && opt.lastValueVisible !== false)
-        names[i].items.push({text: opt.title, color: opt.color || last.color, price: () => last.value, api: api});
+        names[i].items.push({text: opt.title, color: opt.color || last.color, price: () => last.value, api: api,
+                             digits: digits, value: !isVol});
       const m = new Map(s.data.map(d => [d.time, d]));
       if (s.type === "Candlestick") {
         candleMap = m;
@@ -253,11 +258,26 @@ _TEMPLATE = """
   }));
   legend(lastTime);
 
-  // 價格軸右邊的線名稱：對準價格標籤的高度，太擠時往下錯開；縮放或拖拉後每一格畫面重新對齊
+  // 價格軸右邊的欄位：指標數值（線的顏色底）＋名稱，對準那條線的高度；縮放或拖拉後每一格畫面重新對齊
+  const ink = c => {   // 底色亮就用深色字
+    const m = /^#(..)(..)(..)/.exec(c || "");
+    if (!m) return "#ffffff";
+    const [r, g, b] = m.slice(1).map(x => parseInt(x, 16));
+    return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? "__BG__" : "#ffffff";
+  };
   names.forEach(n => n.items.forEach(it => {
     it.el = document.createElement("div");
-    it.el.textContent = it.text;
-    it.el.style.color = it.color || "__TEXT__";
+    const col = it.color || "__TEXT__";
+    if (it.value) {
+      const v = document.createElement("span");
+      v.className = "v"; v.style.background = col; v.style.color = ink(col);
+      v.textContent = fmt(it.price(), it.digits);
+      it.el.appendChild(v);
+    }
+    const t = document.createElement("span");
+    t.textContent = it.text; t.style.color = col;
+    if (!it.value) t.className = "n";
+    it.el.appendChild(t);
     n.col.appendChild(it.el);
   }));
   function placeNames() {
@@ -297,5 +317,5 @@ def render_html(charts):
     html = (_TEMPLATE.replace("__LIB__", LIB.read_text(encoding="utf-8"))
             .replace("__CONF__", json.dumps(charts, ensure_ascii=False))
             .replace("__BG__", BG_COLOR).replace("__TEXT__", TEXT).replace("__MUTED__", MUTED)
-            .replace("__UP__", UP_COLOR).replace("__DOWN__", DOWN_COLOR).replace("__NAMES_W__", "96"))
+            .replace("__UP__", UP_COLOR).replace("__DOWN__", DOWN_COLOR).replace("__NAMES_W__", "170"))
     return html, sum(c["chart"]["height"] for c in charts) + 52
