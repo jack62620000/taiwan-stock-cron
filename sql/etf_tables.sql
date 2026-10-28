@@ -16,6 +16,10 @@ create table if not exists public.etf_info (
     updated_at   date         not null
 );
 comment on table  public.etf_info is 'ETF 清單：上市來自證交所 t187ap47_L，上櫃來自櫃買每日行情；基金統編由投信公會月資料補上';
+comment on column public.etf_info.etf_id is 'ETF 代號，例如 0050、00679B';
+comment on column public.etf_info.etf_name is 'ETF 簡稱';
+comment on column public.etf_info.index_name is '追蹤指數名稱';
+comment on column public.etf_info.listing_date is '上市（櫃）日期';
 comment on column public.etf_info.market       is '上市／上櫃';
 comment on column public.etf_info.category     is '國內股票、國外股票、債券、主動式、槓桿反向、期貨商品';
 comment on column public.etf_info.fund_type    is '證交所原始基金類型（只有上市 ETF 有）';
@@ -37,6 +41,12 @@ create table if not exists public.etf_daily_prices (
     primary key (etf_id, date)
 );
 comment on table  public.etf_daily_prices is 'ETF 每日行情：上市 MI_INDEX（type=0099P），上櫃 afterTrading/otc';
+comment on column public.etf_daily_prices.etf_id is 'ETF 代號';
+comment on column public.etf_daily_prices.date is '交易日';
+comment on column public.etf_daily_prices.open_price is '開盤價';
+comment on column public.etf_daily_prices.high_price is '最高價';
+comment on column public.etf_daily_prices.low_price is '最低價';
+comment on column public.etf_daily_prices.close_price is '收盤價';
 comment on column public.etf_daily_prices.change       is '漲跌（元）';
 comment on column public.etf_daily_prices.volume       is '成交股數（單位數）';
 comment on column public.etf_daily_prices.trade_value  is '成交金額（元）';
@@ -55,6 +65,8 @@ create table if not exists public.etf_nav (
     primary key (etf_id, date)
 );
 comment on table  public.etf_nav is 'ETF 每日淨值：證交所 MIS all_etf.txt 收盤後快照；沒有歷史，從開始抓的那天累積';
+comment on column public.etf_nav.etf_id is 'ETF 代號';
+comment on column public.etf_nav.date is '交易日';
 comment on column public.etf_nav.market_price is '市價（收盤）';
 comment on column public.etf_nav.est_nav      is '投信盤後揭露的預估淨值';
 comment on column public.etf_nav.premium_pct  is '折溢價 %（市價相對預估淨值，正數為溢價）';
@@ -72,6 +84,7 @@ create table if not exists public.etf_dividends (
     primary key (etf_id, ex_date)
 );
 comment on table  public.etf_dividends is 'ETF 收益分配：證交所 etfDiv、TWT48U_ALL，櫃買 tpex_exright_prepost';
+comment on column public.etf_dividends.etf_id is 'ETF 代號';
 comment on column public.etf_dividends.ex_date       is '除息交易日';
 comment on column public.etf_dividends.record_date   is '收益分配基準日';
 comment on column public.etf_dividends.pay_date      is '收益分配發放日';
@@ -87,6 +100,8 @@ create table if not exists public.etf_ins_daily (
     primary key (etf_id, date)
 );
 comment on table  public.etf_ins_daily is 'ETF 三大法人買賣超（股數）：上市 T86（selectType=0099P），上櫃 insti/dailyTrade；定義與 stock_ins_daily 相同';
+comment on column public.etf_ins_daily.etf_id is 'ETF 代號';
+comment on column public.etf_ins_daily.date is '交易日';
 comment on column public.etf_ins_daily.foreign_net_shares is '外資（含外資自營商）';
 comment on column public.etf_ins_daily.sitca_net_shares   is '投信';
 comment on column public.etf_ins_daily.dealers_net_shares is '自營商（自行買賣＋避險）';
@@ -109,10 +124,14 @@ create table if not exists public.etf_monthly_stats (
     primary key (etf_id, year_month)
 );
 comment on table  public.etf_monthly_stats is 'ETF 每月統計：投信投顧公會 etf_statement2（金額一律台幣）；期貨信託類 ETF 不在公會資料內';
+comment on column public.etf_monthly_stats.etf_id is 'ETF 代號';
 comment on column public.etf_monthly_stats.year_month          is '資料月份，例如 2026-09';
 comment on column public.etf_monthly_stats.aum                 is '基金規模（元）';
 comment on column public.etf_monthly_stats.nav                 is '月底單位淨值';
 comment on column public.etf_monthly_stats.units               is '受益權單位數';
+comment on column public.etf_monthly_stats.holders_natural is '受益人數：自然人';
+comment on column public.etf_monthly_stats.holders_legal is '受益人數：法人';
+comment on column public.etf_monthly_stats.holders_total is '受益人數：合計';
 comment on column public.etf_monthly_stats.subscription_amount is '本月申購總金額（元）';
 comment on column public.etf_monthly_stats.redemption_amount   is '本月買回總金額（元）';
 comment on column public.etf_monthly_stats.dca_count           is '本月定期定額扣款筆數';
@@ -129,6 +148,8 @@ create table if not exists public.etf_holder_distribution (
     primary key (etf_id, week_date)
 );
 comment on table  public.etf_holder_distribution is 'ETF 集保持股分級摘要：集保開放資料 1-5（最新一週），歷史由集保查詢網頁回補約一年';
+comment on column public.etf_holder_distribution.etf_id is 'ETF 代號';
+comment on column public.etf_holder_distribution.week_date is '集保資料日期（每週）';
 comment on column public.etf_holder_distribution.total_holders      is '受益人數（持股分級 1～15 人數合計）';
 comment on column public.etf_holder_distribution.big_holder_ratio   is '400 張以上大戶持有比例 %（分級 12～15）';
 comment on column public.etf_holder_distribution.small_holder_ratio is '20 張以下散戶持有比例 %（分級 1～5）';
