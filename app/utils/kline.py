@@ -171,7 +171,6 @@ _TEMPLATE = """
   .names { position: relative; width: __NAMES_W__px; flex: none; overflow: hidden; }
   .names div { position: absolute; left: 4px; font-size: 12px; line-height: 16px; white-space: nowrap; }
   .names .v { display: inline-block; min-width: 48px; padding: 0 4px; margin-right: 6px; border-radius: 2px; text-align: right; }
-  .names .n { margin-left: 62px; }   /* 沒有數值框的（成交量）名稱和其他名稱對齊 */
 </style>
 <div id="legend"></div>
 <div id="charts"></div>
@@ -183,7 +182,7 @@ _TEMPLATE = """
   const box = document.getElementById("charts");
   const NAMES_W = __NAMES_W__;      // 價格軸右邊放指標數值和名稱的欄寬
   const charts = [], lookups = [];   // lookups：每條線 {名稱, 顏色, 日期→值}
-  const names = [];                  // names[i]：第 i 張圖要標的線 {名稱, 顏色, 價格（函式）, 線, 小數位, 數值是否也放右欄}
+  const names = [];                  // names[i]：第 i 張圖要標的線 {名稱, 顏色, 價格（函式）, 線, 小數位}
   let candleMap = null, prevClose = {}, volMap = null, gvMap = {};   // gvMap：日期→葛蘭碧標記
   const fmt = (v, d = 2) => v == null ? "—" : v.toLocaleString("zh-TW", {minimumFractionDigits: d, maximumFractionDigits: d});
   CONF.forEach((c, i) => {
@@ -196,10 +195,9 @@ _TEMPLATE = """
     names.push({col: col, items: []});
     c.series.forEach(s => {
       const opt = s.options || {};
-      // 價格軸只留股價和成交量；指標（均線、價位線、副圖）的數值和名稱都放到價格軸右邊的欄位
-      const isVol = i === 1 && s.type === "Histogram";
+      // 價格軸只留刻度和最新股價；成交量、均線、價位線、副圖的數值和名稱都放到價格軸右邊的欄位
       const digits = (opt.priceFormat || {}).type === "volume" ? 0 : 2;
-      const api = chart["add" + s.type + "Series"](Object.assign({}, opt, {title: ""}, isVol ? {} : {lastValueVisible: false}));
+      const api = chart["add" + s.type + "Series"](Object.assign({}, opt, {title: "", lastValueVisible: false}));
       api.setData(s.data);
       if (s.markers && s.markers.length) {
         api.setMarkers(s.markers.map(({label, ...mk}) => mk));
@@ -207,12 +205,12 @@ _TEMPLATE = """
       }
       (s.priceLines || []).forEach(pl => {
         api.createPriceLine(Object.assign({}, pl, {title: "", axisLabelVisible: false}));
-        if (pl.title) names[i].items.push({text: pl.title, color: pl.color, price: () => pl.price, api: api, digits: 2, value: true});
+        if (pl.title) names[i].items.push({text: pl.title, color: pl.color, price: () => pl.price, api: api, digits: 2});
       });
       const last = s.data[s.data.length - 1];
       if (opt.title && last && opt.lastValueVisible !== false)
         names[i].items.push({text: opt.title, color: opt.color || last.color, price: () => last.value, api: api,
-                             digits: digits, value: !isVol});
+                             digits: digits});
       const m = new Map(s.data.map(d => [d.time, d]));
       if (s.type === "Candlestick") {
         candleMap = m;
@@ -279,7 +277,7 @@ _TEMPLATE = """
   names.forEach(n => n.items.forEach(it => {
     it.el = document.createElement("div");
     const col = it.color || "__TEXT__";
-    if (it.value) {
+    {
       const v = document.createElement("span");
       v.className = "v"; v.style.background = col; v.style.color = ink(col);
       v.textContent = fmt(it.price(), it.digits);
@@ -287,7 +285,6 @@ _TEMPLATE = """
     }
     const t = document.createElement("span");
     t.textContent = it.text; t.style.color = col;
-    if (!it.value) t.className = "n";
     it.el.appendChild(t);
     n.col.appendChild(it.el);
   }));
