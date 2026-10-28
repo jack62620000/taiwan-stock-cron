@@ -175,11 +175,28 @@ def render(result):
         unsafe_allow_html=True)
 
 
-@st.cache_data(ttl=3600)
-def load_market_trend():
-    """讀資料並分析（首頁和總覽共用同一份快取）"""
+def compute_market_trend():
+    """讀資料並分析（LINE 的「大盤趨勢」也用這個）"""
     from utils.db import get_futures_ins, get_market_index, get_recent_closes, get_recent_ins
     index_df = get_market_index("TAIEX", INDEX_DAYS)
     ins = get_recent_ins(40, "stock_id, date, foreign_net_shares")
     closes = get_recent_closes(40, "stock_id, date, close_price", adjust=False)
     return analyze(index_df, foreign_amount(ins, closes), get_futures_ins())
+
+
+@st.cache_data(ttl=3600)
+def load_market_trend():
+    """網頁用：首頁和總覽共用同一份快取"""
+    return compute_market_trend()
+
+
+def trend_text(result):
+    """LINE 用的文字版（result 是 analyze 的結果）"""
+    if not result:
+        return "大盤資料不足，暫時無法分析趨勢。"
+    mark = {1: "🔴", -1: "🟢", 0: "⚪"}
+    lines = [f"🧭 大盤趨勢（{result['date']} 收盤）", "", result["summary"], ""]
+    lines += [f"{mark[t]} {k}：{v}" for k, v, t in result["items"]]
+    lines += ["", "🔴 偏多、🟢 偏空、⚪ 中性。依加權指數均線、成交值、外資現股與台指期淨未平倉推算的趨勢判斷，不是漲跌預測。",
+              "同網頁首頁和全台股總覽的「🧭 大盤趨勢」。"]
+    return "\n".join(lines)
