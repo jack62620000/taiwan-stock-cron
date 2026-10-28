@@ -10,7 +10,7 @@ from utils.ui import require_login, style_sign
 require_login()
 
 st.set_page_config(
-    page_title="台股外資法人",
+    page_title="外資法人",
     page_icon="🏦",
     layout="wide",
     initial_sidebar_state="collapsed"
