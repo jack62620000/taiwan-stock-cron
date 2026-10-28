@@ -146,3 +146,37 @@ def rule_compare(trades, raw, adj, dates, hold, top_avg):
     out["exit_diff"] = pd.to_numeric(out["pnl_pct"], errors="coerce") - out["rule_ret"]
     out["pick_diff"] = out["rule_ret"] - out["top_avg"]
     return out
+
+
+def equity_curve(result, raw, adj, start_cash):
+    """
+    自動帳戶每天收盤的總資產（照規則自動模擬用）。
+    result：evaluate_trades 的結果；raw、adj：stock_id、date、close_price 的原始與還原權值收盤價。
+    現金 = 起始資金 − 已買進的成本 + 已賣出拿回的錢；持股市值用收盤價，除權息用還原比例算進去（和 evaluate_trades 相同）。
+    回傳 DataFrame：date、equity，從第一筆買進日開始。
+    """
+    if result.empty or raw.empty:
+        return pd.DataFrame(columns=["date", "equity"])
+    px = raw[["stock_id", "date"]].copy()
+    px["close"] = pd.to_numeric(raw["close_price"], errors="coerce")
+    px["mult"] = pd.to_numeric(adj["close_price"], errors="coerce").values / px["close"]
+    close = px.pivot_table(index="date", columns="stock_id", values="close", aggfunc="last").sort_index().ffill()
+    mult = px.pivot_table(index="date", columns="stock_id", values="mult", aggfunc="last").sort_index().ffill()
+    days = [d for d in close.index if d >= str(result["buy_date"].min())]
+    out = []
+    for d in days:
+        cash, value = float(start_cash), 0.0
+        for t in result.itertuples():
+            buy = str(t.buy_date)
+            if buy > d or pd.isna(t.cost):
+                continue
+            cash -= t.cost
+            sold = pd.notna(t.sell_date) and str(t.sell_date) <= d
+            if sold:
+                cash += t.proceeds
+            elif t.stock_id in close.columns and pd.notna(close.at[d, t.stock_id]):
+                buy_mult = mult[t.stock_id][mult.index <= buy].dropna()
+                ratio = mult.at[d, t.stock_id] / buy_mult.iloc[-1] if len(buy_mult) else 1.0
+                value += close.at[d, t.stock_id] * ratio * float(t.shares) * 1000 * (1 - SELL_FEE - SELL_TAX)
+        out.append({"date": d, "equity": cash + value})
+    return pd.DataFrame(out)

@@ -2,6 +2,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils.autotrade import run_rule
@@ -75,3 +77,18 @@ def test_auto_paper_without_group(use_db, monkeypatch):
     assert auto_paper.main() == 0
     monkeypatch.setenv("AUTO_PAPER_GROUP_ID", "99")
     assert auto_paper.main() == 1
+
+
+def test_equity_curve_matches_pnl():
+    """總資產走勢最後一天 = 起始資金 + 全部損益（evaluate_trades）"""
+    import pandas as pd
+    from utils.paper import equity_curve, evaluate_trades
+    trades = pd.DataFrame([
+        {"stock_id": "A", "buy_date": D[1], "buy_price": 100.0, "shares": 1.0, "sell_date": D[3], "sell_price": 110.0},
+        {"stock_id": "B", "buy_date": D[2], "buy_price": 50.0, "shares": 2.0, "sell_date": None, "sell_price": None},
+    ])
+    raw = pd.DataFrame([{"stock_id": s, "date": d, "close_price": p} for d in D[:6] for s, p in (("A", 105.0), ("B", 55.0))])
+    result = evaluate_trades(trades, raw, raw)
+    curve = equity_curve(result, raw, raw, 200_000)
+    assert list(curve["date"]) == D[1:6]
+    assert curve["equity"].iloc[-1] == pytest.approx(200_000 + result["pnl"].sum())

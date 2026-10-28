@@ -1,3 +1,4 @@
+import altair as alt
 import streamlit as st
 import pandas as pd
 import sys
@@ -9,14 +10,16 @@ from utils.glossary import render_page_guide
 from utils.db import (
     get_stock_list, get_rows_for_stocks, get_price_adjustments, apply_adjustments,
     get_paper_trades, add_paper_trades, sell_paper_trade, delete_paper_trade, get_signal_dates, get_top_ranks,
+    get_market_index,
 )
+from utils.autotrade import SOURCE as AUTO_SOURCE, START_CASH
 from utils.groups import group_picker
-from utils.paper import evaluate_trades, rule_compare, BUY_FEE, SELL_FEE, SELL_TAX
+from utils.paper import equity_curve, evaluate_trades, rule_compare, BUY_FEE, SELL_FEE, SELL_TAX
 from utils.picks import HOLD, TOP_N, pick_record
 from utils.analysis import TRADE_COST_PCT
 from utils.granville import STOP_RULE, next_day_triggers, rule_frames, stop_price
 from utils.analysis import load_atr
-from utils.ui import require_login, render_metric_cards, style_sign
+from utils.ui import MUTED, UP_COLOR, require_login, render_metric_cards, style_sign
 require_login()
 
 st.set_page_config(page_title="模擬持股", page_icon="💼", layout="wide")
@@ -136,6 +139,56 @@ def close_on(stock_id, day):
     return float(last["close_price"]), last["date"]
 
 
+@st.cache_data(ttl=3600)
+def load_taiex(since):
+    idx = get_market_index("TAIEX", limit=400)
+    if idx.empty:
+        return pd.Series(dtype=float)
+    close = pd.to_numeric(idx.set_index("date")["close"], errors="coerce").dropna()
+    return close[close.index >= since]
+
+
+def render_auto_account(result, raw, adj):
+    """照規則自動模擬的帳戶成績：總資產走勢和同期加權指數比較（都從第一筆買進前一天收盤 = 100 起算）"""
+    st.subheader("🤖 自動帳戶成績")
+    curve = equity_curve(result, raw, adj, START_CASH)
+    if curve.empty:
+        return
+    first = str(result["buy_date"].min())
+    taiex = load_taiex(str(pd.to_datetime(first) - timedelta(days=14))[:10])
+    base = taiex[taiex.index < first]
+    total = curve["equity"].iloc[-1]
+    ret = (total / START_CASH - 1) * 100
+    peak = curve["equity"].cummax().clip(lower=START_CASH)
+    mdd = ((curve["equity"] / peak - 1) * 100).min()
+    tx = (taiex.iloc[-1] / base.iloc[-1] - 1) * 100 if len(base) and len(taiex) else None
+    diff = ret - tx if tx is not None else None
+    render_metric_cards([
+        ("總資產", f"{total:,.0f}", f"起始 {START_CASH:,} 元", 0),
+        ("累計報酬", f"{ret:+.2f}%", f"{first} 起", 1 if ret > 0 else -1 if ret < 0 else 0),
+        ("同期加權指數", f"{tx:+.2f}%" if tx is not None else "—",
+         f"贏大盤 {diff:+.2f} 個百分點" if diff is not None else None,
+         (1 if diff > 0 else -1 if diff < 0 else 0) if diff is not None else 0),
+        ("最大回撤", f"{mdd:.2f}%", "總資產從高點最多掉多少", -1 if mdd < 0 else 0),
+    ])
+    if len(base):   # 起點：第一筆買進前一天收盤，兩條線都是 100
+        curve = pd.concat([pd.DataFrame({"date": [base.index[-1]], "equity": [START_CASH]}), curve], ignore_index=True)
+    lines = [pd.DataFrame({"date": curve["date"], "線": "自動帳戶", "值": curve["equity"] / START_CASH * 100})]
+    if len(base):
+        tx_line = taiex.reindex(curve["date"]).ffill() / base.iloc[-1] * 100
+        lines.append(pd.DataFrame({"date": curve["date"], "線": "加權指數", "值": tx_line.values}))
+    chart = pd.concat(lines, ignore_index=True).dropna()
+    st.altair_chart(alt.Chart(chart).mark_line(point=alt.OverlayMarkDef(size=15)).encode(
+        x=alt.X("date:T", title=None, axis=alt.Axis(format="%m/%d")),
+        y=alt.Y("值:Q", title="起點 = 100", scale=alt.Scale(zero=False)),
+        color=alt.Color("線:N", scale=alt.Scale(domain=["自動帳戶", "加權指數"], range=[UP_COLOR, MUTED]),
+                        legend=alt.Legend(orient="top", title=None)),
+        tooltip=[alt.Tooltip("date:T", title="日期"), "線:N", alt.Tooltip("值:Q", title="指數化", format=".1f")],
+    ), width="stretch")
+    st.caption("兩條線都從第一筆買進前一天收盤 = 100 開始。總資產 = 現金 + 持股用收盤價「如果今天賣出」的價值（已扣賣出手續費和證交稅）。"
+               "這個分組由網站每晚照「明日買進」規則自動買賣，請不要手動新增或賣出。")
+
+
 stock_list = get_stock_list()
 names = stock_list.set_index("stock_id")["stock_name"].to_dict()
 pick_col, _ = st.columns([1, 2])
@@ -164,6 +217,10 @@ if not trades.empty:
         ("已實現損益", f"{real:+,.0f}", f"{len(closed)} 筆已賣出", 1 if real > 0 else -1 if real < 0 else 0),
         ("已賣出勝率", f"{win:.0f}%" if win is not None else "—", "賺錢筆數 ÷ 已賣出筆數", 0),
     ])
+
+    # ===== 自動帳戶成績（分組裡全部是「照規則自動」的紀錄時）=====
+    if (result["source"] == AUTO_SOURCE).all():
+        render_auto_account(result, raw, adj)
 
     def show(df, cols):
         table = df[list(cols)].rename(columns=cols)

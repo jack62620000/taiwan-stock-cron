@@ -134,3 +134,11 @@ def test_momentum_followup_section(use_db):
     at = run_page(APP / "pages" / PICKS_PAGE, picks_tab="🏆 評分排行")
     assert errors(at) == []
     assert any("ret_now" in list(d.value.columns) for d in at.dataframe)
+
+
+def test_paper_page_auto_account(use_db):
+    """模擬持股頁：照規則自動的分組顯示自動帳戶成績（總資產走勢）"""
+    use_db()
+    at = run_page(APP / "pages" / "10_模擬持股.py", group_id=2)
+    assert errors(at) == []
+    assert any("自動帳戶成績" in h.value for h in at.subheader)
