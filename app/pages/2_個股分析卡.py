@@ -34,17 +34,32 @@ if st.button("🔄 強制重新整理資料"):
 stock_list = get_stock_list()
 options = (stock_list["stock_id"] + " " + stock_list["stock_name"].fillna("")).tolist() \
     if not stock_list.empty else []
-# 從「每日選股訊號」頁跳過來時，預設選那檔股票；否則預設台積電
-default_id = st.session_state.get("card_stock_id", "2330")
-default_index = next((i for i, o in enumerate(options) if o.startswith(f"{default_id} ")), None)
+# 從其他頁跳過來、或點「最近查看」時，card_stock_id 是要顯示的股票；否則沿用上次看的那檔，第一次看台積電
+want = st.session_state.pop("card_stock_id", None)
+if want or "card_select" not in st.session_state:
+    want = want or st.session_state.get("card_last", "2330")
+    st.session_state["card_select"] = next((o for o in options if o.startswith(f"{want} ")), None)
 selected = st.selectbox(
-    "搜尋股票（輸入代號或公司名稱）", options, index=default_index,
+    "搜尋股票（輸入代號或公司名稱）", options, key="card_select",
     placeholder="例如: 2330 或 台積電",
 )
 if not selected:
     st.info("請選擇股票")
     st.stop()
 stock_id = selected.split(" ", 1)[0]
+
+# ===== 最近查看（這次開網頁期間看過的股票，點一下切換）=====
+RECENT_MAX = 5
+recent = [s for s in st.session_state.get("card_recent", []) if s != stock_id]
+st.session_state["card_recent"] = [stock_id] + recent[:RECENT_MAX]
+st.session_state["card_last"] = stock_id  # 換到別頁再回來時，搜尋框維持這檔
+if recent:
+    names = dict(zip(stock_list["stock_id"], stock_list["stock_name"].fillna("")))
+    labels = {f"{s} {names.get(s, '')}".strip(): s for s in recent[:RECENT_MAX]}
+    picked = st.pills("最近查看", list(labels), key=f"card_recent_pick_{stock_id}")
+    if picked:
+        st.session_state["card_stock_id"] = labels[picked]
+        st.rerun()
 
 # ===== 自選股 =====
 watch_gid, watch_group = current_group()
