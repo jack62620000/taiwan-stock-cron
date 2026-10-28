@@ -1,4 +1,5 @@
 import hmac
+import re
 
 import streamlit as st
 
@@ -115,3 +116,25 @@ def group_manager():
                 delete_group(gid)
                 st.session_state.pop("group_id", None)
                 st.rerun()
+
+
+def parse_stock_codes(text, names, existing=()):
+    """
+    把貼上的一串代號或名稱（逗號、頓號、空白或換行隔開）轉成股票代號。
+    names 是 {代號: 名稱}；回傳 (要加入的代號, 已經在清單裡的代號, 找不到的字)，都照貼上的順序、不重複。
+    """
+    by_name = {n: s for s, n in names.items() if n}
+    add, already, unknown = [], [], []
+    for token in re.split(r"[\s,，、;；]+", text or ""):
+        if not token:
+            continue
+        sid = token if token in names else by_name.get(token)
+        if sid is None:
+            if token not in unknown:
+                unknown.append(token)
+        elif sid in existing:
+            if sid not in already:
+                already.append(sid)
+        elif sid not in add:
+            add.append(sid)
+    return add, already, unknown
