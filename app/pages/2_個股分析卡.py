@@ -11,13 +11,13 @@ from utils.db import (
     get_watchlist, add_to_watchlist, remove_from_watchlist, get_signal_history, get_rows_for_stocks, get_adjustment_events,
 )
 from utils.analysis import granville_status
-from utils.card import card_metrics, trend_text, load_card_data as _load_card_data
+from utils.card import PEER_TOP, card_metrics, peer_comparison, trend_text, load_card_data as _load_card_data
 from utils.indicators import LAMP
 from utils.granville import STOP_RULE
 from utils.momentum import BACKTEST_MD, RULES_MD, momentum_summary
 from utils.groups import current_group
 from utils.kline import SUB_CHARTS, build_charts, render_html
-from utils.ui import require_login, render_metric_cards, go_picks_tab, UP_COLOR, DOWN_COLOR, ACCENT, GLOW, MUTED, WARN_COLOR
+from utils.ui import require_login, render_metric_cards, go_picks_tab, style_sign, UP_COLOR, DOWN_COLOR, ACCENT, GLOW, MUTED, WARN_COLOR
 import streamlit.components.v1 as components
 require_login()
 
@@ -530,6 +530,43 @@ with s_col:
             tooltip=[alt.Tooltip("date:T", title="日期"), alt.Tooltip("total_score:Q", title="總分")],
         ).properties(height=180), width="stretch")
     go_picks_tab("到「評分排行」看規則回測", "🏆 評分排行", "card_go_signals", icon="🏆")
+
+# ===== 同產業比較：同一個評分日，同產業各股的總分、漲跌和外資買賣超 =====
+@st.cache_data(ttl=3600)
+def load_peers(stock_ids, date):
+    signals = get_rows_for_stocks("daily_signals", list(stock_ids), since=date,
+                                  columns="stock_id, date, total_score, rank, change_5d, change_20d")
+    signals = signals[signals["date"].astype(str) == date] if not signals.empty else signals
+    since = str((pd.Timestamp(date) - pd.Timedelta(days=12)).date())
+    ins = get_rows_for_stocks("stock_ins_daily", list(stock_ids), since=since,
+                              columns="stock_id, date, foreign_net_shares")
+    ins = ins[ins["date"].astype(str) <= date] if not ins.empty else ins
+    return signals, ins
+
+industry = (info or {}).get("industry")
+if industry and not hist.empty:
+    peer_ids = tuple(stock_list.loc[stock_list["industry"] == industry, "stock_id"])
+    score_date = str(hist.iloc[-1]["date"])[:10]
+    peer_sig, peer_ins = load_peers(peer_ids, score_date)
+    if not peer_sig.empty:
+        peer_sig = peer_sig.merge(stock_list[["stock_id", "stock_name"]], on="stock_id", how="left")
+    peer_table, peer_sum = peer_comparison(stock_id, peer_sig, peer_ins)
+    if peer_sum and peer_sum["檔數"] > 1:
+        st.markdown("---")
+        st.subheader(f"🏭 同產業比較（{industry}，共 {peer_sum['檔數']} 檔有評分）")
+        med = peer_sum["同業20日中位數"]
+        st.markdown(f"總分在同業排第 **{peer_sum['名次']}** 名；近 20 日 {peer_sum['20日%']:+.1f}%，"
+                    f"同業中位數 {med:+.1f}%，" + ("**比同業強**。" if peer_sum["20日%"] > med else "**比同業弱**。"                    if peer_sum["20日%"] < med else "和同業差不多。"))
+        f_col = [c for c in peer_table.columns if c.startswith("外資")][0]
+        st.dataframe(
+            peer_table.style
+            .format({"5日%": "{:+.2f}", "20日%": "{:+.2f}", f_col: "{:+,.0f}", "全市場排名": "{:,.0f}", "總分": "{:,.0f}"},
+                    na_rep="")
+            .map(style_sign, subset=["5日%", "20日%", f_col])
+            .apply(lambda r: ["background-color: rgba(251,191,36,.15)" if r["代號"] == stock_id else "" for _ in r], axis=1),
+            hide_index=True, width="stretch")
+        st.caption(f"評分日 {score_date}，依總分排序，列出前 {PEER_TOP} 名，這檔用底色標示（不在前 {PEER_TOP} 名時加在最後一列）。"
+                   "全市場排名只排 20 日均量 500 張以上的股票，空白代表成交量不夠沒有排名。")
 
 # ===== 動能條件：趨勢模板、52 週新高突破（momentum.py 每天收盤後計算）=====
 @st.cache_data(ttl=3600)

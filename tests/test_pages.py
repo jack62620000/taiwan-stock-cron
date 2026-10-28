@@ -77,7 +77,7 @@ def test_stock_card_shows_all_sections(use_db):
     at = run_page(APP / "pages" / "2_個股分析卡.py", card_stock_id="3583")
     assert errors(at) == []
     heads = " ".join(h.value for h in at.subheader)
-    for title in ["均線買賣點", "評分排行", "動能條件", "股價走勢", "相對大盤強弱", "三大法人買賣超", "外資持股比率"]:
+    for title in ["均線買賣點", "評分排行", "同產業比較", "動能條件", "股價走勢", "相對大盤強弱", "三大法人買賣超", "外資持股比率"]:
         assert title in heads
     assert "這頁在看什麼" in " ".join(i.value for i in at.info)
     labels = [e.label for e in at.expander]

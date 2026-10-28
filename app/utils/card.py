@@ -604,3 +604,40 @@ def card_metrics(prices, quarterly, revenue, ins, margin, holder, utilization):
         "big_lamp": big_lamp,
         "short_level": short_level,
     }
+
+
+PEER_TOP = 10   # 同產業比較列出總分前幾名
+PEER_FOREIGN_DAYS = 5
+
+
+def peer_comparison(stock_id, signals, ins, top=PEER_TOP):
+    """
+    同產業比較：signals 是同產業各股同一個評分日的評分（daily_signals 加上 stock_name），
+    ins 是同產業各股近幾天的外資買賣超（stock_id、date、foreign_net_shares）。
+    回傳 (表格, 摘要)：表格是同業總分前 top 名（這檔不在前面時加在最後），摘要 {產業檔數, 名次, 20日%, 同業20日中位數}。
+    沒有這檔的評分時回傳 (空表, None)。
+    """
+    if signals is None or signals.empty or stock_id not in set(signals["stock_id"]):
+        return pd.DataFrame(), None
+    df = signals.copy()
+    for c in ["total_score", "rank", "change_5d", "change_20d"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.sort_values(["total_score", "stock_id"], ascending=[False, True]).reset_index(drop=True)
+    df["同業名次"] = range(1, len(df) + 1)
+    if ins is not None and not ins.empty:
+        days = sorted(ins["date"].astype(str).unique())[-PEER_FOREIGN_DAYS:]
+        recent = ins[ins["date"].astype(str).isin(days)]
+        f = pd.to_numeric(recent["foreign_net_shares"], errors="coerce").groupby(recent["stock_id"]).sum() / 1000
+        df["外資"] = df["stock_id"].map(f)
+    else:
+        df["外資"] = None
+    me = df[df["stock_id"] == stock_id].iloc[0]
+    shown = df.head(top)
+    if stock_id not in set(shown["stock_id"]):
+        shown = pd.concat([shown, df[df["stock_id"] == stock_id]])
+    table = shown.rename(columns={"stock_id": "代號", "stock_name": "名稱", "total_score": "總分", "rank": "全市場排名",
+                                  "change_5d": "5日%", "change_20d": "20日%", "外資": f"外資{PEER_FOREIGN_DAYS}日(張)"})
+    table = table[["同業名次", "代號", "名稱", "總分", "全市場排名", "5日%", "20日%", f"外資{PEER_FOREIGN_DAYS}日(張)"]]
+    summary = {"檔數": len(df), "名次": int(me["同業名次"]), "20日%": me["change_20d"],
+               "同業20日中位數": df["change_20d"].median()}
+    return table.reset_index(drop=True), summary
