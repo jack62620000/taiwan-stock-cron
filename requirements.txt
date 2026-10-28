@@ -7,6 +7,4 @@ python-dotenv==1.2.4
 pandas==3.0.6
 # 網頁的排版 CSS 依賴 Streamlit 內部元件名稱，升級前要先測試
 streamlit==1.66.0
-# 個股分析卡的互動 K 線圖（Lightweight Charts）；套件 2023 年後沒有更新，升級 Streamlit 時要確認圖還畫得出來
-streamlit-lightweight-charts==0.7.20
 numpy==2.5.4

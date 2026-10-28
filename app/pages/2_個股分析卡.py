@@ -16,9 +16,9 @@ from utils.indicators import LAMP
 from utils.granville import STOP_RULE
 from utils.momentum import BACKTEST_MD, RULES_MD, momentum_summary
 from utils.groups import current_group
-from utils.kline import SUB_CHARTS, build_charts
+from utils.kline import SUB_CHARTS, build_charts, render_html
 from utils.ui import require_login, render_metric_cards, go_picks_tab, UP_COLOR, DOWN_COLOR, ACCENT, GLOW, MUTED, WARN_COLOR
-from streamlit_lightweight_charts import renderLightweightCharts
+import streamlit.components.v1 as components
 require_login()
 
 st.set_page_config(page_title="個股分析卡", page_icon="🗂️", layout="wide")
@@ -577,9 +577,10 @@ chart_df = prices_ta.tail(range_days).copy()
 chart_df["date"] = chart_df["date"].astype(str)
 charts = build_charts(prices_ta, range_days, overlays=overlays, sub=sub_chart, ins=ins,
                       levels=levels, markers="買賣點" in overlays)
-renderLightweightCharts(charts, key=f"kline_{stock_id}_{range_days}_{sub_chart}_{'_'.join(overlays)}")
+kline_html, kline_height = render_html(charts)
+components.html(kline_html, height=kline_height)
 st.caption(
-    "可以用滑鼠拖拉、滾輪縮放，滑過去看每天的開高低收。K 棒紅漲綠跌、灰色是沒有成交的日子。"
+    "可以用滑鼠拖拉、滾輪縮放；滑鼠移到哪一天，左上角就顯示那天的開高低收、漲跌、成交量和各條線的數值。K 棒紅漲綠跌、灰色是沒有成交的日子。"
     "「買賣點」：葛蘭碧法則裡回測穩定的幾條，K 棒下方紅色 ▲「買2」「買4」是買進法則，上方綠色 ▼「賣7」是賣出法則，"
     "灰點是過熱（法則 8，回測多半續漲，只提醒追高風險）；只看收盤和 20 日均線，沒有套用外資、MACD、量能確認條件。"
     "「價位線」：52 週高低點，以及停損價、明天收盤的買進／賣出觸發價（和上面「均線買賣點」相同）。"

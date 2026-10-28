@@ -1,9 +1,15 @@
 """
-個股分析卡的互動 K 線圖（Lightweight Charts，套件 streamlit-lightweight-charts）
+個股分析卡的互動 K 線圖（TradingView Lightweight Charts v4.2.3）
 
-build_charts 只組出圖表設定（list of dict），不碰 Streamlit，方便測試；頁面再交給 renderLightweightCharts 畫。
-上下幾張圖共用時間軸：主圖 K 線＋均線／布林通道＋葛蘭碧買賣點標記＋價位線，下面是成交量和一張副圖。
+build_charts 只組出圖表設定（list of dict），不碰 Streamlit，方便測試；render_html 把設定變成一段 HTML，
+頁面用 st.components.v1.html 顯示。圖表程式庫放在 app/assets（Apache 2.0 授權，見同目錄的 LICENSE），
+直接嵌進頁面，不必連外部 CDN。
+上下幾張圖共用時間軸、十字線同步：主圖 K 線＋均線／布林通道＋葛蘭碧買賣點標記＋價位線，下面是成交量和一張副圖；
+滑鼠移到哪一天，左上角就顯示那天的開高低收、漲跌、成交量和各條線的數值。
 """
+import json
+from pathlib import Path
+
 import pandas as pd
 
 from utils.granville import RULES, STABLE_RULES, rule_frames
@@ -77,7 +83,7 @@ def build_charts(prices_ta, days, overlays=("均線",), sub="外資買賣超", i
     prices_ta：個股分析卡算好指標的日線（date、open/high/low/close_price、volume、no_trade、MA5/20/60、BB_UP/LOW、K、D、MACD_HIST）；
     days：顯示最近幾個交易日；overlays：主圖要疊的「均線」「布林通道」；sub：副圖（SUB_CHARTS 其中之一或 None）；
     ins：法人買賣超（date、foreign_net_shares、sitca_net_shares）；levels：主圖水平價位線 {名稱: (價格, 顏色)}。
-    回傳 renderLightweightCharts 的 charts 設定。
+    回傳每張圖的設定 [{"chart": 圖表選項, "series": [{"type", "data", "options", "markers"?, "priceLines"?}]}]。
     """
     full = prices_ta.copy()
     full["date"] = full["date"].astype(str)
@@ -106,13 +112,12 @@ def build_charts(prices_ta, days, overlays=("均線",), sub="外資買賣超", i
         full_close = full.set_index("date")["close_price"].where(~full.set_index("date")["no_trade"].fillna(False).astype(bool)) \
             if "no_trade" in full.columns else full.set_index("date")["close_price"]
         price["markers"] = granville_markers(df, full_close)
+    # 水平價位線（停損價、觸發價、52 週高低）：右側價格軸標出名稱和價格，不會撐大縱軸範圍
+    price["priceLines"] = [
+        {"price": round(float(p), 2), "color": c, "lineWidth": 1, "lineStyle": 2, "axisLabelVisible": True, "title": name}
+        for name, (p, c) in (levels or {}).items() if p is not None and pd.notna(p)
+    ]
     main = [price]
-    # 水平價位線：這個套件不支援 createPriceLine，改用整段同一個值的虛線，右側標出名稱和價格
-    for name, (p, c) in (levels or {}).items():
-        if p is not None and pd.notna(p):
-            line = _line(df.assign(lv=float(p)), "lv", c, name, 1, 2)
-            line["options"]["lastValueVisible"] = True
-            main.append(line)
     if "均線" in overlays:
         main += [_line(df, c, MA_COLORS[c], c) for c in MA_COLORS if c in df.columns and df[c].notna().any()]
     if "布林通道" in overlays and "BB_UP" in df.columns and df["BB_UP"].notna().any():
@@ -143,3 +148,102 @@ def build_charts(prices_ta, days, overlays=("均線",), sub="外資買賣超", i
     else:
         charts[1]["chart"]["timeScale"]["visible"] = True
     return charts
+
+
+LIB = Path(__file__).resolve().parent.parent / "assets" / "lightweight-charts.standalone.production.js"
+
+_TEMPLATE = """
+<style>
+  body { margin: 0; background: __BG__; font-family: 'Noto Sans TC', sans-serif; }
+  #legend { color: __TEXT__; font-size: 13px; line-height: 20px; min-height: 40px; padding: 2px 4px 4px; }
+  #legend b { font-weight: 600; }
+  #legend .k { color: __MUTED__; margin-left: 10px; }
+</style>
+<div id="legend"></div>
+<div id="charts"></div>
+<script>__LIB__</script>
+<script>
+(function () {
+  const CONF = __CONF__;
+  const UP = "__UP__", DOWN = "__DOWN__";
+  const box = document.getElementById("charts");
+  const charts = [], lookups = [];   // lookups：每條線 {名稱, 顏色, 日期→值}
+  let candleMap = null, prevClose = {}, volMap = null;
+  const fmt = (v, d = 2) => v == null ? "—" : v.toLocaleString("zh-TW", {minimumFractionDigits: d, maximumFractionDigits: d});
+  CONF.forEach((c, i) => {
+    const el = document.createElement("div");
+    box.appendChild(el);
+    const chart = LightweightCharts.createChart(el, Object.assign({}, c.chart, {width: box.clientWidth || 700}));
+    charts.push(chart);
+    c.series.forEach(s => {
+      const api = chart["add" + s.type + "Series"](s.options || {});
+      api.setData(s.data);
+      if (s.markers && s.markers.length) api.setMarkers(s.markers);
+      (s.priceLines || []).forEach(pl => api.createPriceLine(pl));
+      const m = new Map(s.data.map(d => [d.time, d]));
+      if (s.type === "Candlestick") {
+        candleMap = m;
+        s.data.forEach((d, k) => { if (k > 0) prevClose[d.time] = s.data[k - 1].close; });
+      } else if (i === 1 && !volMap) {
+        volMap = m;
+      } else {
+        lookups.push({name: (s.options || {}).title || "", color: (s.options || {}).color, map: m, chart: i});
+      }
+      if (!charts[i]._first) charts[i]._first = api;
+    });
+  });
+
+  function legend(time) {
+    const el = document.getElementById("legend");
+    const c = candleMap && candleMap.get(time);
+    if (!c) { el.innerHTML = ""; return; }
+    const pc = prevClose[time];
+    const chg = pc ? (c.close / pc - 1) * 100 : null;
+    const col = chg == null ? "inherit" : chg > 0 ? UP : chg < 0 ? DOWN : "inherit";
+    const v = volMap && volMap.get(time);
+    let html = "<b>" + time.replaceAll("-", "/") + "</b>"
+      + "<span class='k'>開</span> " + fmt(c.open) + "<span class='k'>高</span> " + fmt(c.high)
+      + "<span class='k'>低</span> " + fmt(c.low) + "<span class='k'>收</span> <b style='color:" + col + "'>" + fmt(c.close) + "</b>"
+      + (chg == null ? "" : " <span style='color:" + col + "'>(" + (chg > 0 ? "+" : "") + chg.toFixed(2) + "%)</span>")
+      + (v ? "<span class='k'>量</span> " + fmt(v.value, 0) + " 張" : "");
+    let extra = "";
+    lookups.forEach(l => {
+      const p = l.map.get(time);
+      if (p) extra += "<span class='k' style='color:" + (l.color || "inherit") + "'>" + l.name + "</span> " + fmt(p.value, l.name.includes("張") ? 0 : 2);
+    });
+    el.innerHTML = html + "<br>" + extra;
+  }
+
+  // 拖拉、縮放同步：任一張圖動了，其他圖跟著同一段日期
+  let syncing = false;
+  charts.forEach(ch => ch.timeScale().subscribeVisibleLogicalRangeChange(r => {
+    if (syncing || !r) return;
+    syncing = true;
+    charts.forEach(o => { if (o !== ch) o.timeScale().setVisibleLogicalRange(r); });
+    syncing = false;
+  }));
+  // 十字線同步，並更新左上角的數值；滑鼠離開圖時顯示最後一天
+  const lastTime = candleMap ? Array.from(candleMap.keys()).pop() : null;
+  charts.forEach(ch => ch.subscribeCrosshairMove(p => {
+    const t = p && p.time;
+    legend(t || lastTime);
+    charts.forEach(o => {
+      if (o === ch) return;
+      if (t && o._first) o.setCrosshairPosition(NaN, t, o._first); else o.clearCrosshairPosition();
+    });
+  }));
+  legend(lastTime);
+  charts.forEach(ch => ch.timeScale().fitContent());
+  new ResizeObserver(() => charts.forEach(ch => ch.applyOptions({width: box.clientWidth}))).observe(box);
+})();
+</script>
+"""
+
+
+def render_html(charts):
+    """把 build_charts 的設定變成可以直接顯示的 HTML（含圖表程式庫），回傳 (html, 高度)"""
+    html = (_TEMPLATE.replace("__LIB__", LIB.read_text(encoding="utf-8"))
+            .replace("__CONF__", json.dumps(charts, ensure_ascii=False))
+            .replace("__BG__", BG_COLOR).replace("__TEXT__", TEXT).replace("__MUTED__", MUTED)
+            .replace("__UP__", UP_COLOR).replace("__DOWN__", DOWN_COLOR))
+    return html, sum(c["chart"]["height"] for c in charts) + 52
