@@ -44,7 +44,7 @@ def test_page_with_empty_db(use_db, page):
 def test_picks_tabs(use_db, tab, empty):
     """選股頁的三個分頁各自都要能顯示"""
     use_db(empty=empty)
-    at = run_page(APP / "pages" / "0_選股.py", picks_tab=tab)
+    at = run_page(APP / "pages" / "1_選股.py", picks_tab=tab)
     assert errors(at) == []
 
 
@@ -108,7 +108,7 @@ def test_add_to_watchlist_keeps_existing_note(use_db):
     assert [r["note"] for r in rows] == ["等回測月線再買"]
 
 
-PICKS_PAGE = "0_選股.py"  # 葛蘭碧、每日選股都是選股頁的分頁
+PICKS_PAGE = "1_選股.py"  # 葛蘭碧、每日選股都是選股頁的分頁
 
 
 @pytest.mark.parametrize("empty", [False, True])

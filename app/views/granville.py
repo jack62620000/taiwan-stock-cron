@@ -19,7 +19,7 @@ from utils.analysis import (
 from utils.groups import current_group
 from utils.ui import style_sign, UP_COLOR, DOWN_COLOR, WARN_COLOR, ACCENT, MUTED
 
-# 選股頁的「均線買賣點」分頁（pages/0_選股.py 用 runpy 執行這個檔案；登入、頁面設定、重新整理按鈕在選股頁）
+# 選股頁的「均線買賣點」分頁（pages/1_選股.py 用 runpy 執行這個檔案；登入、頁面設定、重新整理按鈕在選股頁）
 render_page_guide("granville")
 
 render_market_warning()
