@@ -1,6 +1,5 @@
 ﻿import streamlit as st
 import pandas as pd
-import numpy as np
 import altair as alt
 import sys
 import os
@@ -17,7 +16,9 @@ from utils.indicators import LAMP
 from utils.granville import STOP_RULE
 from utils.momentum import BACKTEST_MD, RULES_MD, momentum_summary
 from utils.groups import current_group
-from utils.ui import require_login, render_metric_cards, go_picks_tab, UP_COLOR, DOWN_COLOR, ACCENT, GLOW
+from utils.kline import SUB_CHARTS, build_charts
+from utils.ui import require_login, render_metric_cards, go_picks_tab, UP_COLOR, DOWN_COLOR, ACCENT, GLOW, MUTED, WARN_COLOR
+from streamlit_lightweight_charts import renderLightweightCharts
 require_login()
 
 st.set_page_config(page_title="個股分析卡", page_icon="🗂️", layout="wide")
@@ -553,73 +554,36 @@ if no_trade_days:
     st.caption(f"⏸️ 近 {len(prices_ta)} 個交易日中有 {len(no_trade_days)} 天沒有成交（停牌或無人交易），"
                "圖上以灰色標示，這些天視為股價不變。")
 st.caption("股價已還原權值：除權息、減資、變更面額之前的價格依參考價等比例調整，均線與各項指標不會因此出現假跳空；最新股價不受影響。")
-range_days = st.radio(
-    "顯示區間", [60, 120, 250], index=1, horizontal=True,
-    format_func=lambda d: f"近 {d} 個交易日",
-)
+c1, c2 = st.columns(2)
+with c1:
+    range_days = st.radio(
+        "顯示區間", [60, 120, 250], index=1, horizontal=True,
+        format_func=lambda d: f"近 {d} 個交易日",
+    )
+with c2:
+    sub_chart = st.radio("下方副圖", SUB_CHARTS, horizontal=True)
+overlays = st.pills("主圖顯示", ["均線", "布林通道", "買賣點", "價位線"], selection_mode="multi",
+                    default=["均線", "買賣點", "價位線"]) or []
 
+levels = {}
+if "價位線" in overlays:
+    levels = {"52週高": (high_52w, MUTED), "52週低": (low_52w, MUTED)}
+    g_now = load_granville(stock_id, prices, ins)
+    if not g_now.empty:
+        g_now = g_now.iloc[0]
+        levels.update({"停損價": (g_now["停損價"], WARN_COLOR), "買進觸發": (g_now["買進觸發價"], UP_COLOR),
+                       "賣出觸發": (g_now["賣出觸發價"], DOWN_COLOR)})
 chart_df = prices_ta.tail(range_days).copy()
 chart_df["date"] = chart_df["date"].astype(str)
-chart_df["漲跌"] = np.select(
-    [chart_df["no_trade"], chart_df["close_price"] >= chart_df["open_price"]], ["無成交", "漲"], "跌")
-
-# 日期用類別軸，週末與休市日不會留空；標籤大約顯示 6 個
-step = max(1, len(chart_df) // 6)
-x_axis = alt.X(
-    "date:O", title=None,
-    axis=alt.Axis(values=chart_df["date"].iloc[::step].tolist(), labelAngle=0),
+charts = build_charts(prices_ta, range_days, overlays=overlays, sub=sub_chart, ins=ins,
+                      levels=levels, markers="買賣點" in overlays)
+renderLightweightCharts(charts, key=f"kline_{stock_id}_{range_days}_{sub_chart}_{'_'.join(overlays)}")
+st.caption(
+    "可以用滑鼠拖拉、滾輪縮放，滑過去看每天的開高低收。K 棒紅漲綠跌、灰色是沒有成交的日子。"
+    "「買賣點」：葛蘭碧法則裡回測穩定的幾條，K 棒下方紅色 ▲「買2」「買4」是買進法則，上方綠色 ▼「賣7」是賣出法則，"
+    "灰點是過熱（法則 8，回測多半續漲，只提醒追高風險）；只看收盤和 20 日均線，沒有套用外資、MACD、量能確認條件。"
+    "「價位線」：52 週高低點，以及停損價、明天收盤的買進／賣出觸發價（和上面「均線買賣點」相同）。"
 )
-up_down = alt.Color(
-    "漲跌:N", scale=alt.Scale(domain=["漲", "跌", "無成交"], range=[UP_COLOR, DOWN_COLOR, "#9ca3af"]),
-    legend=None,
-)
-price_tooltip = [
-    alt.Tooltip("date:N", title="日期"),
-    alt.Tooltip("漲跌:N", title="狀態"),
-    alt.Tooltip("open_price:Q", title="開盤", format=",.2f"),
-    alt.Tooltip("high_price:Q", title="最高", format=",.2f"),
-    alt.Tooltip("low_price:Q", title="最低", format=",.2f"),
-    alt.Tooltip("close_price:Q", title="收盤", format=",.2f"),
-    alt.Tooltip("volume:Q", title="成交量", format=","),
-]
-
-base = alt.Chart(chart_df).encode(x=x_axis)
-wick = base.mark_rule(strokeWidth=1).encode(
-    y=alt.Y("low_price:Q", title="股價", scale=alt.Scale(zero=False)),
-    y2="high_price:Q", color=up_down, tooltip=price_tooltip,
-)
-body = base.mark_bar(size=max(2, int(600 / len(chart_df)))).encode(
-    y="open_price:Q", y2="close_price:Q", color=up_down, tooltip=price_tooltip,
-)
-
-ma_cols = [c for c in ["MA5", "MA20", "MA60"] if c in chart_df.columns and chart_df[c].notna().any()]
-# 沒有成交的日子開高低收相同，K 棒看不到，改畫灰色菱形標記
-no_trade_mark = base.transform_filter("datum['漲跌'] == '無成交'").mark_point(
-    shape="diamond", filled=True, size=40, color="#9ca3af", opacity=1,
-).encode(y="close_price:Q", tooltip=price_tooltip)
-layers = [wick, body, no_trade_mark]
-if ma_cols:
-    ma_lines = base.transform_fold(ma_cols, as_=["均線", "值"]).mark_line(strokeWidth=2).encode(
-        y="值:Q",
-        color=alt.Color(
-            "均線:N",
-            scale=alt.Scale(domain=["MA5", "MA20", "MA60"], range=[ACCENT, GLOW, "#a78bfa"]),
-            legend=alt.Legend(orient="top", title=None),
-        ),
-        tooltip=[alt.Tooltip("date:N", title="日期"), alt.Tooltip("均線:N"),
-                 alt.Tooltip("值:Q", title="數值", format=",.2f")],
-    )
-    layers.append(ma_lines)
-
-price_chart = alt.layer(*layers).resolve_scale(color="independent").properties(height=320)
-volume_chart = base.mark_bar(size=max(2, int(600 / len(chart_df)))).encode(
-    y=alt.Y("volume:Q", title="成交量", axis=alt.Axis(format="~s")),
-    color=up_down, tooltip=price_tooltip,
-).properties(height=110)
-
-# 分成兩張圖各自撐滿寬度（vconcat 無法自動配合頁面寬度）；兩張用同一份資料，日期軸會對齊
-st.altair_chart(price_chart, width="stretch")
-st.altair_chart(volume_chart, width="stretch")
 
 # ===== 相對大盤強弱 =====
 index_name = "櫃買指數" if info.get("market") == "上櫃" else "加權指數"
