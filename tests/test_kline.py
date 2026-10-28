@@ -41,7 +41,7 @@ def test_no_trade_day_is_gray(prices):
 def test_levels_and_markers(prices):
     charts = build_charts(prices, 120, overlays=("布林通道",), levels={"停損價": (95.5, "#ea580c"), "空的": (None, "#000")})
     titles = [s["options"]["title"] for s in charts[0]["series"][1:]]
-    assert titles == ["布林上軌", "布林下軌"]
+    assert titles == ["布林上軌", "布林中軌", "布林下軌"]
     assert charts[0]["series"][0]["priceLines"] == [
         {"price": 95.5, "color": "#ea580c", "lineWidth": 1, "lineStyle": 2, "axisLabelVisible": True, "title": "停損價"}]
     marks = charts[0]["series"][0]["markers"]

@@ -121,7 +121,10 @@ def build_charts(prices_ta, days, overlays=("均線",), sub="外資買賣超", i
     if "均線" in overlays:
         main += [_line(df, c, MA_COLORS[c], c) for c in MA_COLORS if c in df.columns and df[c].notna().any()]
     if "布林通道" in overlays and "BB_UP" in df.columns and df["BB_UP"].notna().any():
-        main += [_line(df, "BB_UP", BB_COLOR, "布林上軌", 1, 2), _line(df, "BB_LOW", BB_COLOR, "布林下軌", 1, 2)]
+        main += [_line(df, "BB_UP", BB_COLOR, "布林上軌", 1, 2)]
+        if "BB_MID" in df.columns and df["BB_MID"].notna().any():   # 中軌就是 20 日均線
+            main += [_line(df, "BB_MID", BB_COLOR, "布林中軌", 1, 1)]
+        main += [_line(df, "BB_LOW", BB_COLOR, "布林下軌", 1, 2)]
 
     vol = df.assign(lots=df["volume"] / 1000)
     charts = [
@@ -263,8 +266,21 @@ _TEMPLATE = """
       const pos = n.items.map(it => ({it: it, y: it.api.priceToCoordinate(it.price())}))
         .filter(p => { const ok = p.y != null && p.y >= 0 && p.y <= h; p.it.el.style.display = ok ? "" : "none"; return ok; })
         .sort((a, b) => a.y - b.y);
-      let prev = -Infinity;
-      pos.forEach(p => { const top = Math.max(p.y - 8, prev + 16); p.it.el.style.top = top + "px"; prev = top; });
+      // 靠太近的名稱併成一組，整組上下置中在這幾條線的平均高度，避免全部往下擠而離線太遠
+      const groups = [];
+      pos.forEach(p => {
+        groups.push({ys: [p.y], items: [p.it]});
+        while (groups.length > 1) {
+          const g = groups[groups.length - 1], f = groups[groups.length - 2];
+          const top = gr => gr.ys.reduce((a, b) => a + b, 0) / gr.ys.length - gr.ys.length * 8;
+          if (top(f) + f.ys.length * 16 <= top(g)) break;
+          f.ys.push(...g.ys); f.items.push(...g.items); groups.pop();
+        }
+      });
+      groups.forEach(g => {
+        const top = g.ys.reduce((a, b) => a + b, 0) / g.ys.length - g.ys.length * 8;
+        g.items.forEach((it, k) => { it.el.style.top = (top + k * 16) + "px"; });
+      });
     });
     requestAnimationFrame(placeNames);
   }
