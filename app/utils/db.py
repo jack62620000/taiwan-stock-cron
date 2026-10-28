@@ -488,6 +488,13 @@ def add_to_watchlist(group_id, stock_id, note=""):
     supabase.table("watchlist").upsert({"group_id": group_id, "stock_id": stock_id, "note": note},
                                        ignore_duplicates=True).execute()
 
+def add_many_to_watchlist(group_id, stock_ids):
+    """一次加入多檔（一個請求），已經在自選股裡的不動"""
+    if stock_ids:
+        supabase.table("watchlist").upsert([{"group_id": group_id, "stock_id": s, "note": ""} for s in stock_ids],
+                                           ignore_duplicates=True).execute()
+
+
 def update_watchlist_note(group_id, stock_id, note):
     supabase.table("watchlist").update({"note": note}).eq("group_id", group_id).eq("stock_id", stock_id).execute()
 

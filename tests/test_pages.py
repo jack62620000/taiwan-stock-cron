@@ -110,6 +110,22 @@ def test_add_to_watchlist_from_stock_card(use_db):
         r for r in client.tables["watchlist"] if r["stock_id"] == "1101").items()
 
 
+def test_watchlist_batch_add(use_db):
+    """自選股頁一次貼上多檔：代號、名稱都可以，已經在清單和找不到的分開列出，按一下全部加入"""
+    client = use_db()
+    at = run_page(APP / "pages" / "8_自選股.py")
+    box = next(x for x in at.text_area if x.key == "watch_batch")
+    box.set_value("2454, 台泥、2330\n9999 2454").run()
+    assert errors(at) == []
+    note = " ".join(c.value for c in at.caption)
+    assert "會加入 2 檔：2454 聯發科、1101 台泥" in note and "已經在清單：2330" in note and "找不到：9999" in note
+    next(b for b in at.button if b.label.startswith("➕ 全部加入")).click().run()
+    assert errors(at) == []
+    ids = [r["stock_id"] for r in client.tables["watchlist"] if r["group_id"] == 1]
+    assert {"2454", "1101", "2330"} <= set(ids) and len(ids) == len(set(ids))
+    assert at.session_state["watch_batch"] == ""
+
+
 def test_add_to_watchlist_keeps_existing_note(use_db):
     """已經在自選股的股票再加一次，原本的備註不會被蓋掉"""
     import utils.db as db

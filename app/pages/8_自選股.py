@@ -8,12 +8,12 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from utils.glossary import render_page_guide
 from utils.db import (
     get_stock_list,
-    get_watchlist, add_to_watchlist, update_watchlist_note, remove_from_watchlist,
+    get_watchlist, add_to_watchlist, add_many_to_watchlist, update_watchlist_note, remove_from_watchlist,
 )
 from utils.granville import STOP_RULE, CHOP_DAYS, CHOP_CROSSES
 from utils.analysis import granville_status, load_watch_inputs
 from utils.paper import add_form
-from utils.groups import group_picker, group_manager
+from utils.groups import group_picker, group_manager, parse_stock_codes
 from utils.ui import require_login, style_sign, go_picks_tab
 require_login()
 
@@ -248,6 +248,23 @@ with add_col:
         add_to_watchlist(group_id, new_id, new_note.strip())
         st.cache_data.clear()
         st.rerun()
+    batch = st.text_area("一次加多檔（貼上代號或名稱，用逗號、空白或換行隔開）", key="watch_batch",
+                         placeholder="例如: 2330, 2317, 2454", height=80)
+    batch_add, batch_already, batch_unknown = parse_stock_codes(batch, names, watch_ids)
+    if batch.strip():
+        notes = []
+        if batch_add:
+            notes.append(f"會加入 {len(batch_add)} 檔：" + "、".join(f"{s} {names.get(s, '')}" for s in batch_add))
+        if batch_already:
+            notes.append("已經在清單：" + "、".join(batch_already))
+        if batch_unknown:
+            notes.append("找不到：" + "、".join(batch_unknown))
+        st.caption("；".join(notes))
+    if st.button(f"➕ 全部加入（{len(batch_add)} 檔）", disabled=not batch_add):
+        add_many_to_watchlist(group_id, batch_add)
+        st.session_state.pop("watch_batch", None)
+        st.cache_data.clear()
+        st.rerun()
 
 with remove_col:
     st.markdown("**移除自選股**")
@@ -261,7 +278,7 @@ with remove_col:
 if watch_ids:
     st.markdown("**編輯備註**")
     notes = watch.assign(名稱=watch["stock_id"].map(names),
-                         加入日期=pd.to_datetime(watch["added_at"]).dt.tz_convert("Asia/Taipei").dt.strftime("%Y-%m-%d"))
+                         加入日期=pd.to_datetime(watch["added_at"], format="ISO8601").dt.tz_convert("Asia/Taipei").dt.strftime("%Y-%m-%d"))
     notes = notes.rename(columns={"stock_id": "代號", "note": "備註"})[["代號", "名稱", "加入日期", "備註"]]
     edited = st.data_editor(notes, hide_index=True, width="stretch",
                             disabled=["代號", "名稱", "加入日期"], key="watch_notes")
