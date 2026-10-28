@@ -87,6 +87,20 @@ def test_stock_card_shows_all_sections(use_db):
     assert "近 3 月年增率" in html and "券資比" in html  # 營收、資金面的延伸數據
 
 
+def test_stock_card_recent(use_db):
+    """最近查看：列出這次看過的其他股票，點一下就換成那檔"""
+    use_db()
+    at = run_page(APP / "pages" / "2_個股分析卡.py", card_stock_id="2330", card_recent=["2317", "2330", "3583"])
+    assert errors(at) == []
+    pills = at.get("button_group")[0]
+    assert pills.label == "最近查看" and pills.proto.options[0].content == "2317 鴻海"
+    assert [o.content for o in pills.proto.options] == ["2317 鴻海", "3583 辛耘"]
+    pills.set_value("3583 辛耘").run()
+    assert errors(at) == []
+    assert at.selectbox[0].value.startswith("3583 ")
+    assert at.session_state["card_recent"][:2] == ["3583", "2330"]
+
+
 def test_add_to_watchlist_from_stock_card(use_db):
     client = use_db()
     at = run_page(APP / "pages" / "2_個股分析卡.py", card_stock_id="1101")
