@@ -29,9 +29,9 @@ on:
         type: string
         default: ''
       datasets:
-        description: 'backfill：要回補的資料（prices＝價量與法人、monthly＝投信公會月資料、holder＝集保，逗號分隔）'
+        description: 'backfill：要回補的資料（prices＝價量與法人、monthly＝投信公會月資料、holder＝集保、dividends＝配息，逗號分隔）'
         type: string
-        default: 'prices,monthly,holder'
+        default: 'prices,monthly,holder,dividends'
       dry_run:
         description: '試跑：只下載與解析，不寫入資料庫'
         type: boolean

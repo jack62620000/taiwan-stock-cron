@@ -5,7 +5,8 @@
   daily    平日盤後：ETF 清單、每日價量、三大法人、淨值折溢價、配息；並補最近幾個交易日的缺漏
   weekly   週六：集保持股分級（開放資料最新一週）
   monthly  每月：投信公會月資料（重抓最近兩個月），並補上上櫃 ETF 的基金統編
-  backfill 歷史回補：DATASETS 選 prices,ins,monthly,holder（逗號分隔），區間 BACKFILL_START～BACKFILL_END
+  backfill 歷史回補：DATASETS 選 prices,monthly,holder,dividends（逗號分隔），區間 BACKFILL_START～BACKFILL_END
+           （上櫃 ETF 的歷史配息來源只有預告表，回補只含上市 ETF）
 其他設定：
   TARGET_DATE   daily 要抓的日期（YYYY-MM-DD，留空為台灣今天）
   ETF_DRY_RUN=1 只下載與解析、印出筆數，不讀寫資料庫（驗證來源用）
@@ -286,10 +287,25 @@ def backfill_holder(start, end, deadline):
     return problems
 
 
+def backfill_dividends(start, end):
+    """證交所 etfDiv 按年查（一次查太長的區間回應很大），只含上市 ETF"""
+    problems, rows = [], []
+    for year in range(int(start[:4]), int(end[:4]) + 1):
+        s, e = max(start, f"{year}-01-01"), min(end, f"{year}-12-31")
+        try:
+            got = f.fetch_twse_etf_div(s, e)
+            print(f"{year} 年配息：{len(got)} 筆")
+            rows += got
+        except Exception as ex:
+            problems.append(f"{year} 年配息：{ex}")
+    save("etf_dividends", f.merge_dividends(rows))
+    return problems
+
+
 def run_backfill():
     start = os.getenv("BACKFILL_START") or (f.today_taipei() - timedelta(days=365)).isoformat()
     end = os.getenv("BACKFILL_END") or f.today_taipei().isoformat()
-    datasets = [d.strip() for d in (os.getenv("DATASETS") or "prices,monthly,holder").split(",") if d.strip()]
+    datasets = [d.strip() for d in (os.getenv("DATASETS") or "prices,monthly,holder,dividends").split(",") if d.strip()]
     deadline = time.time() + BACKFILL_MAX_MINUTES * 60
     print(f"========== ETF 歷史回補 {start} ～ {end}：{', '.join(datasets)} ==========")
     problems = []
@@ -297,6 +313,8 @@ def run_backfill():
         problems += backfill_daily(start, end, deadline)
     if "monthly" in datasets:
         problems += backfill_monthly(start, end, deadline)
+    if "dividends" in datasets:
+        problems += backfill_dividends(start, end)
     if "holder" in datasets:
         problems += backfill_holder(start, end, deadline)
     return problems

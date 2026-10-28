@@ -16,25 +16,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt
-      - name: daily
-        run: ETF_JOB=daily TARGET_DATE=2026-10-28 python -u etf_update.py || true
-      - name: weekly
-        run: ETF_JOB=weekly python -u etf_update.py || true
-      - name: monthly
-        run: ETF_JOB=monthly python -u etf_update.py || true
-      - name: backfill
-        run: ETF_JOB=backfill BACKFILL_START=2026-10-26 BACKFILL_END=2026-10-27 DATASETS=prices,monthly,holder python -u etf_update.py || true
-      - name: old month and etfDiv params
-        run: |
-          python -u - <<'PY'
-          import etf_fetch as f
-          rows, tax = f.fetch_sitca_monthly("2018-06")
-          print("2018-06 有代號的列", len(rows))
-          import re
-          html = f.http_get("https://www.sitca.org.tw/ROC/SITCA_ETF/etf_statement2.aspx?txtYM=201806&txtemcode=").content.decode("utf-8","ignore")
-          t = f.html_table_rows(html); print("2018-06 總列數", len(t)-1, t[1][:6] if len(t)>1 else None)
-          for q in ["", "&startDate=20200101&endDate=20261231", "&startYear=2020&endYear=2026", "&year=2024", "&stkNo=0050"]:
-              d = f.get_json("https://www.twse.com.tw/rwd/zh/ETF/etfDiv?response=json" + q)
-              ex = sorted(r[2] for r in d.get("data", []))
-              print(q or "(預設)", "筆數", len(ex), "最早", ex[:1], "最晚", ex[-1:])
-          PY
+      - name: backfill holder and dividends
+        run: ETF_JOB=backfill BACKFILL_START=2026-10-16 BACKFILL_END=2026-10-17 DATASETS=holder,dividends python -u etf_update.py || true
+      - name: dividends from 2005
+        run: ETF_JOB=backfill BACKFILL_START=2005-01-01 BACKFILL_END=2008-12-31 DATASETS=dividends python -u etf_update.py || true

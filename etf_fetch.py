@@ -364,11 +364,19 @@ def merge_dividends(*sources):
     return list(merged.values())
 
 
+def fetch_twse_etf_div(start=None, end=None):
+    """證交所 etfDiv：不帶日期只回傳今年；帶 startDate/endDate（YYYYMMDD）可查歷史"""
+    url = "https://www.twse.com.tw/rwd/zh/ETF/etfDiv?response=json"
+    if start:
+        url += f"&startDate={start.replace('-', '')}&endDate={(end or today_taipei().isoformat()).replace('-', '')}"
+    return parse_twse_etf_div(get_json(url))
+
+
 def fetch_dividends():
     print("正在下載 ETF 配息...")
     sources = []
     for label, fn in (
-        ("證交所 etfDiv", lambda: parse_twse_etf_div(get_json("https://www.twse.com.tw/rwd/zh/ETF/etfDiv?response=json"))),
+        ("證交所 etfDiv", fetch_twse_etf_div),
         ("證交所除息預告", lambda: parse_twse_exdiv_notice(
             get_json("https://openapi.twse.com.tw/v1/exchangeReport/TWT48U_ALL"))),
         ("櫃買除息預告", lambda: parse_tpex_exdiv_notice(
