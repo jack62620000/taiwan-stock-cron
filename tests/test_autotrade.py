@@ -57,17 +57,17 @@ def test_auto_paper_script_records_trades(use_db, monkeypatch):
     import auto_paper
     from utils.db import get_paper_trades
     use_db()
-    monkeypatch.setenv("AUTO_PAPER_GROUP_ID", "2")
+    monkeypatch.setenv("AUTO_PAPER_GROUP_ID", "11")
     # 假資料最近大盤都在均線下，這裡改成每天都可以買
     real = auto_paper.market_ok_by_date
     monkeypatch.setattr(auto_paper, "market_ok_by_date", lambda df: {d: True for d in real(df)})
-    before = get_paper_trades(2)
+    before = get_paper_trades(11)
     assert auto_paper.main() == 0
-    after = get_paper_trades(2)
+    after = get_paper_trades(11)
     assert len(after) > len(before)
     # 再跑一次不會重複記錄
     assert auto_paper.main() == 0
-    assert len(get_paper_trades(2)) == len(after)
+    assert len(get_paper_trades(11)) == len(after)
 
 
 def test_auto_paper_without_group(use_db, monkeypatch):

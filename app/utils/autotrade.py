@@ -7,6 +7,7 @@
 紀錄放在 paper_trades 指定的分組（GitHub Actions 設定 AUTO_PAPER_GROUP_ID）；分組裡的每一筆都算在這個帳戶裡。
 """
 import math
+import os
 
 import pandas as pd
 
@@ -15,6 +16,9 @@ from utils.picks import HOLD, SLOTS
 
 SOURCE = "照規則自動"
 START_CASH = 200_000        # 起始資金（元）
+# 自動帳戶的分組（和 GitHub Actions 的 AUTO_PAPER_GROUP_ID 相同）：只在選股頁「明日買進模擬」分頁顯示，
+# 自選股、模擬持股頁的分組選單不列出，避免手動加入或賣出
+AUTO_GROUP_ID = int(os.getenv("AUTO_PAPER_GROUP_ID") or 11)
 
 
 def _ok(v):

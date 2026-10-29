@@ -161,12 +161,13 @@ def index_card(label, df):
     pct = chg / (close - chg) * 100 if close != chg else 0
     return (label, f"{close:,.2f}", f"{'▲' if chg > 0 else '▼' if chg < 0 else ''} {abs(chg):,.2f}（{pct:+.2f}%）", chg)
 
-# ===== 選股頁的三個分頁 =====
+# ===== 選股頁的四個分頁 =====
 # 每個分頁是 app/views/ 底下一個檔案，pages/1_選股.py 只執行選到的那一個
 PICKS_TABS = {
     "🛒 明日買進": "picks.py",      # 大盤在月線和季線上時，隔天開盤買評分前 10 名、持有 10 天（評分＋動能＋葛蘭碧合併的規則）
     "🏆 評分排行": "signals.py",    # 原「每日選股訊號」：四面向評分排行榜、動能選股、個股分數走勢、規則回測
     "📐 均線買賣點": "granville.py",  # 原「葛蘭碧八大法則」：法則 1、2 買進預告、賣出警示、事後追蹤
+    "🤖 明日買進模擬": "paper_auto.py",  # 照明日買進規則每晚自動模擬買賣的帳戶成績（原模擬持股頁的「每日買進測試」分組）
 }
 PICKS_TAB_KEY = "picks_tab"
 
