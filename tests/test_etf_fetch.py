@@ -343,3 +343,44 @@ def test_fund_name_key_strips_disclaimers_and_share_class():
 def test_top10_rejects_changed_columns():
     html = SITCA_TOP10_HTML.replace("<td>名次</td>", "<td>排名方式</td>")
     assert f.parse_sitca_top10(html, "2026-09", {"元大台灣卓越50基金": "0050"}) == ([], set())
+
+
+def sitca_page(month, body=""):
+    return (f'<input type="hidden" name="__VIEWSTATE" value="vs{month}" />'
+            f'<select name="ctl00$ContentPlaceHolder1$ddlQ_YM"><option value="202609">2026/09</option>'
+            f'<option selected="selected" value="{month}">x</option></select>{body}')
+
+
+class FakeResp:
+    def __init__(self, text):
+        self.content = text.encode("utf-8")
+
+
+def fake_sitca(monkeypatch, answer_month):
+    posts = []
+    monkeypatch.setattr(f, "http_get", lambda url, **kw: FakeResp(sitca_page("202609")))
+
+    def post(url, data, **kw):
+        posts.append(dict(data))
+        if data.get("__EVENTTARGET"):   # 切換月份：回傳新的 VIEWSTATE
+            return FakeResp(sitca_page(data["ctl00$ContentPlaceHolder1$ddlQ_YM"]))
+        return FakeResp(sitca_page(answer_month, SITCA_TOP10_HTML) if data["ctl00$ContentPlaceHolder1$ddlQ_Class"] == "AH11"
+                        else sitca_page(answer_month))
+    monkeypatch.setattr(f, "http_post", post)
+    return posts
+
+
+def test_top10_switches_month_before_querying(monkeypatch):
+    posts = fake_sitca(monkeypatch, "202608")
+    names = {"元大台灣卓越50基金": "0050", "元大優息10年期以上美國政府債券ETF基金": "00968B"}
+    rows = f.fetch_sitca_top10("2026-08", names)
+    assert posts[0]["__EVENTTARGET"] == "ctl00$ContentPlaceHolder1$ddlQ_YM"
+    assert posts[1]["__VIEWSTATE"] == "vs202608" and posts[1]["ctl00$ContentPlaceHolder1$rdo1"] == "rbClass"
+    assert [(r["etf_id"], r["rank"]) for r in rows] == [("0050", 1), ("0050", 2), ("00968B", 1)]
+
+
+def test_top10_rejects_wrong_month_or_mostly_unknown_funds(monkeypatch):
+    fake_sitca(monkeypatch, "202609")   # 伺服器忽略月份
+    assert f.fetch_sitca_top10("2026-08", {"元大台灣卓越50基金": "0050"}) == []
+    fake_sitca(monkeypatch, "202608")   # 大部分基金不是 ETF（例如回傳了某家公司的全部基金）
+    assert f.fetch_sitca_top10("2026-08", {}) == []
