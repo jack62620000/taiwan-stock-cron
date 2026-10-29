@@ -64,10 +64,14 @@ h2, h3 { color: #e2e8f0 !important; font-size: 1.05rem !important; letter-spacin
 .stTabs [aria-selected="true"] { color: #fbbf24 !important; }
 .stTabs [data-baseweb="tab-highlight"] { background-color: #fbbf24 !important; }
 hr { border-color: #1e3a6e !important; }
-/* 手機：標題縮小、頂端空白變少 */
+/* 手機：標題縮小、頂端空白變少；分頁按鈕（segmented control）一行放不下時排成兩行，每行兩個，文字太長就換行 */
 @media (max-width: 640px) {
     h1 { font-size: 1.75rem !important; }
     [data-testid="stMainBlockContainer"] { padding-top: 3.5rem !important; }
+    [data-testid="stButtonGroup"] > div:has(> button[data-variant="segmented_control"]) { flex-wrap: wrap; overflow-x: visible; gap: 4px; }
+    [data-testid="stButtonGroup"] button[data-variant="segmented_control"] {
+        flex: 1 1 calc(50% - 4px); min-width: 0; border-radius: 8px !important; border-width: 1px !important; }
+    [data-testid="stButtonGroup"] button[data-variant="segmented_control"] p { white-space: normal; }
 }
 </style>
 """
