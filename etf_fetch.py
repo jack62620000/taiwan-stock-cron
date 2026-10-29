@@ -622,6 +622,43 @@ def select_all(table, columns, **eq):
         start += 1000
 
 
+def ensure_bucket(name):
+    """Storage 沒有這個桶就建立（不公開），封存舊資料用"""
+    storage = db().storage
+    names = {getattr(b, "name", None) or b.get("name") for b in storage.list_buckets()}
+    if name not in names:
+        storage.create_bucket(name, options={"public": False})
+        print(f"已建立 Storage 桶 {name}（不公開）")
+
+
+def archive_day(table, col, day, bucket="archive"):
+    """
+    把 table 在 day 的全部資料存成 csv.gz 上傳到 ETF 資料庫的 Storage，再下載回來確認筆數一致。回傳筆數。
+    檔案位置和主資料庫相同：桶 / 資料表 / 年 / 日期.csv.gz。任何一步失敗都會丟出錯誤，呼叫端就不會刪除資料。
+    """
+    import gzip
+    import io
+    import pandas as pd
+    from archive import archive_path
+    rows, start = [], 0
+    while True:
+        res = db().table(table).select("*").eq(col, day).order("etf_id").range(start, start + 999).execute()
+        rows += res.data or []
+        if len(res.data or []) < 1000:
+            break
+        start += 1000
+    if not rows:
+        return 0
+    data = gzip.compress(pd.DataFrame(rows).to_csv(index=False).encode("utf-8"))
+    path = archive_path(table, day)
+    store = db().storage.from_(bucket)
+    store.upload(path, data, {"content-type": "application/gzip", "upsert": "true"})
+    saved = pd.read_csv(io.BytesIO(store.download(path)), compression="gzip", dtype=str)
+    if len(saved) != len(rows):
+        raise RuntimeError(f"{path} 封存後只讀回 {len(saved)} 筆，應有 {len(rows)} 筆")
+    return len(rows)
+
+
 def count_rows(table, **eq):
     q = db().table(table).select(TABLE_KEYS[table][0], count="exact")
     for col, val in eq.items():
