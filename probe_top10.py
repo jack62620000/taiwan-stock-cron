@@ -15,3 +15,7 @@ for u in sorted(unk):
     pre=k[:6]
     for c in rows[1:]:
         if f.fund_name_key(c[5])[:6]==pre: print("   CAND", repr(c[2]), repr(c[5]))
+print("UNKNOWN TOTAL", len(unk))
+from datetime import date
+m = f.fetch_margin(date(2026,10,28))
+print("MARGIN rows", len(m)); print(m[:2]); print([r for r in m if r["etf_id"] in ("0050","00679B","00937B")])

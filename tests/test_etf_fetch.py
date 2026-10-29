@@ -326,6 +326,18 @@ def test_top10_maps_fund_names_to_codes():
     assert unknown == {"不是ETF的基金"}
 
 
+def test_fund_name_key_strips_disclaimers_and_share_class():
+    key = f.fund_name_key
+    assert key("中國信託亞太高股息ETF基金(本子基金之配息來源可能為收益平準金且基金並無保證收益及配息)") == "中國信託亞太高股息ETF基金"
+    assert key("兆豐台灣豐收主動式ETF基金(基金之配息來源可能為收益平準金)") == key("兆豐台灣豐收主動式 ETF基金")
+    assert key("貝萊德iShares安碩收益優化投資等級債主動式ETF基金(基金有一定比重投資於非投資等級之高風險債券，配息來源可能為收益平準金且並無保證收益及配息)") \
+        == "貝萊德iShares安碩收益優化投資等級債主動式ETF基金"
+    assert key("國泰美國債券ETF傘型基金之20年期(以上)美國公債指數基金-新台幣(配息)") \
+        == key("國泰美國債券ETF傘型基金之20年期(以上)美國公債指數基金(基金之配息來源可能為收益平準金)")
+    # 名稱本身的括號要保留
+    assert key("國泰息收ETF傘型基金之10年期(以上)BBB美元息收公司債券基金") == "國泰息收ETF傘型基金之10年期(以上)BBB美元息收公司債券基金"
+
+
 def test_top10_rejects_changed_columns():
     html = SITCA_TOP10_HTML.replace("<td>名次</td>", "<td>排名方式</td>")
     assert f.parse_sitca_top10(html, "2026-09", {"元大台灣卓越50基金": "0050"}) == ([], set())

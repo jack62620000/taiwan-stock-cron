@@ -577,10 +577,10 @@ TOP10_COLUMNS = {0: "基金名稱", 1: "名次", 2: "標的種類", 3: "標的�
 
 
 def fund_name_key(name):
-    """基金名稱比對用：去掉「(本基金…)」警語、空白，全形括號改半形"""
-    name = re.sub(r"<[^>]+>|&nbsp;", "", name or "")
-    name = re.sub(r"\s*[（(]本基金.*$", "", name.strip())
-    return re.sub(r"\s+", "", name).replace("（", "(").replace("）", ")")
+    """基金名稱比對用：去掉結尾的配息警語「(本基金之配息來源…)」、級別「-新台幣(配息)」、空白，全形括號改半形"""
+    name = re.sub(r"<[^>]+>|&nbsp;|\s+", "", name or "").replace("（", "(").replace("）", ")")
+    name = re.sub(r"\([^()]*(配息|保證|風險)[^()]*\)$", "", name)
+    return re.sub(r"-(新台幣|新臺幣|美元|人民幣|日圓)(\(.*\))?$", "", name)
 
 
 def parse_sitca_names(html, code_by_tax_id=None):
