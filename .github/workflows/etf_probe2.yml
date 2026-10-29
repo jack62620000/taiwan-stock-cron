@@ -1,0 +1,17 @@
+# 暫時用來驗證 ETF 新資料來源，只在這個分支 push 時執行，不會合併到 main
+name: ETF 新資料來源驗證（暫時）
+on:
+  push:
+    branches: [claude/etf-more-data]
+    paths: [probe/**, .github/workflows/etf_probe2.yml]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install requests==2.34.2
+      - run: python -u probe/etf_probe2.py
