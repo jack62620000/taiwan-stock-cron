@@ -25,6 +25,7 @@ def build_tables():
         "stock_info", "daily_prices", "price_adjustments", "stock_ins_daily", "margin_utilization",
         "holder_distribution", "monthly_revenue", "quarterly_report", "market_index",
         "futures_institutional", "daily_signals", "momentum_signals", "watch_groups", "watchlist", "paper_trades",
+        "us_market_daily",
     ]}
     for sid, name, market, industry, drift in STOCKS:
         t["stock_info"].append({"stock_id": sid, "stock_name": name, "industry": industry, "market": market,
@@ -117,6 +118,18 @@ def build_tables():
             t["futures_institutional"].append({
                 "date": d, "contract_code": "臺股期貨", "item": item, "long_oi": 50_000, "long_oi_value": 1,
                 "short_oi": 50_000 - net, "short_oi_value": 1, "net_oi": net, "net_oi_value": net})
+    # 美股收盤（ETF 資料庫的 us_market_daily，測試時和主資料庫用同一份假資料）
+    for sym, name, cat, base in (("^GSPC", "S&P 500", "index", 6000), ("^SOX", "費城半導體", "index", 5000),
+                                 ("^VIX", "VIX 恐慌指數", "index", 18), ("TSM", "台積電 ADR", "adr", 30),
+                                 ("TWD=X", "美元／台幣", "fx", 32), ("UST10Y", "美國 10 年期公債殖利率", "bond", 4.2)):
+        prev = None
+        for d in days[-30:]:
+            v = round(base * float(np.exp(rng.normal(0, 0.01))), 4)
+            t["us_market_daily"].append({
+                "symbol": sym, "date": d, "name": name, "category": cat, "close": v, "prev_close": prev,
+                "change": None if prev is None else round(v - prev, 4),
+                "change_pct": None if prev is None else round((v / prev - 1) * 100, 4)})
+            prev = v
     return t
 
 

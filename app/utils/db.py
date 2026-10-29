@@ -1,6 +1,7 @@
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, timedelta
 import httpx
 import pandas as pd
 from supabase import ClientOptions, create_client
@@ -11,6 +12,9 @@ load_dotenv()
 # 改用 HTTP/1.1 連線池：每個執行緒各用一條連線，同時查詢才真的同時進行。
 _http = httpx.Client(http2=False, timeout=120, follow_redirects=True, limits=httpx.Limits(max_connections=10))
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"), options=ClientOptions(httpx_client=_http))
+# 美股收盤在 ETF 專用資料庫（另一個 Supabase 專案）；網站的 secrets 沒設 ETF_SUPABASE_URL / ETF_SUPABASE_KEY 時是 None
+etf_supabase = (create_client(os.getenv("ETF_SUPABASE_URL"), os.getenv("ETF_SUPABASE_KEY"))
+                if os.getenv("ETF_SUPABASE_URL") and os.getenv("ETF_SUPABASE_KEY") else None)
 
 
 # ===== 共用工具 =====
@@ -444,6 +448,19 @@ def get_data_status():
         latest = list(pool.map(lambda t: _table_latest(t[1], t[2]), DATA_TABLES))
     return [{"name": name, "table": table, "freq": freq, "latest": d}
             for (name, table, _, freq), d in zip(DATA_TABLES, latest)]
+
+
+# ===== 美股收盤（ETF 專用資料庫的 us_market_daily，fetch_us_market.py 寫入）=====
+def get_us_market(calendar_days=60):
+    """最近 calendar_days 天的美股、原油、匯率、美債收盤（依日期排序）；網站沒設 ETF 資料庫連線時回傳 None"""
+    if etf_supabase is None:
+        return None
+    since = (date.today() - timedelta(days=calendar_days)).isoformat()
+    return pd.DataFrame(_fetch_all(
+        lambda: etf_supabase.table("us_market_daily")
+            .select("symbol, date, name, category, close, change, change_pct")
+            .gte("date", since).order("date").order("symbol")
+    ))
 
 
 # ===== 分組：每個登入帳號底下可以有多個分組，自選股、模擬持股都屬於某一個分組 =====

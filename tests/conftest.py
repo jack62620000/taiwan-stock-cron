@@ -44,6 +44,7 @@ def use_db():
     def _set(empty=False):
         client = make_client(empty)
         db.supabase = client
+        db.etf_supabase = client
         st.cache_data.clear()
         db.get_stock_list.cache_clear()
         return client
