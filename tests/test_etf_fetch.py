@@ -267,3 +267,65 @@ def test_backfill_ins_only_skips_prices(monkeypatch):
     monkeypatch.setattr(u, "fetch_prices_and_ins", lambda d, **kw: calls.append((d, kw)) or (0, 0, []))
     u.backfill_daily("2025-01-01", "2025-01-03", float("inf"), with_prices=False, with_ins=True)
     assert calls == [("2025-01-02", {"with_prices": False, "with_ins": True})]
+
+
+TWSE_MARGIN = {
+    "stat": "OK",
+    "tables": [{"title": "115年10月28日 信用交易統計", "fields": ["項目"], "data": []},
+               {"title": "115年10月28日 融資融券彙總 (ETF)",
+                "fields": ["代號", "名稱", "買進", "賣出", "現金償還", "前日餘額", "今日餘額", "次一營業日限額",
+                           "買進", "賣出", "現券償還", "前日餘額", "今日餘額", "次一營業日限額", "資券互抵", "註記"],
+                "data": [["00400A", "主動國泰動能高息", "268", "209", "2", "14,475", "14,532", "533,160",
+                          "0", "0", "0", "0", "0", "533,160", "6", " "]]}],
+}
+TPEX_MARGIN = {
+    "date": "20261028",
+    "tables": [{"fields": ["代號", "名稱", "前資餘額(張)", "資買", "資賣", "現償", "資餘額", "資屬證金", "資使用率(%)",
+                           "資限額", "前券餘額(張)", "券賣", "券買", "券償", "券餘額", "券屬證金", "券使用率(%)",
+                           "券限額", "資券相抵(張)", "備註"],
+                "data": [["00679B", "元大美債20年", "4,725", "41", "107", "1", "4,658", "31", "0.3", "1,530,173",
+                          "35", "0", "0", "0", "35", "0", "0.0", "1,530,173", "0", ""],
+                         ["6488", "環球晶", "1", "0", "0", "0", "1", "0", "0.1", "9", "0", "0", "0", "0", "0", "0",
+                          "0.0", "9", "0", ""]]}],
+}
+
+
+def test_margin():
+    twse = f.parse_twse_margin(TWSE_MARGIN, DAY)
+    assert twse == [{"etf_id": "00400A", "date": DAY, "margin_balance": 14532, "margin_limit": 533160,
+                     "margin_rate": 2.73, "short_balance": 0, "short_rate": 0.0}]
+    tpex = f.parse_tpex_margin(TPEX_MARGIN, DAY)
+    assert tpex == [{"etf_id": "00679B", "date": DAY, "margin_balance": 4658, "margin_limit": 1530173,
+                     "margin_rate": 0.3, "short_balance": 35, "short_rate": 0.0}]
+    assert f.parse_tpex_margin({**TPEX_MARGIN, "date": "20261027"}, DAY) == []
+
+
+SITCA_TOP10_HTML = """<table><tr><td>基金名稱</td><td>名次</td><td>標的種類</td><td>標的代號 或 Bloomberg Isin Code</td>
+<td>標的名稱</td><td>金額</td><td>擔保機構**</td><td>次順位債券**</td><td>受益權單位數***</td>
+<td>占基金淨資產價值 之比例(%)</td></tr>
+<tr><td rowspan="11">元大台灣卓越50基金</td><td>1</td><td>國內上市</td><td>2330</td><td>台積電</td>
+<td>1,488,000,000,000</td><td></td><td></td><td>0</td><td>61.20</td></tr>
+<tr><td>2</td><td>國內上市</td><td>2317</td><td>鴻海</td><td>110,000,000,000</td><td></td><td></td><td>0</td><td>4.52</td></tr>
+<tr><td>合計</td><td>65.72</td></tr>
+<tr><td>元大優息10年期以上美國政府債券ETF基金 (本基金之配息來源可能為收益平準金且並無保證收益及配息)</td>
+<td>1</td><td>政府公債 無擔保</td><td>US912810TW80</td><td>US TREASURY N/B 4.75% 11/15/2043</td>
+<td>135,417,597</td><td></td><td></td><td>0</td><td>8.80</td></tr>
+<tr><td>不是ETF的基金</td><td>1</td><td>國內上市</td><td>2454</td><td>聯發科</td><td>1</td><td></td><td></td><td>0</td>
+<td>1.00</td></tr></table>"""
+
+
+def test_top10_maps_fund_names_to_codes():
+    names = f.parse_sitca_names(SITCA_HTML, {"42461573": "00679B"})
+    assert names["元大台灣卓越50基金"] == "0050"
+    assert names["元大美國政府20年期(以上)債券基金"] == "00679B"
+    names["元大優息10年期以上美國政府債券ETF基金"] = "00968B"
+    rows, unknown = f.parse_sitca_top10(SITCA_TOP10_HTML, "2026-09", names)
+    assert [(r["etf_id"], r["rank"], r["holding_code"]) for r in rows] == [
+        ("0050", 1, "2330"), ("0050", 2, "2317"), ("00968B", 1, "US912810TW80")]
+    assert rows[0]["amount"] == 1488000000000 and rows[0]["weight_pct"] == 61.2
+    assert unknown == {"不是ETF的基金"}
+
+
+def test_top10_rejects_changed_columns():
+    html = SITCA_TOP10_HTML.replace("<td>名次</td>", "<td>排名方式</td>")
+    assert f.parse_sitca_top10(html, "2026-09", {"元大台灣卓越50基金": "0050"}) == ([], set())
