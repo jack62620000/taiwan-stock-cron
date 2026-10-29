@@ -45,14 +45,21 @@ def render_account_sidebar():
 def user_groups():
     """目前帳號的分組；第一次使用時建立預設分組（主帳號會先認領分組功能上線前的資料）"""
     from utils.db import get_groups, create_group, claim_unowned_groups
+    from utils.autotrade import AUTO_GROUP_ID
     owner = st.session_state.get("user", "")
-    groups = get_groups(owner)
+
+    def visible():
+        # 照規則自動的分組只在選股頁「明日買進模擬」分頁看，不出現在分組選單
+        groups = get_groups(owner)
+        return groups[groups["id"].astype(int) != AUTO_GROUP_ID].reset_index(drop=True)
+
+    groups = visible()
     if groups.empty and st.session_state.get("primary"):
         claim_unowned_groups(owner)
-        groups = get_groups(owner)
+        groups = visible()
     if groups.empty:
         create_group(owner, DEFAULT_GROUP)
-        groups = get_groups(owner)
+        groups = visible()
     return groups
 
 

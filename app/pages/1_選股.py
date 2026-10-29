@@ -12,7 +12,7 @@ require_login()
 st.set_page_config(page_title="選股", page_icon="🧭", layout="wide")
 st.title("🧭 選股")
 
-# 三個分頁各是 app/views/ 底下一個檔案；只執行選到的那一個，其他分頁的資料不會載入
+# 每個分頁各是 app/views/ 底下一個檔案；只執行選到的那一個，其他分頁的資料不會載入
 c1, c2 = st.columns([4, 1])
 with c1:
     tab = st.segmented_control("分頁", list(PICKS_TABS), key=PICKS_TAB_KEY,

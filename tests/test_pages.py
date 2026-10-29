@@ -39,10 +39,10 @@ def test_page_with_empty_db(use_db, page):
     assert errors(at) == []
 
 
-@pytest.mark.parametrize("tab", ["🛒 明日買進", "🏆 評分排行", "📐 均線買賣點"])
+@pytest.mark.parametrize("tab", ["🛒 明日買進", "🏆 評分排行", "📐 均線買賣點", "🤖 明日買進模擬"])
 @pytest.mark.parametrize("empty", [False, True])
 def test_picks_tabs(use_db, tab, empty):
-    """選股頁的三個分頁各自都要能顯示"""
+    """選股頁的每個分頁各自都要能顯示"""
     use_db(empty=empty)
     at = run_page(APP / "pages" / "1_選股.py", picks_tab=tab)
     assert errors(at) == []
@@ -176,9 +176,22 @@ def test_momentum_followup_section(use_db):
     assert any("ret_now" in list(d.value.columns) for d in at.dataframe)
 
 
-def test_paper_page_auto_account(use_db):
-    """模擬持股頁：照規則自動的分組顯示自動帳戶成績（總資產走勢）"""
+def test_picks_auto_account_tab(use_db):
+    """選股頁「明日買進模擬」分頁：顯示自動帳戶成績（總資產走勢）與持有中、已賣出紀錄"""
     use_db()
-    at = run_page(APP / "pages" / "10_模擬持股.py", group_id=2)
+    at = run_page(APP / "pages" / "1_選股.py", picks_tab="🤖 明日買進模擬")
     assert errors(at) == []
-    assert any("自動帳戶成績" in h.value for h in at.subheader)
+    heads = [h.value for h in at.subheader]
+    assert any("自動帳戶成績" in h for h in heads)
+    assert "📈 持有中" in heads and "✅ 已賣出" in heads
+
+
+@pytest.mark.parametrize("page", ["8_自選股.py", "10_模擬持股.py"])
+def test_auto_group_hidden_from_group_picker(use_db, page):
+    """自動帳戶的分組不出現在自選股、模擬持股頁的分組選單；之前選過也會換回一般分組"""
+    use_db()
+    at = run_page(APP / "pages" / page, group_id=11)
+    assert errors(at) == []
+    picker = next(s for s in at.selectbox if s.label == "📁 分組")
+    assert 11 not in picker.options and "每日買進測試" not in picker.options
+    assert at.session_state["group_id"] == 1
