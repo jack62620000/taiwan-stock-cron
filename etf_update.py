@@ -2,11 +2,11 @@
 台股 ETF 排程與回補（GitHub Actions：.github/workflows/etf_update.yml）
 
 用環境變數 ETF_JOB 選擇工作：
-  daily    平日盤後：ETF 清單、每日價量、三大法人、融資融券、淨值折溢價、配息；並補最近幾個交易日的缺漏，
+  daily    平日盤後：ETF 清單、每日價量、三大法人、融資融券、借券賣出、淨值折溢價、配息；並補最近幾個交易日的缺漏，
            最後清除超過保留期限的舊資料（先封存到 ETF 資料庫的 Storage 再刪除，期限見 RETENTION）
   weekly   週六：集保持股分級（開放資料最新一週）
   monthly  每月：投信公會月資料與前十大持股（重抓最近兩個月），並補上上櫃 ETF 的基金統編
-  backfill 歷史回補：DATASETS 選 prices,ins,margin,monthly,top10,holder,dividends（逗號分隔），
+  backfill 歷史回補：DATASETS 選 prices,ins,margin,sbl,monthly,top10,holder,dividends（逗號分隔），
            區間 BACKFILL_START～BACKFILL_END
            （上櫃 ETF 的歷史配息來源只有預告表，回補只含上市 ETF）
 其他設定：
@@ -41,6 +41,7 @@ RETENTION = [
     ("etf_ins_daily", "date", 2),
     ("etf_holder_distribution", "week_date", 2),
     ("etf_margin_daily", "date", 1),            # 個股融資融券保留 1 年
+    ("etf_sbl_daily", "date", 1),               # 借券和融資融券同屬信用交易，比照保留 1 年
     ("etf_top_holdings", "year_month", 3),      # 前十大持股比照價量 3 年
 ]
 ANCHOR_ETF = "0050"     # 每天都有交易，用它找出過期的日期
@@ -121,6 +122,34 @@ def fill_recent_gaps(day):
     return problems
 
 
+CREDIT_TABLES = [("etf_margin_daily", "融資融券", lambda d: f.fetch_margin(d)),
+                 ("etf_sbl_daily", "借券賣出", lambda d: f.fetch_sbl(d))]
+
+
+def fill_recent_credit(day):
+    """融資融券、借券賣出較晚公布：排程太早跑時當天會缺，下一次每日排程補抓最近幾個交易日"""
+    if DRY_RUN:
+        return []
+    start = (date.fromisoformat(day) - timedelta(days=14)).isoformat()
+    days = [d for d in f.trading_days(start, day) if d < day][-RECENT_TRADING_DAYS:]
+    problems = []
+    for d in days:
+        if f.count_rows("etf_daily_prices", date=d) < MIN_DAILY_ROWS:
+            continue  # 休市或價量也缺，交給 fill_recent_gaps
+        for table, label, fetch in CREDIT_TABLES:
+            if f.count_rows(table, date=d) >= MIN_DAILY_ROWS:
+                continue
+            print(f"\n--- 補抓 {d} {label} ---")
+            try:
+                n = save(table, fetch(d))[0]
+            except Exception as e:
+                n = 0
+                print(f"⚠️ {d} {label}：{e}")
+            if n < MIN_DAILY_ROWS:
+                problems.append(f"{d} {label}補抓後只有 {n} 筆")
+    return problems
+
+
 def run_daily(day):
     print(f"========== ETF 每日資料 {day} ==========")
     if not f.trading_days(day, day):
@@ -149,12 +178,17 @@ def run_daily(day):
         problems.append("配息三個來源都沒有取得資料")
     problems += fill_recent_gaps(day)
 
-    n_margin = None
+    n_margin = n_sbl = None
     if n_price is not None:
         try:
             n_margin = save("etf_margin_daily", f.fetch_margin(day))[0]
         except Exception as e:
             problems.append(f"融資融券：{e}")
+        try:
+            n_sbl = save("etf_sbl_daily", f.fetch_sbl(day))[0]
+        except Exception as e:
+            problems.append(f"借券賣出：{e}")
+        problems += fill_recent_credit(day)
     problems += cleanup_expired(f.today_taipei())
 
     if n_price is not None:
@@ -162,8 +196,11 @@ def run_daily(day):
             problems.append(f"{day} 價量只有 {n_price} 筆（來源可能尚未更新或被擋）")
         if n_ins < MIN_DAILY_ROWS:
             problems.append(f"{day} 法人只有 {n_ins} 筆")
-        if n_margin is not None and n_margin < MIN_DAILY_ROWS:
+        # 當天 0 筆通常是還沒公布，下一次每日排程會補抓；有資料但不足才算問題
+        if n_margin and n_margin < MIN_DAILY_ROWS:
             problems.append(f"{day} 融資融券只有 {n_margin} 筆")
+        if n_sbl and n_sbl < MIN_DAILY_ROWS:
+            problems.append(f"{day} 借券賣出只有 {n_sbl} 筆")
         if nav_day != day or n_nav < MIN_DAILY_ROWS:
             problems.append(f"MIS 淨值資料日 {nav_day}、{n_nav} 筆，不是 {day} 的完整資料")
     return problems
@@ -302,6 +339,22 @@ def backfill_margin(start, end, deadline):
     return []
 
 
+def backfill_sbl(start, end, deadline):
+    days = f.trading_days(start, end)
+    print(f"借券賣出回補：{start} ～ {end}，共 {len(days)} 個平日")
+    for i, d in enumerate(days):
+        if time.time() > deadline:
+            return [f"已到執行時間上限，{d} 之後的借券賣出還沒補，請用同一區間再執行一次接續"]
+        if not DRY_RUN and f.count_rows("etf_sbl_daily", date=d) >= MIN_DAILY_ROWS:
+            continue
+        print(f"\n[{i + 1}/{len(days)}] {d}")
+        try:
+            save("etf_sbl_daily", f.fetch_sbl(d))
+        except Exception as e:
+            print(f"⚠️ {d} 借券賣出：{e}")
+    return []
+
+
 def backfill_top10(start, end, deadline):
     """前十大持股：公會資料 2021-09 起；從新到舊，讓基金統編對照表越來越完整"""
     months = [m for m in reversed(month_range(max(start, "2021-09-01"), end))
@@ -424,6 +477,8 @@ def run_backfill():
         problems += backfill_daily(start, end, deadline, "prices" in datasets, "ins" in datasets)
     if "margin" in datasets:
         problems += backfill_margin(start, end, deadline)
+    if "sbl" in datasets:
+        problems += backfill_sbl(start, end, deadline)
     if "monthly" in datasets:
         problems += backfill_monthly(start, end, deadline)
     if "top10" in datasets:

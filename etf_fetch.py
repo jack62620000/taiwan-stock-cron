@@ -45,6 +45,7 @@ TABLE_KEYS = {
     "etf_monthly_stats":       ("etf_id", "year_month"),
     "etf_holder_distribution": ("etf_id", "week_date"),
     "etf_margin_daily":        ("etf_id", "date"),
+    "etf_sbl_daily":           ("etf_id", "date"),
     "etf_top_holdings":        ("etf_id", "year_month", "rank"),
 }
 
@@ -508,6 +509,53 @@ def fetch_margin(day):
         day)
     tpex = parse_tpex_margin(get_json(
         f"https://www.tpex.org.tw/www/zh-tw/margin/balance?date={tpex_date(day)}&id=&response=json"), day)
+    return twse + tpex
+
+
+# ==================== 5c. 借券賣出餘額 ====================
+# 信用額度總量管制餘額表：欄 8～13 是借券賣出（前日餘額、當日賣出、當日還券、當日調整、當日餘額、次一營業日可借券賣出限額），單位：股
+SBL_TWSE_COLUMNS = {0: "代號", 9: "當日賣出", 10: "當日還券", 11: "當日調整", 12: "當日餘額", 13: "限額"}
+SBL_TPEX_COLUMNS = {0: "代號", 9: "當日賣出", 10: "當日還券", 11: "當日調整", 12: "當日餘額", 13: "借券賣出限額"}
+
+
+def sbl_rows(rows, day):
+    return [{"etf_id": r[0].strip(), "date": day, "sbl_sell": to_int(r[9]), "sbl_return": to_int(r[10]),
+             "sbl_adjust": to_int(r[11]), "sbl_balance": to_int(r[12]), "sbl_limit": to_int(r[13])}
+            for r in rows if len(r) >= 14 and is_etf_code(r[0])]
+
+
+def parse_twse_sbl(data, day):
+    """TWT93U（全部上市證券，只留 ETF）"""
+    if not data or data.get("stat") != "OK":
+        return []
+    if str(data.get("date", "")).strip() not in ("", day.replace("-", "")):
+        print(f"⚠️ 上市借券：回應日期 {data.get('date')} 與要求日期 {day} 不符，跳過")
+        return []
+    if not fields_ok(data.get("fields"), SBL_TWSE_COLUMNS, "上市 ETF 借券賣出"):
+        return []
+    return sbl_rows(data.get("data") or [], day)
+
+
+def parse_tpex_sbl(data, day):
+    """margin/sbl（全部上櫃證券，只留 ETF）"""
+    tables = (data or {}).get("tables") or []
+    if not tables or not tables[0].get("data"):
+        return []
+    resp = str(data.get("date", "")).strip()
+    if resp and resp != day.replace("-", ""):
+        print(f"⚠️ 上櫃借券：回應日期 {resp} 與要求日期 {day} 不符，跳過")
+        return []
+    if not fields_ok(tables[0].get("fields"), SBL_TPEX_COLUMNS, "上櫃 ETF 借券賣出"):
+        return []
+    return sbl_rows(tables[0]["data"], day)
+
+
+def fetch_sbl(day):
+    print(f"正在下載 {day} ETF 借券賣出餘額...")
+    twse = parse_twse_sbl(get_json(
+        f"https://www.twse.com.tw/exchangeReport/TWT93U?response=json&date={day.replace('-', '')}"), day)
+    tpex = parse_tpex_sbl(get_json(
+        f"https://www.tpex.org.tw/www/zh-tw/margin/sbl?date={tpex_date(day)}&id=&response=json"), day)
     return twse + tpex
 
 
