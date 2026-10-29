@@ -207,12 +207,14 @@ if not trades.empty:
             order = {"⛔ 跌破停損": 0, "⚠️ 出現賣出訊號": 1, "🔔 接近賣出": 2, "🔥 過熱": 3, "✅ 續抱": 4}
             exits = exits.sort_values("狀態", key=lambda c: c.map(order), kind="stable")
             exits = exits[["狀態", "代號", "名稱", "買進日", "買進價", "最新收盤", "報酬%", "停損價", "賣出觸發價", "說明"]]
-            # 沒有觸發價的股票是 None，欄位會變成文字型態、顯示成「None」，轉成數字後缺值才會留白
             nums = ["買進價", "最新收盤", "報酬%", "停損價", "賣出觸發價"]
             exits[nums] = exits[nums].apply(pd.to_numeric, errors="coerce")
+            # 表格遇到缺值一律顯示「None」（na_rep 沒有作用），會缺值的兩欄先轉成文字，缺值留白
+            for c in ["停損價", "賣出觸發價"]:
+                exits[c] = exits[c].map(lambda v: "" if pd.isna(v) else f"{v:,.2f}")
             st.dataframe(
                 exits.style
-                    .format("{:,.2f}", subset=["買進價", "最新收盤", "停損價", "賣出觸發價"], na_rep="")
+                    .format("{:,.2f}", subset=["買進價", "最新收盤"], na_rep="")
                     .format("{:+.2f}", subset=["報酬%"], na_rep="")
                     .map(style_sign, subset=["報酬%"]),
                 hide_index=True, width="stretch", height=min(500, 38 + 35 * len(exits)),
