@@ -1,5 +1,5 @@
 import etf_fetch as f
-for ym in ["2026-08", "2023-10"]:
+for ym in ["2023-10", "2025-03"]:
     html = f.fetch_sitca_statement(ym)
     names = f.parse_sitca_names(html, {})
     rows = f.fetch_sitca_top10(ym, names)

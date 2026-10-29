@@ -641,7 +641,7 @@ def sitca_selected_month(html):
 
 def fetch_sitca_top10(year_month, code_by_name):
     """
-    逐一查詢 ETF 類型（ASP.NET 表單）。
+    逐一查詢 ETF 類型（ASP.NET 表單，只查這個月份選單裡有的類型）。
     網頁預設是最新月份；查其他月份要先送出「切換月份」的 postback 拿新的 __VIEWSTATE，
     否則伺服器會忽略月份與類型，回傳預設公司的資料。
     回傳的頁面月份不對、或大部分基金對不到 ETF 代號時，整個月份當作失敗（回傳空清單）。
@@ -654,8 +654,11 @@ def fetch_sitca_top10(year_month, code_by_name):
     form.update(query, __EVENTTARGET="ctl00$ContentPlaceHolder1$ddlQ_YM", __EVENTARGUMENT="")
     page = http_post(SITCA_TOP10_URL, data=form).content.decode("utf-8", "ignore")
     hidden = sitca_hidden_fields(page)
+    # 舊月份沒有的類型（例如 2025 年以前沒有主動式 ETF）不在選單裡，送出會被伺服器拒絕
+    sel = re.search(r'<select[^>]*ddlQ_Class"[^>]*>(.*?)</select>', page, re.S)
+    offered = set(re.findall(r'value="([^"]*)"', sel.group(1))) if sel else set(SITCA_ETF_CLASSES)
     rows, unknown, funds = [], set(), set()
-    for cls in SITCA_ETF_CLASSES:
+    for cls in [c for c in SITCA_ETF_CLASSES if c in offered]:
         form = dict(hidden)
         form.update(query)
         form.update({"ctl00$ContentPlaceHolder1$ddlQ_Class": cls, "ctl00$ContentPlaceHolder1$BtnQuery": "查詢"})

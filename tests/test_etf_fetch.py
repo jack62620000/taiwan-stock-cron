@@ -348,7 +348,9 @@ def test_top10_rejects_changed_columns():
 def sitca_page(month, body=""):
     return (f'<input type="hidden" name="__VIEWSTATE" value="vs{month}" />'
             f'<select name="ctl00$ContentPlaceHolder1$ddlQ_YM"><option value="202609">2026/09</option>'
-            f'<option selected="selected" value="{month}">x</option></select>{body}')
+            f'<option selected="selected" value="{month}">x</option></select>'
+            f'<select name="ctl00$ContentPlaceHolder1$ddlQ_Class" id="ctl00_ContentPlaceHolder1_ddlQ_Class">'
+            f'<option value="AH11">x</option><option value="AH21">x</option></select>{body}')
 
 
 class FakeResp:
@@ -377,6 +379,8 @@ def test_top10_switches_month_before_querying(monkeypatch):
     assert posts[0]["__EVENTTARGET"] == "ctl00$ContentPlaceHolder1$ddlQ_YM"
     assert posts[1]["__VIEWSTATE"] == "vs202608" and posts[1]["ctl00$ContentPlaceHolder1$rdo1"] == "rbClass"
     assert [(r["etf_id"], r["rank"]) for r in rows] == [("0050", 1), ("0050", 2), ("00968B", 1)]
+    # 只查選單裡有的類型
+    assert [p["ctl00$ContentPlaceHolder1$ddlQ_Class"] for p in posts[1:]] == ["AH11", "AH21"]
 
 
 def test_top10_rejects_wrong_month_or_mostly_unknown_funds(monkeypatch):
