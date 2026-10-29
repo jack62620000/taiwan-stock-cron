@@ -1,0 +1,34 @@
+name: 美股收盤資料
+
+# 寫入 ETF 專用的 Supabase 專案（secrets：ETF_SUPABASE_URL、ETF_SUPABASE_KEY），給每日早上 8:00 的簡報用
+on:
+  schedule:
+    # 週二～週六台灣時間早上 6:20（UTC 週一～週五 22:20）- 美股收盤後、簡報前
+    - cron: '20 22 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '試跑：只下載與解析，不寫入資料庫'
+        type: boolean
+        default: false
+
+jobs:
+  us-market:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Fetch US market close
+        env:
+          ETF_SUPABASE_URL: ${{ secrets.ETF_SUPABASE_URL }}
+          ETF_SUPABASE_KEY: ${{ secrets.ETF_SUPABASE_KEY }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          PYTHONUNBUFFERED: '1'
+        run: python fetch_us_market.py
