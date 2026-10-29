@@ -629,24 +629,52 @@ def parse_sitca_top10(html, year_month, code_by_name):
     return out, unknown
 
 
+def sitca_hidden_fields(html):
+    return dict(re.findall(r'<input[^>]+name="(__[A-Z]+)"[^>]+value="([^"]*)"', html))
+
+
+def sitca_selected_month(html):
+    sel = re.search(r'<select[^>]*ddlQ_YM[^>]*>(.*?)</select>', html, re.S)
+    got = re.search(r'<option[^>]*selected="selected"[^>]*value="(\d{6})"', sel.group(1)) if sel else None
+    return got.group(1) if got else ""
+
+
 def fetch_sitca_top10(year_month, code_by_name):
-    """逐一查詢 ETF 類型（ASP.NET 表單：先 GET 取得 __VIEWSTATE，再 POST）"""
+    """
+    逐一查詢 ETF 類型（ASP.NET 表單，只查這個月份選單裡有的類型）。
+    網頁預設是最新月份；查其他月份要先送出「切換月份」的 postback 拿新的 __VIEWSTATE，
+    否則伺服器會忽略月份與類型，回傳預設公司的資料。
+    回傳的頁面月份不對、或大部分基金對不到 ETF 代號時，整個月份當作失敗（回傳空清單）。
+    """
     print(f"正在下載投信公會 {year_month} ETF 前十大持股...")
+    ym = year_month.replace("-", "")
+    query = {"ctl00$ContentPlaceHolder1$ddlQ_YM": ym, "ctl00$ContentPlaceHolder1$rdo1": "rbClass"}
     page = http_get(SITCA_TOP10_URL).content.decode("utf-8", "ignore")
-    hidden = dict(re.findall(r'<input[^>]+name="(__[A-Z]+)"[^>]+value="([^"]*)"', page))
-    rows, unknown = [], set()
-    for cls in SITCA_ETF_CLASSES:
+    form = sitca_hidden_fields(page)
+    form.update(query, __EVENTTARGET="ctl00$ContentPlaceHolder1$ddlQ_YM", __EVENTARGUMENT="")
+    page = http_post(SITCA_TOP10_URL, data=form).content.decode("utf-8", "ignore")
+    hidden = sitca_hidden_fields(page)
+    # 舊月份沒有的類型（例如 2025 年以前沒有主動式 ETF）不在選單裡，送出會被伺服器拒絕
+    sel = re.search(r'<select[^>]*ddlQ_Class"[^>]*>(.*?)</select>', page, re.S)
+    offered = set(re.findall(r'value="([^"]*)"', sel.group(1))) if sel else set(SITCA_ETF_CLASSES)
+    rows, unknown, funds = [], set(), set()
+    for cls in [c for c in SITCA_ETF_CLASSES if c in offered]:
         form = dict(hidden)
-        form.update({"ctl00$ContentPlaceHolder1$ddlQ_YM": year_month.replace("-", ""),
-                     "ctl00$ContentPlaceHolder1$rdo1": "rbClass",
-                     "ctl00$ContentPlaceHolder1$ddlQ_Class": cls,
-                     "ctl00$ContentPlaceHolder1$BtnQuery": "查詢"})
+        form.update(query)
+        form.update({"ctl00$ContentPlaceHolder1$ddlQ_Class": cls, "ctl00$ContentPlaceHolder1$BtnQuery": "查詢"})
         html = http_post(SITCA_TOP10_URL, data=form).content.decode("utf-8", "ignore")
+        if sitca_selected_month(html) != ym:
+            print(f"  ⚠️ 投信公會回傳的月份是 {sitca_selected_month(html) or '?'}，不是 {ym}，這個月份不寫入")
+            return []
         got, miss = parse_sitca_top10(html, year_month, code_by_name)
         rows += got
         unknown |= miss
+        funds |= {r["etf_id"] for r in got}
     if unknown:
         print(f"  {len(unknown)} 檔基金名稱對不到代號（例：{sorted(unknown)[:3]}）")
+    if len(unknown) > len(funds):
+        print(f"  ⚠️ 對不到代號的基金太多（{len(unknown)} 檔，對到 {len(funds)} 檔），這個月份不寫入")
+        return []
     return rows
 
 
