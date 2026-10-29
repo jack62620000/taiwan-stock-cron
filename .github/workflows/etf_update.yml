@@ -3,11 +3,11 @@ name: ETF 資料同步
 # 寫入 ETF 專用的 Supabase 專案（secrets：ETF_SUPABASE_URL、ETF_SUPABASE_KEY），和主資料庫的排程互不影響
 on:
   schedule:
-    # 平日台灣時間晚上 6:40（UTC 10:40）- 價量、法人、淨值折溢價、配息、ETF 清單，最後清除過期資料
+    # 平日台灣時間晚上 6:40（UTC 10:40）- 價量、法人、融資融券、淨值折溢價、配息、ETF 清單，最後清除過期資料
     - cron: '40 10 * * 1-5'
     # 週六台灣時間早上 9:36（UTC 01:36）- 集保持股分級
     - cron: '36 1 * * 6'
-    # 每月 10、15、25 日台灣時間早上 10:16（UTC 02:16）- 投信公會月資料（公布日不固定，重抓最近兩個月）
+    # 每月 10、15、25 日台灣時間早上 10:16（UTC 02:16）- 投信公會月資料與前十大持股（公布日不固定，重抓最近兩個月）
     - cron: '16 2 10,15,25 * *'
   workflow_dispatch:
     inputs:
@@ -29,7 +29,7 @@ on:
         type: string
         default: ''
       datasets:
-        description: 'backfill：要回補的資料（prices＝價量、ins＝三大法人、monthly＝投信公會月資料、holder＝集保、dividends＝配息，逗號分隔）'
+        description: 'backfill：要回補的資料（prices＝價量、ins＝三大法人、margin＝融資融券、monthly＝投信公會月資料、top10＝前十大持股、holder＝集保、dividends＝配息，逗號分隔）'
         type: string
         default: 'prices,ins,monthly,holder,dividends'
       dry_run:

@@ -162,3 +162,48 @@ alter table public.etf_dividends           enable row level security;
 alter table public.etf_ins_daily           enable row level security;
 alter table public.etf_monthly_stats       enable row level security;
 alter table public.etf_holder_distribution enable row level security;
+
+-- 8. 融資融券（2026-10 新增）
+create table if not exists public.etf_margin_daily (
+    etf_id         varchar(10) not null,
+    date           date        not null,
+    margin_balance bigint,
+    margin_limit   bigint,
+    margin_rate    numeric,
+    short_balance  bigint,
+    short_rate     numeric,
+    primary key (etf_id, date)
+);
+comment on table  public.etf_margin_daily is 'ETF 融資融券（張）：上市 MI_MARGN（selectType=0099P），上櫃 margin/balance；定義與 margin_utilization 相同，保留 1 年';
+comment on column public.etf_margin_daily.etf_id         is 'ETF 代號';
+comment on column public.etf_margin_daily.date           is '交易日';
+comment on column public.etf_margin_daily.margin_balance is '融資餘額（張）';
+comment on column public.etf_margin_daily.margin_limit   is '融資限額（張）';
+comment on column public.etf_margin_daily.margin_rate    is '融資使用率 %（餘額／限額）';
+comment on column public.etf_margin_daily.short_balance  is '融券餘額（張）';
+comment on column public.etf_margin_daily.short_rate     is '融券使用率 %（餘額／限額）';
+
+-- 9. 每月前十大持股（2026-10 新增）
+create table if not exists public.etf_top_holdings (
+    etf_id       varchar(10) not null,
+    year_month   varchar(7)  not null,
+    rank         smallint    not null,
+    holding_type text,
+    holding_code text,
+    holding_name text,
+    amount       bigint,
+    weight_pct   numeric,
+    primary key (etf_id, year_month, rank)
+);
+comment on table  public.etf_top_holdings is 'ETF 每月前十大持股：投信投顧公會「基金投資明細－月前十大」（2021-09 起），用基金名稱對回代號；保留 3 年';
+comment on column public.etf_top_holdings.etf_id       is 'ETF 代號';
+comment on column public.etf_top_holdings.year_month   is '資料月份，例如 2026-09';
+comment on column public.etf_top_holdings.rank         is '名次（1～10）';
+comment on column public.etf_top_holdings.holding_type is '標的種類，例如國內上市、國外股票、政府公債';
+comment on column public.etf_top_holdings.holding_code is '標的代號（台股代號或國際證券代碼 ISIN）';
+comment on column public.etf_top_holdings.holding_name is '標的名稱';
+comment on column public.etf_top_holdings.amount       is '持有金額（元）';
+comment on column public.etf_top_holdings.weight_pct   is '占基金淨資產價值比例 %';
+
+alter table public.etf_margin_daily enable row level security;
+alter table public.etf_top_holdings enable row level security;

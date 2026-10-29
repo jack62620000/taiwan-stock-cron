@@ -44,6 +44,8 @@ TABLE_KEYS = {
     "etf_ins_daily":           ("etf_id", "date"),
     "etf_monthly_stats":       ("etf_id", "year_month"),
     "etf_holder_distribution": ("etf_id", "week_date"),
+    "etf_margin_daily":        ("etf_id", "date"),
+    "etf_top_holdings":        ("etf_id", "year_month", "rank"),
 }
 
 _client = None
@@ -157,6 +159,25 @@ def http_get(url, retries=3, wait=10, timeout=60, **kw):
         _last_request = time.time()
         try:
             r = requests.get(url, headers=HEADERS, timeout=timeout, **kw)
+            r.raise_for_status()
+            return r
+        except requests.exceptions.RequestException as e:
+            if attempt == retries:
+                raise
+            print(f"  第 {attempt} 次請求失敗（{type(e).__name__}），{wait * attempt} 秒後重試...")
+            time.sleep(wait * attempt)
+
+
+def http_post(url, data, retries=3, wait=10, timeout=90):
+    """POST（ASP.NET 表單查詢用），間隔與重試規則同 http_get"""
+    global _last_request
+    for attempt in range(1, retries + 1):
+        gap = time.time() - _last_request
+        if gap < MIN_INTERVAL:
+            time.sleep(MIN_INTERVAL - gap)
+        _last_request = time.time()
+        try:
+            r = requests.post(url, data=data, headers=HEADERS, timeout=timeout)
             r.raise_for_status()
             return r
         except requests.exceptions.RequestException as e:
@@ -440,6 +461,56 @@ def fetch_tpex_ins(day):
     return parse_tpex_ins(get_json(url), day)
 
 
+# ==================== 5b. 融資融券 ====================
+def margin_rate(balance, limit):
+    return round(balance / limit * 100, 2) if balance is not None and limit else None
+
+
+def parse_twse_margin(data, day):
+    """MI_MARGN selectType=0099P：6/7 融資今日餘額/限額、12/13 融券今日餘額/限額（張，與個股 margin_utilization 相同）"""
+    if not data or data.get("stat") != "OK":
+        return []
+    table = next((t for t in data.get("tables") or [] if "融資融券彙總" in str(t.get("title"))), None)
+    if not table or not fields_ok(table.get("fields"), {0: "代號", 6: "今日餘額", 7: "限額", 12: "今日餘額",
+                                                        13: "限額"}, "上市 ETF 融資融券"):
+        return []
+    out = []
+    for row in table.get("data") or []:
+        if len(row) < 14 or not is_etf_code(row[0]):
+            continue
+        mb, ml, sb, sl = to_int(row[6]), to_int(row[7]), to_int(row[12]), to_int(row[13])
+        out.append({"etf_id": row[0].strip(), "date": day, "margin_balance": mb, "margin_limit": ml,
+                    "margin_rate": margin_rate(mb, ml), "short_balance": sb, "short_rate": margin_rate(sb, sl)})
+    return out
+
+
+def parse_tpex_margin(data, day):
+    """margin/balance：6 資餘額、8 資使用率、9 資限額、14 券餘額、16 券使用率（張）"""
+    tables = (data or {}).get("tables") or []
+    if not tables or not tables[0].get("data"):
+        return []
+    resp = str(data.get("date", "")).strip()
+    if resp and resp != day.replace("-", ""):
+        print(f"⚠️ 上櫃 ETF 融資融券：回應日期 {resp} 與要求日期 {day} 不符，跳過")
+        return []
+    if not fields_ok(tables[0].get("fields"), {0: "代號", 6: "資餘額", 8: "資使用率", 9: "資限額", 14: "券餘額",
+                                               16: "券使用率"}, "上櫃 ETF 融資融券"):
+        return []
+    return [{"etf_id": row[0].strip(), "date": day, "margin_balance": to_int(row[6]), "margin_limit": to_int(row[9]),
+             "margin_rate": to_float(row[8]), "short_balance": to_int(row[14]), "short_rate": to_float(row[16])}
+            for row in tables[0]["data"] if len(row) >= 18 and is_etf_code(row[0])]
+
+
+def fetch_margin(day):
+    print(f"正在下載 {day} ETF 融資融券...")
+    twse = parse_twse_margin(get_json(
+        f"https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date={day.replace('-', '')}&selectType=0099P"),
+        day)
+    tpex = parse_tpex_margin(get_json(
+        f"https://www.tpex.org.tw/www/zh-tw/margin/balance?date={tpex_date(day)}&id=&response=json"), day)
+    return twse + tpex
+
+
 # ==================== 6. 每月統計（投信投顧公會） ====================
 SITCA_COLUMNS = {2: "證券代號", 4: "基金統編", 7: "計價幣別", 8: "基金規模(台幣)", 11: "單位淨值(台幣)",
                  13: "受益權單位數", 14: "自然人受益人數", 15: "法人受益人數", 16: "總受益人數",
@@ -486,11 +557,97 @@ def parse_sitca_monthly(html, year_month, code_by_tax_id=None):
     return list(records.values()), tax_ids
 
 
-def fetch_sitca_monthly(year_month, code_by_tax_id=None):
+def fetch_sitca_statement(year_month):
     print(f"正在下載投信公會 {year_month} ETF 月資料...")
     ym = year_month.replace("-", "")
     r = http_get(f"https://www.sitca.org.tw/ROC/SITCA_ETF/etf_statement2.aspx?txtYM={ym}&txtemcode=", timeout=90)
-    return parse_sitca_monthly(r.content.decode("utf-8", "ignore"), year_month, code_by_tax_id)
+    return r.content.decode("utf-8", "ignore")
+
+
+def fetch_sitca_monthly(year_month, code_by_tax_id=None):
+    return parse_sitca_monthly(fetch_sitca_statement(year_month), year_month, code_by_tax_id)
+
+
+# ==================== 6b. 前十大持股（投信投顧公會「基金投資明細－月前十大」） ====================
+SITCA_TOP10_URL = "https://www.sitca.org.tw/ROC/Industry/IN2629.aspx?pid=IN22601_04"
+# 公會的 ETF 類型：指數股票型（AH）與主動式交易所交易基金（AL）
+SITCA_ETF_CLASSES = ["AH11", "AH12", "AH13", "AH14", "AH15", "AH21", "AH22", "AH23", "AH24", "AH25", "AH26",
+                     "AL11", "AL12", "AL19", "AL21", "AL22", "AL29"]
+TOP10_COLUMNS = {0: "基金名稱", 1: "名次", 2: "標的種類", 3: "標的代號", 4: "標的名稱", 5: "金額", 9: "比例"}
+
+
+def fund_name_key(name):
+    """基金名稱比對用：去掉結尾的警語「(本基金之配息來源…)」「(本基金採匯率避險)」、級別「-新台幣(配息)」、空白，全形括號改半形"""
+    name = re.sub(r"<[^>]+>|&nbsp;|\s+", "", name or "").replace("（", "(").replace("）", ")")
+    name = re.sub(r"\((本子?基金|基金|[^()]*(配息|保證|風險))[^()]*\)$", "", name)
+    return re.sub(r"-(新台幣|新臺幣|美元|人民幣|日圓)(\(.*\))?$", "", name)
+
+
+def parse_sitca_names(html, code_by_tax_id=None):
+    """投信公會月資料 → {基金名稱: 代號}；沒有代號的舊月份用基金統編對回"""
+    code_by_tax_id = code_by_tax_id or {}
+    rows = html_table_rows(html)
+    if not rows or not fields_ok(rows[0], {2: "證券代號", 4: "基金統編", 5: "基金名稱"}, "投信公會基金名稱"):
+        return {}
+    out = {}
+    for c in rows[1:]:
+        code = c[2].strip() if is_etf_code(c[2]) else code_by_tax_id.get(c[4].strip(), "")
+        if is_etf_code(code):
+            out.setdefault(fund_name_key(c[5]), code)
+    return out
+
+
+def parse_sitca_top10(html, year_month, code_by_name):
+    """回傳 (etf_top_holdings 列, 對不到代號的基金名稱)"""
+    out, unknown, fund = [], set(), None
+    started = False
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
+        cells = [re.sub(r"<[^>]+>|&nbsp;", " ", c).strip()
+                 for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S)]
+        cells = [re.sub(r"\s+", " ", c) for c in cells]
+        if not started:
+            if cells and cells[0] == "基金名稱":
+                if not fields_ok(cells, TOP10_COLUMNS, f"投信公會前十大 {year_month}"):
+                    return [], set()
+                started = True
+            continue
+        if len(cells) == 10:
+            fund, data = cells[0], cells[1:]
+        elif len(cells) == 9:
+            data = cells
+        else:
+            continue  # 合計列
+        if not fund or not data[0].isdigit():
+            continue
+        code = code_by_name.get(fund_name_key(fund))
+        if not code:
+            unknown.add(fund_name_key(fund))
+            continue
+        out.append({"etf_id": code, "year_month": year_month, "rank": int(data[0]), "holding_type": data[1],
+                    "holding_code": data[2] or None, "holding_name": data[3], "amount": to_int(data[4]),
+                    "weight_pct": to_float(data[8])})
+    return out, unknown
+
+
+def fetch_sitca_top10(year_month, code_by_name):
+    """逐一查詢 ETF 類型（ASP.NET 表單：先 GET 取得 __VIEWSTATE，再 POST）"""
+    print(f"正在下載投信公會 {year_month} ETF 前十大持股...")
+    page = http_get(SITCA_TOP10_URL).content.decode("utf-8", "ignore")
+    hidden = dict(re.findall(r'<input[^>]+name="(__[A-Z]+)"[^>]+value="([^"]*)"', page))
+    rows, unknown = [], set()
+    for cls in SITCA_ETF_CLASSES:
+        form = dict(hidden)
+        form.update({"ctl00$ContentPlaceHolder1$ddlQ_YM": year_month.replace("-", ""),
+                     "ctl00$ContentPlaceHolder1$rdo1": "rbClass",
+                     "ctl00$ContentPlaceHolder1$ddlQ_Class": cls,
+                     "ctl00$ContentPlaceHolder1$BtnQuery": "查詢"})
+        html = http_post(SITCA_TOP10_URL, data=form).content.decode("utf-8", "ignore")
+        got, miss = parse_sitca_top10(html, year_month, code_by_name)
+        rows += got
+        unknown |= miss
+    if unknown:
+        print(f"  {len(unknown)} 檔基金名稱對不到代號（例：{sorted(unknown)[:3]}）")
+    return rows
 
 
 # ==================== 7. 集保持股分級 ====================
