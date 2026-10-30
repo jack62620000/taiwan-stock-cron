@@ -10,7 +10,7 @@
            區間 BACKFILL_START～BACKFILL_END
            （上櫃 ETF 的歷史配息來源只有預告表，回補只含上市 ETF）
 其他設定：
-  TARGET_DATE   daily 要抓的日期（YYYY-MM-DD，留空為台灣今天）
+  TARGET_DATE   daily 要抓的日期（YYYY-MM-DD，留空為台灣今天；排程拖到隔天下午 3 點前才跑時抓前一天）
   ETF_DRY_RUN=1 只下載與解析、印出筆數，不讀寫資料庫（驗證來源用）
 資料寫入 ETF 專用資料庫（ETF_SUPABASE_URL / ETF_SUPABASE_KEY）。最後檢查筆數，明顯不足時以錯誤碼結束，
 讓 GitHub 把這次排程標成失敗。
@@ -32,6 +32,8 @@ MIN_MONTHLY_ROWS = 250
 RECENT_TRADING_DAYS = 5
 # 回補單次執行的時間上限（GitHub Actions 單一工作最多 6 小時），到了就停下，下次用同一區間接續
 BACKFILL_MAX_MINUTES = 320
+# 盤後資料約下午 3 點後才陸續公布；daily 在這之前執行（晚上的排程被 GitHub 延遲過午夜）時改抓前一天
+DATA_READY_HOUR = 15
 
 # 保留期限和個股相同（見 cleanup_old_data.py）：(資料表, 日期欄位, 保留年數)
 # 價量 3 年、法人 2 年、集保 2 年；淨值是每日資料，比照價量 3 年；配息、月資料、ETF 清單是小表，全部保留
@@ -490,12 +492,21 @@ def run_backfill():
     return problems
 
 
+def default_daily_date(now=None):
+    """daily 沒指定日期時要抓哪一天：台灣時間下午 3 點前視為還在補前一天的盤後資料"""
+    now = now or f.datetime.now(f.TAIPEI)
+    day = now.date()
+    if now.hour < DATA_READY_HOUR:
+        day -= timedelta(days=1)
+    return day.isoformat()
+
+
 if __name__ == "__main__":
     job = os.getenv("ETF_JOB", "daily")
     if DRY_RUN:
         print("（試跑模式：只下載與解析，不讀寫資料庫）")
     if job == "daily":
-        problems = run_daily(os.getenv("TARGET_DATE") or f.today_taipei().isoformat())
+        problems = run_daily(os.getenv("TARGET_DATE") or default_daily_date())
     elif job == "weekly":
         problems = run_weekly()
     elif job == "monthly":

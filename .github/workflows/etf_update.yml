@@ -17,7 +17,7 @@ on:
         options: [daily, weekly, monthly, backfill]
         default: daily
       target_date:
-        description: 'daily：補抓指定日期（YYYY-MM-DD，留空為今天）'
+        description: 'daily：補抓指定日期（YYYY-MM-DD，留空為今天；下午 3 點前為前一天）'
         type: string
         default: ''
       backfill_start:
