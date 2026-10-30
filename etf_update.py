@@ -2,12 +2,12 @@
 台股 ETF 排程與回補（GitHub Actions：.github/workflows/etf_update.yml）
 
 用環境變數 ETF_JOB 選擇工作：
-  daily    平日盤後：ETF 清單、每日價量、三大法人、融資融券、借券賣出、淨值折溢價、配息；並補最近幾個交易日的缺漏，
+  daily    平日盤後：ETF 清單、每日價量、三大法人、融資融券、借券賣出、淨值折溢價、配息、還原權值事件；並補最近幾個交易日的缺漏，
            最後清除超過保留期限的舊資料（先封存到 ETF 資料庫的 Storage 再刪除，期限見 RETENTION）
   weekly   週六：集保持股分級（開放資料最新一週）
   monthly  每月：投信公會月資料與前十大持股（重抓最近兩個月），並補上上櫃 ETF 的基金統編；
            各項費用比率（重抓最新月份，補今年與去年還沒有的月、季、年）
-  backfill 歷史回補：DATASETS 選 prices,ins,margin,sbl,monthly,top10,fees,holder,dividends（逗號分隔），
+  backfill 歷史回補：DATASETS 選 prices,ins,margin,sbl,monthly,top10,fees,holder,dividends,adjust（逗號分隔），
            區間 BACKFILL_START～BACKFILL_END
            （上櫃 ETF 的歷史配息來源只有預告表，回補只含上市 ETF）
 其他設定：
@@ -35,6 +35,9 @@ MIN_MONTHLY_ROWS = 250
 RECENT_TRADING_DAYS = 5
 # 回補單次執行的時間上限（GitHub Actions 單一工作最多 6 小時），到了就停下，下次用同一區間接續
 BACKFILL_MAX_MINUTES = 320
+# 每日排程重算最近這麼多天的還原權值事件（除息、分割）；前面多讀幾天，連假後也找得到前一個收盤
+ADJUST_RECENT_DAYS = 14
+ADJUST_LOOKBACK_DAYS = 20
 # 盤後資料約下午 3 點後才陸續公布；daily 在這之前執行（晚上的排程被 GitHub 延遲過午夜）時改抓前一天
 DATA_READY_HOUR = 15
 
@@ -194,6 +197,8 @@ def run_daily(day):
         except Exception as e:
             problems.append(f"借券賣出：{e}")
         problems += fill_recent_credit(day)
+    if n_price is not None:
+        problems += update_adjustments((date.fromisoformat(day) - timedelta(days=ADJUST_RECENT_DAYS)).isoformat(), day)
     problems += cleanup_expired(f.today_taipei())
 
     if n_price is not None:
@@ -209,6 +214,23 @@ def run_daily(day):
         if nav_day != day or n_nav < MIN_DAILY_ROWS:
             problems.append(f"MIS 淨值資料日 {nav_day}、{n_nav} 筆，不是 {day} 的完整資料")
     return problems
+
+
+def update_adjustments(start, end):
+    """用資料庫裡的價量與配息算出 start～end 的還原權值事件，寫入 etf_price_adjustments"""
+    if DRY_RUN:
+        return []
+    try:
+        read_from = (date.fromisoformat(start) - timedelta(days=ADJUST_LOOKBACK_DAYS)).isoformat()
+        prices = f.select_range("etf_daily_prices", "etf_id, date, close_price, change", "date", read_from, end)
+        dividends = f.select_range("etf_dividends", "etf_id, ex_date, cash_dividend", "ex_date", start, end)
+        events = [e for e in f.build_adjustments(prices, dividends) if e["date"] >= start]
+        print(f"還原權值事件 {start}～{end}：除息 {sum(e['event_type'] == '除息' for e in events)} 筆、"
+              f"分割／反分割 {sum(e['event_type'] != '除息' for e in events)} 筆")
+        save("etf_price_adjustments", events)
+        return []
+    except Exception as e:
+        return [f"還原權值事件：{e}"]
 
 
 # ==================== weekly / monthly ====================
@@ -542,6 +564,8 @@ def run_backfill():
         problems += backfill_dividends(start, end)
     if "holder" in datasets:
         problems += backfill_holder(start, end, deadline)
+    if "adjust" in datasets:
+        problems += update_adjustments(start, end)
     return problems
 
 

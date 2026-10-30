@@ -29,7 +29,7 @@ on:
         type: string
         default: ''
       datasets:
-        description: 'backfill：要回補的資料（prices＝價量、ins＝三大法人、margin＝融資融券、sbl＝借券賣出、monthly＝投信公會月資料、top10＝前十大持股、fees＝費用率、holder＝集保、dividends＝配息，逗號分隔）'
+        description: 'backfill：要回補的資料（prices＝價量、ins＝三大法人、margin＝融資融券、sbl＝借券賣出、monthly＝投信公會月資料、top10＝前十大持股、fees＝費用率、holder＝集保、dividends＝配息、adjust＝還原權值事件（除息、分割），逗號分隔）'
         type: string
         default: 'prices,ins,monthly,holder,dividends'
       dry_run:
