@@ -2,7 +2,7 @@
 自動化版本 - 給 GitHub Actions 排程使用
 每次執行會檢查最近 7 天，把還沒存齊的交易日的股價、三大法人（含外資持股）、融資融券
 （餘額＋限額＋使用率）補抓起來，再更新最近兩週的還原權值事件、當月的大盤指數；
-每月 1～20 號另外補抓上個月還沒存到的月營收。
+每月 1～20 號另外補抓上個月還沒存到的月營收；每天再用開放資料覆蓋最新一個月，公司事後更正營收也會跟上。
 
 抓取函式全部來自 fetch_stock_info.py，這裡不再複製一份，
 之後只要改 fetch_stock_info.py，排程就會跟著更新。
@@ -181,6 +181,15 @@ def main():
         if day <= REVENUE_DEADLINE_DAY:
             rev_problems = [p for p in rev_problems if "彙總表沒有資料" not in p]
         problems.extend(rev_problems)
+
+    # 補抓只抓還沒存到的公司，公司事後更正營收不會更新（抽查發現 2026-09 有 3 家），
+    # 所以每天再用開放資料（只有最新一個月，含更正後數字）覆蓋一次；抓不到不算錯誤，隔天會再抓
+    print("\n--- 月營收（開放資料覆蓋最新一個月，跟上公司更正）---")
+    latest_revenue = f.fetch_monthly_revenue(valid_stocks)
+    if latest_revenue:
+        _, failed = f.save_data_batches("monthly_revenue", latest_revenue)
+        if failed:
+            problems.append(f"monthly_revenue 有 {failed} 筆寫入失敗")
 
     if problems:
         print("\n❌ 這次同步不完整：")
