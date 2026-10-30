@@ -52,3 +52,4 @@ select cron.schedule('gh-us-market-1',  '10 21 * * 1-5',      $$select ops.dispa
 select cron.schedule('gh-us-market-2',  '40 22 * * 1-5',      $$select ops.dispatch_workflow('us_market.yml')$$);
 select cron.schedule('gh-quarterly',    '6 2 * * 6',          $$select ops.dispatch_workflow('quarterly_update.yml')$$);
 select cron.schedule('gh-verify-public','0 4 * * 0',          $$select ops.dispatch_workflow('verify_public.yml')$$);
+select cron.schedule('gh-db-backup',    '20 19 * * 6',        $$select ops.dispatch_workflow('db_backup.yml')$$);

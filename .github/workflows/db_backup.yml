@@ -1,0 +1,46 @@
+name: 每週資料庫備份
+
+# 主資料庫和 ETF 資料庫整個匯出，存到 ETF 資料庫 Storage 的 db-backups 桶，只留最近 2 份；
+# 兩邊過期資料的封存檔也互相備份到另一個專案（見 db_backup.py）
+on:
+  schedule:
+    # 週日台灣時間凌晨 3:20（UTC 週六 19:20），沒有其他排程在跑
+    - cron: '20 19 * * 6'
+  # Supabase 主資料庫的 pg_cron 也會在同樣時間觸發（GitHub 的 schedule 常延誤），這邊留著當備援
+  workflow_dispatch:
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      # pg_dump 版本不能比資料庫舊（Supabase 是 PostgreSQL 17），從 PostgreSQL 官方套件庫安裝
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+      - name: Back up databases
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          MAIN_DB_PASSWORD: ${{ secrets.MAIN_DB_PASSWORD }}
+          ETF_DB_PASSWORD: ${{ secrets.ETF_DB_PASSWORD }}
+          ETF_SUPABASE_URL: ${{ secrets.ETF_SUPABASE_URL }}
+          ETF_SUPABASE_KEY: ${{ secrets.ETF_SUPABASE_KEY }}
+        run: python -u db_backup.py
