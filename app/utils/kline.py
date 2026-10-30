@@ -234,7 +234,8 @@ def build_charts(prices_ta, days, overlays=("均線",), sub="外資買賣超", i
     elif sub == "KD" and "K" in df.columns:
         sub_series = [_line(df.assign(k=pd.to_numeric(df["K"], errors="coerce")), "k", ACCENT, "K"),
                       _line(df.assign(d=pd.to_numeric(df["D"], errors="coerce")), "d", GLOW, "D")]
-    if sub_series:
+    # 副圖整段都沒有數值（例如月線 K 棒太少算不出 MACD）就不畫，只剩空白點的圖時間軸會和上面錯開
+    if sub_series and any(d.get("value") is not None for ser in sub_series for d in ser["data"]):
         charts.append({"chart": _chart(130, time_visible=True), "series": sub_series})
     else:
         charts[1]["chart"]["timeScale"]["visible"] = True
@@ -404,8 +405,17 @@ _TEMPLATE = """
     requestAnimationFrame(placeNames);
   }
   requestAnimationFrame(placeNames);
-  charts.forEach(ch => ch.timeScale().fitContent());
-  new ResizeObserver(() => charts.forEach(ch => ch.applyOptions({width: box.clientWidth - NAMES_W}))).observe(box);
+  // 一開始顯示全部 K 棒：每張圖都設成同一段（第 0 根到最後一根），不各自 fitContent，
+  // 否則週線、月線這種 K 棒少的圖，上下幾張圖會差半根、最右邊那根 K 棒被切掉
+  const nBars = Math.max(...CONF.map(c => Math.max(...c.series.map(s => s.data.length), 0)), 1);
+  const fit = () => charts.forEach(ch => ch.timeScale().setVisibleLogicalRange({from: -0.5, to: nBars - 0.5}));
+  let touched = false;   // 使用者拖拉或縮放過，就不再自動重設
+  ["mousedown", "wheel", "touchstart"].forEach(e => box.addEventListener(e, () => { touched = true; }, {passive: true}));
+  fit();
+  new ResizeObserver(() => {
+    charts.forEach(ch => ch.applyOptions({width: box.clientWidth - NAMES_W}));
+    if (!touched) fit();
+  }).observe(box);
 })();
 </script>
 """

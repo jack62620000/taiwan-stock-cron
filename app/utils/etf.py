@@ -280,3 +280,66 @@ def simulate_savings(prices, dividends, events, start, end, monthly=0, day=1, lu
         "avg_cost": spent / last["units"] if last["units"] else None,
     }
     return detail, summary
+
+
+def history_growth(prices, events):
+    """過去的年化股價漲幅 %（不含配息，分割已還原）：用資料庫裡最早和最新的收盤算；資料不到半年回傳 None"""
+    px = prices.dropna(subset=["close_price"]).sort_values("date") if not prices.empty else prices
+    if px.empty:
+        return None
+    split = events[events["event_type"].isin(SPLIT_EVENTS)] if events is not None and not events.empty else None
+    adj = adjust(px, split) if split is not None and not split.empty else px
+    first, last = _num(adj["close_price"]).iloc[0], _num(adj["close_price"]).iloc[-1]
+    years = (pd.Timestamp(adj["date"].iloc[-1]) - pd.Timestamp(adj["date"].iloc[0])).days / 365.25
+    if years < 0.5 or not first or first <= 0:
+        return None
+    return ((last / first) ** (1 / years) - 1) * 100
+
+
+def project_future(prices, dividends, end, growth_pct):
+    """
+    存股試算往後算：最新收盤之後到 end 的每個工作日，用「每年股價漲 growth_pct %」推估收盤價；
+    配息照最近 12 個月的配息月份和殖利率（每次配息 ÷ 除息前收盤）每年重複，金額跟著推估的股價變動。
+    已公告、還沒除息的配息照公告金額，推估的配息從最後一筆已知配息之後開始。
+    回傳 (接上推估的股價, 接上推估的配息, 最新收盤日)；推估的列 projected=True。
+    """
+    px = prices.copy()
+    px["date"] = pd.to_datetime(px["date"])
+    px["close_price"] = _num(px["close_price"])
+    px = px.dropna(subset=["close_price"]).sort_values("date")
+    if px.empty:
+        return prices, dividends, None
+    last_day, last_close = px["date"].iloc[-1], px["close_price"].iloc[-1]
+    end = pd.Timestamp(end)
+    px["projected"] = False
+    if end <= last_day:
+        return px, dividends, last_day
+    days = pd.bdate_range(last_day + pd.Timedelta(days=1), end)
+    g = 1 + growth_pct / 100
+    price_at = lambda d: last_close * g ** ((d - last_day).days / 365.25)  # noqa: E731
+    fut = pd.DataFrame({"date": days, "close_price": [round(price_at(d), 2) for d in days], "projected": True})
+    out_px = pd.concat([px, fut], ignore_index=True)
+
+    dv = dividends.copy() if dividends is not None and not dividends.empty else pd.DataFrame(
+        columns=["ex_date", "pay_date", "cash_dividend"])
+    dv["projected"] = False
+    known = pd.to_datetime(dv["ex_date"]) if not dv.empty else pd.Series(dtype="datetime64[ns]")
+    recent = dv[(known > last_day - pd.Timedelta(days=365)) & (known <= last_day)] if not dv.empty else dv
+    extra = []
+    after = known.max() if not dv.empty else last_day
+    for r in recent.itertuples():
+        ex = pd.Timestamp(r.ex_date)
+        before = px[px["date"] < ex]["close_price"]
+        cash = pd.to_numeric(r.cash_dividend, errors="coerce")
+        if before.empty or pd.isna(cash) or cash <= 0:
+            continue
+        rate = cash / before.iloc[-1]
+        lag = (pd.Timestamp(r.pay_date) - ex) if pd.notna(r.pay_date) else pd.Timedelta(0)
+        k = 1
+        while (nxt := ex + pd.DateOffset(years=k)) <= end:
+            if nxt > after:
+                extra.append({"ex_date": nxt.strftime("%Y-%m-%d"), "pay_date": (nxt + lag).strftime("%Y-%m-%d"),
+                              "cash_dividend": round(rate * price_at(nxt), 4), "projected": True})
+            k += 1
+    out_dv = pd.concat([dv, pd.DataFrame(extra)], ignore_index=True) if extra else dv
+    return out_px, out_dv, last_day
