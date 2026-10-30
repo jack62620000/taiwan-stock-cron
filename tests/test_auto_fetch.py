@@ -62,9 +62,11 @@ def test_main_fetches_each_missing_day(monkeypatch, tmp_path):
     monkeypatch.setattr(auto_fetch.adj, "fetch_range", lambda a, b, s: ([], []))
     monkeypatch.setattr(auto_fetch.market, "fetch_range", lambda a, b: (None, []))
     monkeypatch.setattr(auto_fetch.revenue, "fetch_range", lambda a, b, s: (None, []))
+    monkeypatch.setattr(f, "fetch_monthly_revenue", lambda s: [{"stock_id": "2330", "year_month": "2026-09"}])
     out = tmp_path / "out"
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
 
     assert auto_fetch.main() == 0
     assert saved.count(("daily_prices", 2)) == 2  # 10/16、10/19 各寫一次；10/20 沒行情不寫
     assert out.read_text().splitlines() == ["fetched=2", "start=2026-10-16"]
+    assert ("monthly_revenue", 1) in saved  # 每天用開放資料覆蓋最新一個月，跟上公司更正
