@@ -301,3 +301,26 @@ alter table public.etf_info add column if not exists dividend_frequency varchar(
 comment on column public.etf_info.issuer             is '發行投信：由官方簡稱開頭的品牌對應（開放資料沒有投信名稱欄位），對不到的留空';
 comment on column public.etf_info.delisted_date      is '下市日：當天上市、上櫃清單都沒有這檔時記下；重新出現會清空';
 comment on column public.etf_info.dividend_frequency is '月配、雙月配、季配、半年配、年配、不配息：由最近一年除息次數推算；上市未滿一年為空';
+
+-- 14. 指數收盤、ETF 追蹤指數對照（2026-10 新增）
+create table if not exists public.etf_index_daily (
+    date        date        not null,
+    index_name  varchar(80) not null,
+    close       numeric     not null,
+    change      numeric,
+    change_pct  numeric,
+    index_type  varchar(4)  not null,
+    category    varchar(10) not null,
+    primary key (date, index_name)
+);
+comment on table  public.etf_index_daily is '指數每日收盤：證交所 MI_INDEX type=IND（證交所、跨市場、臺灣指數公司編製的價格與報酬指數），國外指數沒有';
+comment on column public.etf_index_daily.index_name is '指數名稱（證交所行情表的名稱）';
+comment on column public.etf_index_daily.close      is '收盤指數';
+comment on column public.etf_index_daily.change     is '漲跌點數（下跌為負）';
+comment on column public.etf_index_daily.change_pct is '漲跌百分比';
+comment on column public.etf_index_daily.index_type is '價格或報酬（報酬指數含股利再投入）';
+comment on column public.etf_index_daily.category   is '證交所、跨市場、臺灣指數公司';
+alter table public.etf_index_daily enable row level security;
+
+alter table public.etf_info add column if not exists index_official_name varchar(80);
+comment on column public.etf_info.index_official_name is '追蹤指數對到 etf_index_daily 的名稱（價格指數）；國外指數或對不到的留空';

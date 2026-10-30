@@ -572,3 +572,42 @@ def test_parse_halts():
         {"etf_id": "00679B", "market": "上櫃", "halt_date": "2026-06-18", "resume_date": "2026-06-22"},
         {"etf_id": "00720B", "market": "上櫃", "halt_date": "2026-11-01", "resume_date": None},
     ]
+
+
+def test_parse_twse_indices():
+    fields = ["指數", "收盤指數", "漲跌(+/-)", "漲跌點數", "漲跌百分比(%)", "特殊處理註記"]
+    data = {"stat": "OK", "date": "20261029", "tables": [
+        {"title": "115年10月29日 價格指數(臺灣證券交易所)", "fields": fields, "data": [
+            ["臺灣50指數", "42,811.98", "<p style ='color:green'>-</p>", "553.42", "-1.28", ""],
+            ["水泥類指數", "135.27", "<p style ='color:red'>+</p>", "0.62", "0.46", ""]]},
+        {"title": "報酬指數(臺灣指數公司)", "fields": ["報酬指數"] + fields[1:], "data": [
+            ["特選臺灣高股息30報酬指數", "9,000.00", "", "0.00", "0.00", ""]]},
+        {"title": None, "fields": None, "data": []},
+    ]}
+    rows = f.parse_twse_indices(data, "2026-10-29")
+    assert rows == [
+        {"date": "2026-10-29", "index_name": "臺灣50指數", "close": 42811.98, "change": -553.42,
+         "change_pct": -1.28, "index_type": "價格", "category": "證交所"},
+        {"date": "2026-10-29", "index_name": "水泥類指數", "close": 135.27, "change": 0.62,
+         "change_pct": 0.46, "index_type": "價格", "category": "證交所"},
+        {"date": "2026-10-29", "index_name": "特選臺灣高股息30報酬指數", "close": 9000.0, "change": 0.0,
+         "change_pct": 0.0, "index_type": "報酬", "category": "臺灣指數公司"},
+    ]
+    assert f.parse_twse_indices(data, "2026-10-28") == []          # 回應日期不符
+    assert f.parse_twse_indices({"stat": "很抱歉，沒有符合條件的資料!"}, "2026-10-29") == []
+    data["tables"][0]["fields"] = ["指數", "收盤"]
+    assert f.parse_twse_indices(data, "2026-10-29") == []          # 欄位改版
+
+
+def test_match_index():
+    names = ["臺灣50指數", "臺灣高股息指數", "臺灣精選高息指數", "發行量加權股價指數",
+             "特選臺灣高股息30指數", "電子工業類指數", "臺指日報酬兩倍指數", "特選臺灣IC設計動能指數"]
+    assert f.match_index("臺灣50指數", names) == "臺灣50指數"
+    assert f.match_index("臺灣指數公司特選臺灣上市上櫃精選高息指數", names) == "臺灣精選高息指數"
+    assert f.match_index("臺灣證券交易所發行量加權股價指數", names) == "發行量加權股價指數"
+    assert f.match_index("臺灣指數公司特選臺灣上市上櫃高股息30指數", names) == "特選臺灣高股息30指數"
+    assert f.match_index("台灣IC設計動能指數", names) == "特選臺灣IC設計動能指數"
+    assert f.match_index("電子類加權股價指數", names) == "電子工業類指數"
+    assert f.match_index("臺灣證券交易所發行量加權股價日報酬正向兩倍指數", names) == "臺指日報酬兩倍指數"
+    assert f.match_index("MSCI臺灣ESG永續高股息精選30指數", names) is None
+    assert f.match_index(None, names) is None
