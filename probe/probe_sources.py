@@ -1,7 +1,7 @@
 """暫時用：在 GitHub Actions 上找 ETF 配息組成、PCF、指數的資料來源（開 PR 前會刪掉）"""
 import json, re, requests
 H = {"User-Agent": "Mozilla/5.0"}
-KW = re.compile(r"ETF|收益分配|配息|PCF|申購買回|指數|index", re.I)
+KW = re.compile(r"ETF|收益分配|配息|PCF|申購買回|指數|index|分割|停止|暫停|除權|除息", re.I)
 
 def get(url, **kw):
     try:
