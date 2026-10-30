@@ -27,6 +27,8 @@ jobs:
       github.event.schedule == '30 22 * * 1-5' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only != 'true')
     runs-on: ubuntu-latest
+    # 每次最多 60 分鐘、逾時重跑一次（.github/scripts/retry_on_timeout.sh），整個工作最多 130 分鐘
+    timeout-minutes: 130
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -40,7 +42,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python auto_fetch_futures.py
+        run: .github/scripts/retry_on_timeout.sh python auto_fetch_futures.py
 
   # 晚上 11:11 抓當天；早上 6:30 再檢查一次，晚上那次延遲、失敗或沒跑的日子會補上
   update-daily-data:
@@ -49,6 +51,8 @@ jobs:
       github.event.schedule == '30 22 * * 1-5' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only != 'true')
     runs-on: ubuntu-latest
+    # 每次最多 60 分鐘、逾時重跑一次（.github/scripts/retry_on_timeout.sh），整個工作最多 130 分鐘
+    timeout-minutes: 130
     # 晚上那次拖到早上才跑時，兩次不要同時抓
     concurrency:
       group: daily-data
@@ -71,7 +75,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           TARGET_DATE: ${{ github.event.inputs.target_date }}
-        run: python auto_fetch.py
+        run: .github/scripts/retry_on_timeout.sh python auto_fetch.py
 
   # 每日資料抓完後，幫全市場股票打分數（寫進 daily_signals）
   # 就算抓資料那一步回報不完整（例如少了某個市場），已經抓到的資料仍然可以評分
@@ -173,6 +177,8 @@ jobs:
   update-holder-only:
     if: github.event.schedule == '06 1 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only == 'true')
     runs-on: ubuntu-latest
+    # 每次最多 60 分鐘、逾時重跑一次（.github/scripts/retry_on_timeout.sh），整個工作最多 130 分鐘
+    timeout-minutes: 130
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -186,4 +192,4 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python auto_fetch_holder.py
+        run: .github/scripts/retry_on_timeout.sh python auto_fetch_holder.py
