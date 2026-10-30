@@ -2,7 +2,7 @@
 import pandas as pd
 import pytest
 
-from utils.etf import fill_label, fill_status, simulate_savings, total_return, trailing_dividends, xirr
+from utils.etf import fill_label, fill_status, history_growth, project_future, simulate_savings, total_return, trailing_dividends, xirr
 
 
 def flat_prices(start, end, price=10.0):
@@ -78,3 +78,28 @@ def test_savings_no_prices():
     detail, s = simulate_savings(flat_prices("2026-01-01", "2026-01-31"), None, None, "2026-05-01", "2026-06-01",
                                  monthly=1000)
     assert detail.empty and s is None
+
+
+def test_project_future_price_and_dividends():
+    """往後推估：股價照每年漲幅成長，配息照去年的殖利率和月份重複"""
+    prices = pd.DataFrame({"date": pd.bdate_range("2025-01-01", "2025-12-31").strftime("%Y-%m-%d"), "close_price": 100.0})
+    divs = pd.DataFrame({"ex_date": ["2025-06-02"], "pay_date": ["2025-07-01"], "cash_dividend": [2.0]})
+    px, dv, last = project_future(prices, divs, "2027-12-31", 10)
+    assert str(last.date()) == "2025-12-31"
+    fut = px[px["projected"]]
+    assert fut["date"].min() > pd.Timestamp("2025-12-31")
+    assert abs(fut["close_price"].iloc[-1] - 100 * 1.1 ** 2) < 0.5
+    new = dv[dv["projected"] == True]  # noqa: E712
+    assert list(new["ex_date"]) == ["2026-06-02", "2027-06-02"]
+    assert list(new["pay_date"]) == ["2026-07-01", "2027-07-01"]
+    assert 2.0 < new["cash_dividend"].iloc[0] < 2.2 < new["cash_dividend"].iloc[1]   # 殖利率 2%×推估股價
+    _, s = simulate_savings(px, dv, None, "2026-01-01", "2027-12-31", monthly=1000, day=1, fee_rate=0, min_fee=0)
+    assert s["buys"] == 24 and s["dividends"] > 0 and s["value"] > s["invested"]
+
+
+def test_project_future_not_needed_and_history_growth():
+    prices = pd.DataFrame({"date": ["2024-01-02", "2025-01-02"], "close_price": [100.0, 121.0]})
+    px, dv, _ = project_future(prices, None, "2024-12-31", 5)
+    assert not px["projected"].any()
+    assert abs(history_growth(prices, None) - 21.0) < 0.2
+    assert history_growth(prices.head(1), None) is None

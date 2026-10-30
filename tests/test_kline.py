@@ -102,3 +102,11 @@ def test_sub_chart_keeps_bar_count_when_ins_starts_later(prices):
     assert times[0] == times[1] == times[2] and len(times[0]) == 120
     sub = charts[2]["series"][0]["data"]
     assert all("value" not in d for d in sub[:20]) and all("value" in d for d in sub[20:])
+
+
+def test_empty_sub_chart_is_dropped(prices):
+    """副圖整段沒有數值（例如月線 K 棒太少算不出 MACD）就不畫，成交量圖改顯示時間軸"""
+    df = prices.tail(6).assign(MACD_HIST=np.nan)
+    charts = build_charts(df, 6, sub="MACD", markers=False)
+    assert len(charts) == 2
+    assert charts[1]["chart"]["timeScale"]["visible"] is True

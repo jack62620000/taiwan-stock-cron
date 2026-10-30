@@ -268,3 +268,30 @@ def test_etf_card_range_applies_to_weekly_monthly(use_db, period):
     next(r for r in at.radio if r.key == "etf_kline_range").set_value(120).run()
     assert errors(at) == []
     assert bars() < one_year
+
+
+def test_etf_savings_future_end_date(use_db):
+    """存股試算的結束日期可以選在最新股價之後，往後推估"""
+    from datetime import date
+    use_db()
+    at = run_page(APP / "pages" / "6_ETF.py", etf_tab="🧮 存股試算")
+    end = next(d for d in at.date_input if d.key == "etf_sv_end")
+    end.set_value(date(end.value.year + 5, 1, 1)).run()
+    assert errors(at) == []
+    assert any(s.key == "etf_sv_growth" for s in at.selectbox)
+    next(s for s in at.selectbox if s.key == "etf_sv_growth").set_value("照各檔過去的漲幅").run()
+    assert errors(at) == []
+    assert any("試算結果" in h.value for h in at.subheader)
+
+
+@pytest.mark.parametrize("period", ["週線", "月線"])
+def test_stock_card_weekly_monthly_range(use_db, period):
+    """個股分析卡的週線、月線也有顯示區間（幾根 K 棒）"""
+    use_db()
+    at = run_page(APP / "pages" / "2_個股分析卡.py", card_stock_id="2330")
+    next(r for r in at.radio if r.key == "kline_period").set_value(period).run()
+    assert errors(at) == []
+    first = 26 if period == "週線" else 12
+    next(r for r in at.radio if r.key == f"kline_range_{period}").set_value(first).run()
+    assert errors(at) == []
+    assert any(f"圖上畫最近" in c.value for c in at.caption)

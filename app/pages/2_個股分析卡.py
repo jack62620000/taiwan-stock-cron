@@ -83,6 +83,9 @@ def load_long_history(stock_id):
     return get_daily_prices(stock_id, limit=LONG_DAYS), get_stock_ins(stock_id, limit=LONG_DAYS)
 
 LONG_DAYS = 1000  # 約 4 年的交易日；Supabase 一次最多回傳 1000 筆
+# 週線、月線的顯示區間：幾根 K 棒 → 選項文字（None 是全部）
+LONG_RANGES = {"週線": {26: "近半年", 52: "近 1 年", None: "全部（約 4 年）"},
+               "月線": {12: "近 1 年", 24: "近 2 年", None: "全部（約 4 年）"}}
 
 @st.cache_data(ttl=3600)
 def load_events(stock_id, since):
@@ -624,10 +627,15 @@ c0, c1, c2 = st.columns([2, 3, 3])
 with c0:
     period = st.radio("K 線", list(PERIODS), horizontal=True, key="kline_period")
 with c1:
-    range_days = st.radio(
-        "顯示區間", [60, 120, 250], index=1, horizontal=True,
-        format_func=lambda d: f"近 {d} 個交易日",
-    )
+    # 週線、月線一根 K 棒涵蓋比較久，顯示區間改用「幾根 K 棒」；全部畫出來（約 4 年）時 K 棒太細，手機上幾乎看不清楚
+    if PERIODS[period] is None:
+        range_days = st.radio("顯示區間", [60, 120, 250], index=1, horizontal=True,
+                              format_func=lambda d: f"近 {d} 個交易日")
+    else:
+        range_bars = st.radio("顯示區間", list(LONG_RANGES[period]), index=1, horizontal=True,
+                              key=f"kline_range_{period}", format_func=lambda n: LONG_RANGES[period][n])
+        # 下面「相對大盤強弱」「外資持股比率」用日資料，換算成差不多長的交易日數（最多 250 天）
+        range_days = 120 if range_bars == 26 else 250
 with c2:
     sub_chart = st.radio("下方副圖", SUB_CHARTS, horizontal=True)
 overlays = st.pills("主圖顯示", ["均線", "布林通道", "買賣點", "價位線"], selection_mode="multi",
@@ -650,16 +658,17 @@ else:
     code = PERIODS[period]
     long_prices, long_ins = load_long_history(stock_id)
     bars = calc_all(resample_bars(long_prices, code))
-    charts = build_charts(bars, len(bars), overlays=overlays, sub=sub_chart, ins=resample_ins(long_ins, bars, code),
+    n_bars = len(bars) if range_bars is None else min(range_bars, len(bars))
+    charts = build_charts(bars, n_bars, overlays=overlays, sub=sub_chart, ins=resample_ins(long_ins, bars, code),
                           levels=levels, markers=False,
                           events=align_to_bars(load_events(stock_id, long_prices["date"].min()), bars, code))
 kline_html, kline_height = render_html(charts)
 components.html(kline_html, height=kline_height)
 if PERIODS[period] is not None:
     unit = "週" if period == "週線" else "個月"
-    st.caption(f"{period}：每根 K 棒是一{unit}，用 {long_prices['date'].min()} 以來的日股價合併（共 {len(bars)} 根），"
+    st.caption(f"{period}：每根 K 棒是一{unit}，用 {long_prices['date'].min()} 以來的日股價合併（共 {len(bars)} 根，圖上畫最近 {n_bars} 根），"
                f"成交量和外資買賣超是那段期間的加總；MA5／MA20／MA60 是 5、20、60 根 K 棒的平均（也就是 5、20、60 {unit}）。"
-               "週線、月線不標葛蘭碧買賣點（法則是用日線的 20 日均線回測的），「顯示區間」只影響日線。")
+               "週線、月線不標葛蘭碧買賣點（法則是用日線的 20 日均線回測的）。")
 st.caption(
     "可以用滑鼠拖拉、滾輪縮放；滑鼠移到哪一天，左上角就顯示那天的開高低收、漲跌、成交量和各條線的數值。K 棒紅漲綠跌、灰色是沒有成交的日子。"
     "「買賣點」：葛蘭碧法則裡回測穩定的幾條，K 棒下方紅色 ▲ 是買進法則（2、4），上方綠色 ▼ 是賣出法則（7），滑鼠移過去左上角會寫出是哪一條；"
