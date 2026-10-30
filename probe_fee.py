@@ -20,10 +20,10 @@ for y, m in [("2026", "9"), ("2026", "0630"), ("2021", "1"), ("2021", "Year")]:
     for r in rows: lens[len(r)] = lens.get(len(r), 0) + 1
     print("cell counts", lens)
     for i, r in enumerate(rows):
-        if len(r) != 19: 
-            if len(r) > 2: print("non19", i, r[:25])
-    d = [r for r in rows if len(r) == 19]
-    print("first19", d[:2])
+        if not re.fullmatch(r"\d{8}", r[1] if len(r) > 1 else ""):
+            print("hdr", i, r[:30])
+    d = [r for r in rows if len(r) > 1 and re.fullmatch(r"\d{8}", r[1])]
+    print("first", d[:2])
     hit = [r for r in d if r[1] in by_tax]
     print("etf matched", len(hit), "of", len(d)); [print(by_tax[r[1]], r) for r in hit[:3]]
     print("selected", re.findall(r'<option selected="selected" value="([^"]*)"', h))
