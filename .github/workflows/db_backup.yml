@@ -8,8 +8,6 @@ on:
     - cron: '20 19 * * 6'
   # Supabase 主資料庫的 pg_cron 也會在同樣時間觸發（GitHub 的 schedule 常延誤），這邊留著當備援
   workflow_dispatch:
-  push:  # 暫時：試跑
-    branches: [claude/project-thread-cercx1]
 
 concurrency:
   group: db-backup
