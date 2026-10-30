@@ -252,3 +252,19 @@ def test_etf_savings_without_reinvest(use_db):
     next(t for t in at.toggle if t.key == "etf_sv_reinvest").set_value(False).run()
     assert errors(at) == []
     assert any("試算結果" in h.value for h in at.subheader)
+
+
+@pytest.mark.parametrize("period", ["週線", "月線"])
+def test_etf_card_range_applies_to_weekly_monthly(use_db, period):
+    """週線、月線也照「顯示區間」只畫那段期間的 K 棒"""
+    use_db()
+    at = run_page(APP / "pages" / "6_ETF.py", etf_tab="🗂️ ETF 分析卡", etf_card_id="0050")
+    next(r for r in at.radio if r.key == "etf_kline_period").set_value(period).run()
+
+    def bars():
+        cap = next(c.value for c in at.caption if c.value.startswith(f"{period}：每根 K 棒"))
+        return int(cap.split("共 ")[1].split(" 根")[0])
+    one_year = bars()
+    next(r for r in at.radio if r.key == "etf_kline_range").set_value(120).run()
+    assert errors(at) == []
+    assert bars() < one_year

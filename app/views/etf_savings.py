@@ -115,7 +115,7 @@ if curves:
                  alt.Tooltip("dividends:Q", title="累計配息", format=",.0f")])
     base = alt.Chart(cv[cv["ETF"] == cv["ETF"].iloc[0]]).mark_line(color=MUTED, strokeDash=[4, 3]).encode(
         x="date:T", y="invested:Q", tooltip=[alt.Tooltip("invested:Q", title="投入本金", format=",.0f")])
-    st.altair_chart(lines + base, use_container_width=True)
+    st.altair_chart(lines + base, width="stretch")
     st.caption("彩色線是總資產（股票市值＋手上現金＋已除息還沒發放的配息），灰色虛線是累計投入的本金。")
 
 if lumps:

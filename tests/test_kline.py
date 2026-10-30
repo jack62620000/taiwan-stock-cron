@@ -92,3 +92,13 @@ def test_resample_weekly_monthly():
     assert wi.set_index("date")["foreign_net_shares"].to_dict() == {"2026-10-09": 2500, "2026-10-13": 4000, "2026-11-02": 7000}
     ev = pd.DataFrame({"date": ["2026-10-07", "2025-01-02"], "event_type": ["除息", "除息"]})
     assert list(align_to_bars(ev, w, "W-FRI")["date"]) == ["2026-10-09"]   # 圖上範圍以外的事件拿掉
+
+
+def test_sub_chart_keeps_bar_count_when_ins_starts_later(prices):
+    """法人資料比股價晚開始時，副圖補空白點，K 棒、成交量、外資買賣超的根數一樣，上下才會對齊"""
+    ins = pd.DataFrame({"date": prices["date"].iloc[-100:], "foreign_net_shares": -500_000})
+    charts = build_charts(prices, 120, sub="外資買賣超", ins=ins)
+    times = [[d["time"] for d in c["series"][0]["data"]] for c in charts]
+    assert times[0] == times[1] == times[2] and len(times[0]) == 120
+    sub = charts[2]["series"][0]["data"]
+    assert all("value" not in d for d in sub[:20]) and all("value" in d for d in sub[20:])
