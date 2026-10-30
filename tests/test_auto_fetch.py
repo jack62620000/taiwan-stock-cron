@@ -70,3 +70,25 @@ def test_main_fetches_each_missing_day(monkeypatch, tmp_path):
     assert saved.count(("daily_prices", 2)) == 2  # 10/16、10/19 各寫一次；10/20 沒行情不寫
     assert out.read_text().splitlines() == ["fetched=2", "start=2026-10-16"]
     assert ("monthly_revenue", 1) in saved  # 每天用開放資料覆蓋最新一個月，跟上公司更正
+
+
+def test_main_refetches_recent_days_when_new_stock_listed(monkeypatch):
+    """清單出現新股時，最近 7 天的平日全部重抓，新股上市第一天才不會漏掉"""
+    monkeypatch.delenv("TARGET_DATE", raising=False)
+    monkeypatch.setattr(auto_fetch, "target_dates", lambda: [])
+    monkeypatch.setattr(auto_fetch, "taiwan_today", lambda: date(2026, 10, 21))
+    monkeypatch.setattr(auto_fetch.time, "sleep", lambda s: None)
+    f = auto_fetch.f
+    lists = iter([{"2330", "6488"}, {"2330", "6488", "6467"}])
+    monkeypatch.setattr(f, "get_valid_stock_ids", lambda: next(lists))
+    monkeypatch.setattr(f, "refresh_stock_info", lambda: None)
+    fetched = []
+    monkeypatch.setattr(auto_fetch, "fetch_day", lambda d, s: (fetched.append(d), (False, []))[1])
+    monkeypatch.setattr(f, "save_data_batches", lambda t, r: (len(r), 0))
+    monkeypatch.setattr(auto_fetch.adj, "fetch_range", lambda a, b, s: ([], []))
+    monkeypatch.setattr(auto_fetch.market, "fetch_range", lambda a, b: (None, []))
+    monkeypatch.setattr(auto_fetch.revenue, "fetch_range", lambda a, b, s: (None, []))
+    monkeypatch.setattr(f, "fetch_monthly_revenue", lambda s: [])
+
+    assert auto_fetch.main() == 0
+    assert fetched == ["2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21"]
