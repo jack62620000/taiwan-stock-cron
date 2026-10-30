@@ -113,3 +113,19 @@ def test_shorter_retention_archives_then_deletes():
     assert n == 2
     assert {r["date"] for r in sb.tables["daily_prices"]} == {"2024-06-01"}
     assert "daily_prices/2024/2024-03-01.csv.gz" in sb.storage.buckets["archive"]
+
+
+def test_keepalive_skips_manual_and_deleted(monkeypatch):
+    workflows = [{"id": 1, "name": "每日", "path": ".github/workflows/daily_update.yml", "state": "active"},
+                 {"id": 2, "name": "閒置停用", "path": ".github/workflows/etf_update.yml", "state": "disabled_inactivity"},
+                 {"id": 3, "name": "手動停用", "path": ".github/workflows/us_market.yml", "state": "disabled_manually"},
+                 {"id": 4, "name": "已刪除", "path": ".github/workflows/probe_fee.yml", "state": "active"}]
+    enabled = []
+
+    class Put:
+        status_code = 204
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    monkeypatch.setattr(health_check.requests, "get", lambda *a, **k: FakeResponse({"workflows": workflows}))
+    monkeypatch.setattr(health_check.requests, "put", lambda url, **k: enabled.append(url.split("/")[-2]) or Put())
+    text, problems = health_check.keep_workflows_enabled("t", "o/r")
+    assert problems == [] and enabled == ["1", "2"] and "2 / 2" in text

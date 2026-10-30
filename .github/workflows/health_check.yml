@@ -7,8 +7,6 @@ on:
     # 每週日台灣時間 13:00（UTC 週日 05:00），在備份（03:20）和官方抽查（12:00）之後
     - cron: '0 5 * * 0'
   workflow_dispatch:
-  push:
-    branches: [claude/project-thread-cercx1]
 
 permissions:
   actions: write   # 重新啟用排程

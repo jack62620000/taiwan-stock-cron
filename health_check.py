@@ -9,7 +9,8 @@
    抓不到資料時，最晚一週內會發現。容許天數已考慮連假（春節約 9 天）和各資料的公布時間。
 2. 每週備份有沒有產生：ETF 專案 Storage 的 db-backups 最新的日期資料夾不能超過 BACKUP_MAX_DAYS 天。
 3. 讓排程保持啟用：公開的 repo 60 天沒有任何活動，GitHub 會自動停用所有排程（連資料庫的準時觸發也叫不動）。
-   這裡用 GitHub API 把每個 workflow 重新啟用一次，計時就會重算，不需要做假的 commit。
+   這裡用 GitHub API 把每個 workflow 重新啟用一次，計時就會重算，不需要做假的 commit
+   （只處理 repo 裡現有的檔案；手動停用的排程不會被打開）。
 
 資料庫用量由 check_data.py 每天檢查，超過門檻時 cleanup_old_data.py 會自動縮短保留期限。
 
@@ -138,6 +139,8 @@ def keep_workflows_enabled(token, repo):
         workflows = r.json()["workflows"]
     except Exception as e:
         return "", [f"讀不到 workflow 清單（{type(e).__name__}）"]
+    # 只處理 repo 裡現有、而且是啟用中或因閒置被停用的；手動停用的不動
+    workflows = [w for w in workflows if w["state"] in ("active", "disabled_inactivity") and os.path.exists(w["path"])]
     problems, done = [], 0
     for w in workflows:
         res = requests.put(f"{api}/{w['id']}/enable", headers=headers, timeout=30)
