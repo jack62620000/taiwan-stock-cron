@@ -1,6 +1,6 @@
 """
 自動化版本 - 給 GitHub Actions 排程使用
-每次執行會檢查最近 7 天，把還沒存齊的交易日（清單出現新股時則是 7 天全部）的股價、三大法人（含外資持股）、融資融券
+每次執行會檢查最近 7 天，把還沒存齊的交易日（清單出現新股時另外往回重抓到新股上市那天）的股價、三大法人（含外資持股）、融資融券
 （餘額＋限額＋使用率）補抓起來，再更新最近兩週的還原權值事件、當月的大盤指數；
 每月 1～20 號另外補抓上個月還沒存到的月營收；每天再用開放資料覆蓋最新一個月，公司事後更正營收也會跟上。
 
@@ -72,8 +72,11 @@ def target_dates():
     return missing_dates(taiwan_today())
 
 
-def fetch_day(day, valid_stocks):
-    """抓一個交易日的股價、法人（含外資持股）、融資券並寫入。回傳 (是否有行情, 問題清單)"""
+def fetch_day(day, valid_stocks, need=None):
+    """
+    抓一個交易日的股價、法人（含外資持股）、融資券並寫入。回傳 (是否有行情, 問題清單)。
+    給了 need（新股代號）時，行情裡沒有這些股票就不抓後面的資料，回傳 (None, [])：新股那天還沒上市。
+    """
     print(f"\n========== {day} ==========")
     print("--- 下載每日股價 ---")
     twse_prices = f.fetch_twse_daily_all(day, valid_stocks)
@@ -85,6 +88,9 @@ def fetch_day(day, valid_stocks):
     if not twse_prices and not tpex_prices:
         print(f"ℹ️ {day} 上市、上櫃都沒有行情（休市或還沒公布），不寫入任何資料。")
         return False, []
+    if need and not need & {r["stock_id"] for r in twse_prices + tpex_prices}:
+        print(f"ℹ️ {day} 還沒有 {'、'.join(sorted(need))} 的行情（還沒上市），不用重抓。")
+        return None, []
 
     print("--- 下載三大法人 ---")
     twse_ins = f.fetch_twse_stock_ins(day, valid_stocks)
@@ -156,20 +162,30 @@ def main():
         return 1
     print(f"資料庫內現有 {len(valid_stocks)} 檔股票可供對應。")
 
-    # 新股上市當天清單常還沒更新，那天的行情會被略過（2026-10-20 的 6467 泰合就少了第一天）。
-    # 清單出現新股時，把最近幾天全部重抓一次（寫入是 upsert，已存的資料不會重複）
-    new_stocks = sorted(valid_stocks - before) if before else []
-    if new_stocks and not os.getenv("TARGET_DATE", "").strip():
-        days = sorted(set(days) | set(recent_weekdays(taiwan_today())))
-        print(f"清單新增 {'、'.join(new_stocks)}，重抓最近幾天讓新股的第一天也存到：{'、'.join(days)}")
-
     problems, traded = [], []
     for day in days:
         ok, day_problems = fetch_day(day, valid_stocks)
         problems.extend(day_problems)
         if ok:
             traded.append(day)
-    write_output(fetched=len(traded), start=traded[0] if traded else "")
+
+    # 新股上市當天清單常還沒更新，那天的行情會被略過（2026-10-20 的 6467 泰合就少了第一天）。
+    # 清單出現新股時，從最近一天往回重抓，抓到行情裡還沒有新股的那天（還沒上市）就停，不會把 7 天全部重抓。
+    # 這些日子原本已經存齊（寫入是 upsert，抓失敗也不會蓋掉已存的資料），所以抓不到只提醒、不算失敗：
+    # 2026-10-31 新股 7867 讓程式連續重抓 5 天，證交所擋了幾次請求，資料其實完整卻被標成失敗
+    new_stocks = sorted(valid_stocks - before) if before else []
+    warnings = []
+    if new_stocks and not os.getenv("TARGET_DATE", "").strip():
+        extra = sorted(set(recent_weekdays(taiwan_today())) - set(days), reverse=True)
+        print(f"\n清單新增 {'、'.join(new_stocks)}，往回重抓到新股上市那天：{'、'.join(extra) or '（最近幾天都已在上面抓過）'}")
+        for day in extra:
+            ok, day_problems = fetch_day(day, valid_stocks, need=set(new_stocks))
+            if ok is None:
+                break
+            warnings.extend(day_problems)
+            if ok:
+                traded.append(day)
+    write_output(fetched=len(traded), start=min(traded) if traded else "")
 
     print("\n--- 還原權值事件（除權息、減資、變更面額）---")
     adj_start = (datetime.strptime(ref, "%Y-%m-%d") - timedelta(days=ADJUST_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
@@ -204,6 +220,10 @@ def main():
         if failed:
             problems.append(f"monthly_revenue 有 {failed} 筆寫入失敗")
 
+    if warnings:
+        print("\n⚠️ 新股重抓有幾項沒抓到（這幾天原本的資料都還在，只是新股可能少了那天的部分資料）：")
+        for p in warnings:
+            print(f"   - {p}")
     if problems:
         print("\n❌ 這次同步不完整：")
         for p in problems:
