@@ -441,3 +441,61 @@ def test_default_daily_date_uses_previous_day_before_data_ready():
     # 晚上 6:40 的排程被 GitHub 延遲到隔天凌晨 1 點才跑，仍應抓前一天
     assert u.default_daily_date(f.datetime(2026, 10, 30, 1, 3, tzinfo=f.TAIPEI)) == "2026-10-29"
     assert u.default_daily_date(f.datetime(2026, 10, 29, 18, 40, tzinfo=f.TAIPEI)) == "2026-10-29"
+
+
+def fee_html(with_a3, rows):
+    labels = ["手續費( a1 )", "交易稅( a2 )"] + (["ETF/指數型/主動式ETF 申購/買回交易費( a3 )"] if with_a3 else []) + \
+        ["經理費( b1 )", "保管費( b2 )", "保證費( b3 )", "其他項費用( b4 )"]
+    tr = lambda cells: "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+    return "<table>" + tr(["類型 代號", "基金統編", "基金名稱", "交易直接成本", "會計帳列之費用", "合計"]) + \
+        tr(labels) + tr(["金額", "比率"] * (len(labels) + 1)) + "".join(tr(r) for r in rows) + "</table>"
+
+
+def test_fee_period():
+    assert f.fee_period(2026, "9") == ("2026-09", "month")
+    assert f.fee_period(2026, "0630") == ("2026-Q2", "quarter")
+    assert f.fee_period(2025, "Year") == ("2025", "year")
+
+
+def test_parse_sitca_fees_new_and_old_layout():
+    new = fee_html(True, [
+        ["AH11", "12345678", "元大台灣卓越50基金", "1,000", "0.01%", "2,000", "0.02%", "500", "0.01%",
+         "30,000", "0.03%", "5,000", "0.01%", "0", "0.00%", "-100", "-0.02%", "37,400", "0.04%"],
+        ["AA1", "99999999", "不是ETF的基金"] + ["0", "0.00%"] * 8,
+    ])
+    rows = f.parse_sitca_fees(new, "2026-09", "month", {"12345678": "0050"})
+    assert rows == [{"etf_id": "0050", "period": "2026-09", "period_type": "month", "brokerage_pct": 0.01,
+                     "tax_pct": 0.02, "creation_pct": 0.01, "mgmt_pct": 0.03, "custody_pct": 0.01,
+                     "guarantee_pct": 0.0, "other_pct": -0.02, "total_pct": 0.04, "total_amount": 37400}]
+    old = fee_html(False, [["AH11", "12345678", "寶來台灣卓越50基金", "1,000", "0.01%", "2,000", "0.02%",
+                            "30,000", "0.03%", "5,000", "0.01%", "0", "0.00%", "100", "0.00%", "38,100", "0.07%"]])
+    rows = f.parse_sitca_fees(old, "2021-Q4", "quarter", {"12345678": "0050"})
+    assert rows[0]["creation_pct"] is None and rows[0]["mgmt_pct"] == 0.03 and rows[0]["total_pct"] == 0.07
+
+
+def test_parse_sitca_fees_rejects_changed_columns():
+    html = fee_html(True, []).replace("經理費( b1 )", "管理費( b9 )")
+    assert f.parse_sitca_fees(html, "2026-09", "month", {}) == []
+
+
+def test_fetch_fees_skips_existing_periods(monkeypatch):
+    monkeypatch.setattr(u, "DRY_RUN", False)
+    monkeypatch.setattr(u.f, "today_taipei", lambda: u.date(2026, 10, 30))
+    monkeypatch.setattr(u.f, "open_sitca_fee_year", lambda y: ({}, ["Year", "0630", "8", "9"]))
+    have = {"2026-Q2": 300, "2026-08": 300, "2026-09": 300}
+    monkeypatch.setattr(u.f, "count_rows", lambda table, period: have.get(period, 0))
+    asked = []
+    monkeypatch.setattr(u.f, "fetch_sitca_fees", lambda y, mv, by_tax, hidden: asked.append((y, mv)) or
+                        [{"etf_id": str(i), "period": u.f.fee_period(y, mv)[0]} for i in range(200)])
+    monkeypatch.setattr(u, "save", lambda table, rows: None)
+    assert u.fetch_fees([2026], {"x": "0050"}, refresh_latest=True) == []
+    # 今年的全年不抓、已有的季與月略過，最新一個月一律重抓
+    assert asked == [(2026, "9")]
+
+
+def test_parse_sitca_fees_header_with_a3_but_rows_without():
+    # 2021 全年：表頭列出 a3，但每列只有 a1、a2、b1～b4 與合計
+    html = fee_html(True, [["AH11", "12345678", "元大台灣50", "1,000", "0.01%", "2,000", "0.02%",
+                            "30,000", "0.03%", "5,000", "0.01%", "0", "0.00%", "100", "0.00%", "38,100", "0.07%"]])
+    rows = f.parse_sitca_fees(html, "2021", "year", {"12345678": "0050"})
+    assert rows[0]["creation_pct"] is None and rows[0]["mgmt_pct"] == 0.03 and rows[0]["total_amount"] == 38100
