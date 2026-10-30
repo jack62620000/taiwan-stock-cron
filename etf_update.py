@@ -2,7 +2,7 @@
 台股 ETF 排程與回補（GitHub Actions：.github/workflows/etf_update.yml）
 
 用環境變數 ETF_JOB 選擇工作：
-  daily    平日盤後：ETF 清單、每日價量、三大法人、融資融券、借券賣出、淨值折溢價、配息、還原權值事件；並補最近幾個交易日的缺漏，
+  daily    平日盤後：ETF 清單（含發行投信、配息頻率、下市日）、暫停交易公告（分割預告）、每日價量、三大法人、融資融券、借券賣出、淨值折溢價、配息、還原權值事件；並補最近幾個交易日的缺漏，
            最後清除超過保留期限的舊資料（先封存到 ETF 資料庫的 Storage 再刪除，期限見 RETENTION）
   weekly   週六：集保持股分級（開放資料最新一週）
   monthly  每月：投信公會月資料與前十大持股（重抓最近兩個月），並補上上櫃 ETF 的基金統編；
@@ -171,8 +171,15 @@ def run_daily(day):
     try:
         twse_list = f.fetch_twse_etf_list(day)
         save("etf_info", twse_list + [x for x in listing if x["etf_id"] not in {r["etf_id"] for r in twse_list}])
+        if twse_list and listing:
+            mark_delisted({r["etf_id"] for r in twse_list + listing}, day)
     except Exception as e:
         problems.append(f"ETF 清單：{e}")
+
+    try:
+        save("etf_trading_halts", f.fetch_trading_halts())
+    except Exception as e:
+        problems.append(f"暫停交易公告：{e}")
 
     try:
         nav_day, n_nav = update_nav()
@@ -184,6 +191,7 @@ def run_daily(day):
     save("etf_dividends", dividends)
     if not dividends:
         problems.append("配息三個來源都沒有取得資料")
+    problems += update_dividend_frequency(day)
     problems += fill_recent_gaps(day)
 
     n_margin = n_sbl = None
@@ -214,6 +222,43 @@ def run_daily(day):
         if nav_day != day or n_nav < MIN_DAILY_ROWS:
             problems.append(f"MIS 淨值資料日 {nav_day}、{n_nav} 筆，不是 {day} 的完整資料")
     return problems
+
+
+def mark_delisted(active, day):
+    """ETF 清單裡今天上市、上櫃都沒有的，下市日記為今天（重新出現時清單寫入會把下市日清空）"""
+    if DRY_RUN:
+        return
+    gone = sorted(r["etf_id"] for r in f.select_all("etf_info", "etf_id, delisted_date")
+                  if r["etf_id"] not in active and not r.get("delisted_date"))
+    if len(gone) > 20:
+        # 一天不會下市這麼多檔，多半是來源清單暫時不完整，先不標示
+        print(f"⚠️ 有 {len(gone)} 檔不在今天的 ETF 清單，疑似清單不完整，略過下市標示")
+    elif gone:
+        f.db().table("etf_info").update({"delisted_date": day}).in_("etf_id", gone).execute()
+        print(f"標示下市 {len(gone)} 檔：{'、'.join(gone)}")
+
+
+def update_dividend_frequency(day):
+    """用配息表最近一年的除息次數，更新 etf_info 的配息頻率"""
+    if DRY_RUN:
+        return []
+    try:
+        start = (date.fromisoformat(day) - timedelta(days=400)).isoformat()
+        ex_dates = {}
+        for r in f.select_range("etf_dividends", "etf_id, ex_date", "ex_date", start, "9999-12-31"):
+            ex_dates.setdefault(r["etf_id"], []).append(r["ex_date"])
+        rows = [{"etf_id": r["etf_id"],
+                 "dividend_frequency": f.dividend_frequency(ex_dates.get(r["etf_id"], []), day, r.get("listing_date"))}
+                for r in f.select_all("etf_info", "etf_id, listing_date")]
+        for freq in {r["dividend_frequency"] for r in rows}:
+            ids = [r["etf_id"] for r in rows if r["dividend_frequency"] == freq]
+            for i in range(0, len(ids), 200):
+                f.db().table("etf_info").update({"dividend_frequency": freq}).in_("etf_id", ids[i:i + 200]).execute()
+        print("配息頻率：" + "、".join(f"{k or '未定'} {sum(r['dividend_frequency'] == k for r in rows)} 檔"
+                                      for k in sorted({r["dividend_frequency"] for r in rows}, key=str)))
+        return []
+    except Exception as e:
+        return [f"配息頻率：{e}"]
 
 
 def update_adjustments(start, end):
