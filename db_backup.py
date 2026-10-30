@@ -12,6 +12,10 @@ Supabase 免費方案沒有資料庫備份；archive.py 封存的只是過期被
 主資料庫的封存檔 → ETF 專案 db-backups/archive/，ETF 的封存檔 → 主專案 db-backups/archive/，
 路徑和原本一樣。封存檔寫好就不會變，每次只複製新增的檔案；LINE 查詢卡片每天重新產生，不備份。
 
+兩邊封存檔另外打包成 archive.tar 放進同一個日期資料夾。使用者 Google 帳號裡的 Apps Script
+（gdrive_backup.gs）每天檢查，有新的日期資料夾就整個複製到雲端硬碟「台股資料庫備份/<日期>/」，
+一樣只留最近 KEEP 份，Supabase 以外也有一份。
+
 需要的 secrets：MAIN_DB_PASSWORD、ETF_DB_PASSWORD（兩個資料庫的密碼），SUPABASE_URL、ETF_SUPABASE_URL
 （從網址取得專案代號），SUPABASE_KEY、ETF_SUPABASE_KEY（讀寫 Storage 用）。
 GitHub Actions 只能用 IPv4，資料庫直連是 IPv6，所以經過 Supabase 的 Session pooler 連線；
@@ -21,10 +25,12 @@ GitHub Actions 只能用 IPv4，資料庫直連是 IPv6，所以經過 Supabase 
   cat main.dump.* > main.dump
   pg_restore --clean --if-exists --no-owner --no-privileges -d "<連線字串>" main.dump
 """
+import io
 import os
 import re
 import subprocess
 import sys
+import tarfile
 from datetime import datetime, timedelta, timezone
 
 from urllib.parse import quote
@@ -129,6 +135,21 @@ def mirror_archive(name, src, dst, prefix):
     print(f"{name} 封存檔：新增或更新 {len(todo)} 個，備份在 {dst.bucket}/{prefix}")
 
 
+def archive_tar(sources):
+    """兩邊封存檔打包成一個 tar（檔案本身已是 gz，不再壓縮），路徑前面加上專案名稱"""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for name, src in sources:
+            for path in sorted(src.walk()):
+                if path.startswith(ARCHIVE_SKIP):
+                    continue
+                data = src.download(path)
+                info = tarfile.TarInfo(f"{name}/{path}")
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
 def dump(name, urls, schemas, out):
     args = ["pg_dump", "-Fc", "--no-owner", "--no-privileges", "-f", out]
     for s in schemas:
@@ -177,8 +198,16 @@ def main():
     main_backup = Storage(main_url, main_key)
     main_backup.ensure_bucket()
     mirror_archive("主資料庫", Storage(main_url, main_key, ARCHIVE_BUCKET), storage, ARCHIVE_PREFIX)
-    mirror_archive("ETF 資料庫", Storage(os.environ["ETF_SUPABASE_URL"], os.environ["ETF_SUPABASE_KEY"],
-                                       ARCHIVE_BUCKET), main_backup, ARCHIVE_PREFIX)
+    etf_archive = Storage(os.environ["ETF_SUPABASE_URL"], os.environ["ETF_SUPABASE_KEY"], ARCHIVE_BUCKET)
+    main_archive = Storage(main_url, main_key, ARCHIVE_BUCKET)
+    mirror_archive("主資料庫", main_archive, storage, ARCHIVE_PREFIX)
+    mirror_archive("ETF 資料庫", etf_archive, main_backup, ARCHIVE_PREFIX)
+
+    # 兩邊封存檔再打包一份放進這次的日期資料夾，Google 雲端硬碟的 Apps Script（gdrive_backup.gs）
+    # 會把整個日期資料夾複製到雲端硬碟，Supabase 帳號出問題時也還有一份
+    tar = archive_tar([("main", main_archive), ("etf", etf_archive)])
+    storage.upload(f"{day}/archive.tar", tar)
+    print(f"封存檔打包：{len(tar) / 1024 / 1024:.1f} MB，上傳到 {BUCKET}/{day}/archive.tar")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 name: 每週資料庫備份
 
 # 主資料庫和 ETF 資料庫整個匯出，存到 ETF 資料庫 Storage 的 db-backups 桶，只留最近 2 份；
-# 兩邊過期資料的封存檔也互相備份到另一個專案（見 db_backup.py）
+# 兩邊過期資料的封存檔也互相備份到另一個專案，打包的封存檔和備份由 Google 雲端硬碟的 Apps Script 每天複製一份（見 db_backup.py）
 on:
   schedule:
     # 週日台灣時間凌晨 3:20（UTC 週六 19:20），沒有其他排程在跑
