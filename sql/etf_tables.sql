@@ -259,3 +259,24 @@ alter table public.etf_margin_daily enable row level security;
 alter table public.etf_top_holdings enable row level security;
 alter table public.etf_sbl_daily enable row level security;
 alter table public.etf_expense_ratio enable row level security;
+
+-- 12. 還原權值事件（2026-10 新增）
+create table if not exists public.etf_price_adjustments (
+    etf_id      varchar(10) not null,
+    date        date        not null,
+    event_type  varchar(10) not null,
+    prev_close  numeric     not null,
+    ref_price   numeric     not null,
+    factor      numeric     not null,
+    source      varchar(10) not null,
+    primary key (etf_id, date, event_type)
+);
+comment on table  public.etf_price_adjustments is 'ETF 還原權值事件（除息、分割、反分割）：etf_update.py 由價量與配息表推算，定義與 price_adjustments 相同';
+comment on column public.etf_price_adjustments.etf_id     is 'ETF 代號';
+comment on column public.etf_price_adjustments.date       is '事件生效日（除息交易日／分割後恢復買賣日）';
+comment on column public.etf_price_adjustments.event_type is '除息、分割、反分割';
+comment on column public.etf_price_adjustments.prev_close is '事件前最後一個有成交的收盤價';
+comment on column public.etf_price_adjustments.ref_price  is '參考價：除息＝前收 − 配息；分割＝前收 × 分割比例（由當天收盤 − 漲跌推算後取整數比例）';
+comment on column public.etf_price_adjustments.factor     is '調整比例 = 參考價 ÷ 前收；事件日之前的股價乘上這個比例';
+comment on column public.etf_price_adjustments.source     is '配息表（etf_dividends）或漲跌推算';
+alter table public.etf_price_adjustments enable row level security;

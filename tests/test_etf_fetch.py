@@ -499,3 +499,36 @@ def test_parse_sitca_fees_header_with_a3_but_rows_without():
                             "30,000", "0.03%", "5,000", "0.01%", "0", "0.00%", "100", "0.00%", "38,100", "0.07%"]])
     rows = f.parse_sitca_fees(html, "2021", "year", {"12345678": "0050"})
     assert rows[0]["creation_pct"] is None and rows[0]["mgmt_pct"] == 0.03 and rows[0]["total_amount"] == 38100
+
+
+def test_build_adjustments_dividend_and_splits():
+    prices = [
+        # 0050 一拆四：漲跌相對參考價 47.16，前收 188.65 → factor 0.25
+        {"etf_id": "0050", "date": "2025-06-17", "close_price": "188.65", "change": "1.0"},
+        {"etf_id": "0050", "date": "2025-06-18", "close_price": "47.57", "change": "0.41"},
+        # 00674R 五合一（反分割），當天漲跌 0
+        {"etf_id": "00674R", "date": "2026-04-21", "close_price": "5.18", "change": "0.01"},
+        {"etf_id": "00674R", "date": "2026-04-22", "close_price": "25.9", "change": "0.0"},
+        # 00878 除息 0.4：前一天沒成交（收盤空值），前收用再前一天
+        {"etf_id": "00878", "date": "2026-08-15", "close_price": "22.0", "change": "0.1"},
+        {"etf_id": "00878", "date": "2026-08-18", "close_price": None, "change": None},
+        {"etf_id": "00878", "date": "2026-08-19", "close_price": "21.7", "change": "0.1"},
+        # 冷門 ETF 隔了幾天才成交、漲跌記成 0：小幅差異不當成事件
+        {"etf_id": "00625K", "date": "2026-10-27", "close_price": "8.05", "change": "0.0"},
+        {"etf_id": "00625K", "date": "2026-10-28", "close_price": "7.86", "change": "0.0"},
+    ]
+    dividends = [{"etf_id": "00878", "ex_date": "2026-08-19", "cash_dividend": "0.4"},
+                 {"etf_id": "00878", "ex_date": "2026-11-18", "cash_dividend": None}]
+    got = {(e["etf_id"], e["event_type"]): e for e in f.build_adjustments(prices, dividends)}
+    assert set(got) == {("0050", "分割"), ("00674R", "反分割"), ("00878", "除息")}
+    assert got[("0050", "分割")]["date"] == "2025-06-18" and abs(got[("0050", "分割")]["factor"] - 0.25) < 1e-6
+    assert got[("00674R", "反分割")]["factor"] == 5.0
+    div = got[("00878", "除息")]
+    assert div["prev_close"] == 22.0 and div["ref_price"] == 21.6 and abs(div["factor"] - 21.6 / 22) < 1e-8
+
+
+def test_build_adjustments_ignores_non_whole_ratio():
+    # 大跌 40% 但不是整數比例（例如槓桿型暴跌），不當成分割
+    prices = [{"etf_id": "00715L", "date": "2026-08-04", "close_price": "10.0", "change": "0.1"},
+              {"etf_id": "00715L", "date": "2026-08-05", "close_price": "6.0", "change": "-0.35"}]
+    assert f.build_adjustments(prices, []) == []

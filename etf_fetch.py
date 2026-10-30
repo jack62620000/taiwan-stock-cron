@@ -48,6 +48,7 @@ TABLE_KEYS = {
     "etf_sbl_daily":           ("etf_id", "date"),
     "etf_top_holdings":        ("etf_id", "year_month", "rank"),
     "etf_expense_ratio":       ("etf_id", "period"),
+    "etf_price_adjustments":   ("etf_id", "date", "event_type"),
 }
 
 _client = None
@@ -983,6 +984,61 @@ def archive_day(table, col, day, bucket="archive"):
     if len(saved) != len(rows):
         raise RuntimeError(f"{path} 封存後只讀回 {len(saved)} 筆，應有 {len(rows)} 筆")
     return len(rows)
+
+
+def select_range(table, columns, col, start, end):
+    """分頁讀 col 介於 start～end 的資料（supabase 單次上限 1000 筆）"""
+    rows, offset = [], 0
+    while True:
+        res = (db().table(table).select(columns).gte(col, start).lte(col, end)
+               .order(TABLE_KEYS[table][0]).order(col).range(offset, offset + 999).execute())
+        rows += res.data
+        if len(res.data) < 1000:
+            return rows
+        offset += 1000
+
+
+# ==================== 還原權值事件（除息、分割、反分割） ====================
+# 不用另外的資料來源：證交所、櫃買的「漲跌」是相對調整後參考價，所以 (收盤 − 漲跌) ÷ 前一天收盤 = 參考價 ÷ 前收。
+# 但沒有成交的隔天漲跌常記成 0，用這個比例只認大幅變動（分割／反分割）；除息用配息表的金額計算。
+SPLIT_MIN_CHANGE = 0.3   # 參考價和前收差超過 30% 才當成分割／反分割
+SPLIT_RATIO_TOL = 0.02   # 比例（或倒數）要接近整數，例如一拆四 0.25、五合一 5
+
+
+def _whole_ratio(x):
+    """x 或 1/x 接近整數時回傳 True（分割比例都是整數）"""
+    r = x if x >= 1 else 1 / x
+    return abs(r - round(r)) <= SPLIT_RATIO_TOL * round(r)
+
+
+def build_adjustments(prices, dividends):
+    """
+    prices：etf_daily_prices 列（etf_id、date、close_price、change），dividends：etf_dividends 列（etf_id、ex_date、cash_dividend）
+    回傳 etf_price_adjustments 列；factor = 參考價 ÷ 前收，事件日之前的股價乘上 factor 就能和之後連續
+    """
+    cash = {(d["etf_id"], d["ex_date"]): to_float(d.get("cash_dividend")) for d in dividends}
+    out, last = [], {}
+    for r in sorted(prices, key=lambda r: (r["etf_id"], r["date"])):
+        key, close = (r["etf_id"], r["date"]), to_float(r.get("close_price"))
+        prev = last.get(r["etf_id"])
+        div = cash.get(key)
+        if prev and div and 0 < div < prev:
+            ref = round(prev - div, 4)
+            out.append({"etf_id": key[0], "date": key[1], "event_type": "除息", "prev_close": prev,
+                        "ref_price": ref, "factor": round(ref / prev, 8), "source": "配息表"})
+        change = to_float(r.get("change"))
+        if prev and close and change is not None:
+            ref = round(close - change, 4)
+            ratio = ref / prev
+            if ref > 0 and abs(ratio - 1) > SPLIT_MIN_CHANGE and _whole_ratio(ratio):
+                # 分割比例是整數，取整後再算，避免參考價四捨五入的誤差（一拆四 = 0.25）
+                factor = 1 / round(1 / ratio) if ratio < 1 else float(round(ratio))
+                out.append({"etf_id": key[0], "date": key[1], "event_type": "分割" if ratio < 1 else "反分割",
+                            "prev_close": prev, "ref_price": round(prev * factor, 4), "factor": round(factor, 8),
+                            "source": "漲跌推算"})
+        if close:
+            last[r["etf_id"]] = close
+    return out
 
 
 def count_rows(table, **eq):
