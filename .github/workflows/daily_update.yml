@@ -9,8 +9,14 @@ on:
     - cron: '11 15 * * 1-5'
     # 週六台灣時間早上9:06（UTC 01:06）- 大戶持股
     - cron: '06 1 * * 6'
+  # Supabase 主資料庫的 pg_cron 也會在上面同樣的時間用 task 觸發（GitHub 的 schedule 常延誤好幾個小時，這邊留著當備援）
   workflow_dispatch:
     inputs:
+      task:
+        description: '要執行的工作：all＝期貨＋股價、futures＝期貨、daily＝股價/法人/融資券、morning＝早上補抓（含 LINE 卡片檢查）、holder＝大戶持股'
+        type: choice
+        options: [all, futures, daily, morning, holder]
+        default: all
       run_holder_only:
         description: '只執行大戶持股（測試用）'
         type: boolean
@@ -25,7 +31,8 @@ jobs:
     if: >-
       github.event.schedule == '08 13 * * 1-5' ||
       github.event.schedule == '30 22 * * 1-5' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only != 'true')
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only != 'true' &&
+       contains(fromJSON('["all","futures","morning"]'), github.event.inputs.task))
     runs-on: ubuntu-latest
     # 每次最多 60 分鐘、逾時重跑一次（.github/scripts/retry_on_timeout.sh），整個工作最多 130 分鐘
     timeout-minutes: 130
@@ -49,7 +56,8 @@ jobs:
     if: >-
       github.event.schedule == '11 15 * * 1-5' ||
       github.event.schedule == '30 22 * * 1-5' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only != 'true')
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only != 'true' &&
+       contains(fromJSON('["all","daily","morning"]'), github.event.inputs.task))
     runs-on: ubuntu-latest
     # 每次最多 60 分鐘、逾時重跑一次（.github/scripts/retry_on_timeout.sh），整個工作最多 130 分鐘
     timeout-minutes: 130
@@ -153,7 +161,9 @@ jobs:
   # （自選股不再每晚推播：在 LINE 打「自選」隨時查；要推播時手動執行「LINE 自選股推播（手動）」）
   refresh-line-cards:
     needs: [update-daily-data, update-signals]
-    if: always() && github.event.schedule == '30 22 * * 1-5' && needs.update-signals.result == 'skipped'
+    if: >-
+      always() && needs.update-signals.result == 'skipped' &&
+      (github.event.schedule == '30 22 * * 1-5' || github.event.inputs.task == 'morning')
     concurrency:
       group: daily-signals
       cancel-in-progress: false
@@ -175,7 +185,10 @@ jobs:
         run: python line_cards.py
 
   update-holder-only:
-    if: github.event.schedule == '06 1 * * 6' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_holder_only == 'true')
+    if: >-
+      github.event.schedule == '06 1 * * 6' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.event.inputs.run_holder_only == 'true' || github.event.inputs.task == 'holder'))
     runs-on: ubuntu-latest
     # 每次最多 60 分鐘、逾時重跑一次（.github/scripts/retry_on_timeout.sh），整個工作最多 130 分鐘
     timeout-minutes: 130
