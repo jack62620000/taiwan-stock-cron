@@ -165,3 +165,18 @@ def test_line_lists_add_warning():
     assert msgs[0]["text"] == "標題"
     add_warning(msgs, "⚠️ 大盤在季線下")
     assert msgs[0]["text"].startswith("⚠️ 大盤在季線下\n\n標題")
+
+
+def test_granville_buy_table_all_today():
+    """候選股全部是「今天出現法則2」（沒有等待中的觸發價）時不會出錯，距離%、觸發價留白"""
+    from utils.analysis import granville_buy_table
+    cand = pd.DataFrame([
+        {"stock_id": sid, "stock_name": sid, "industry": "半導體業", "status": "今天出現法則2", "days_since": 1,
+         "close_price": 100.0, "setup_date": "2026-10-28", "r2_c1": "符合", "r2_c2": "符合", "r2_c4": "符合"}
+        for sid in ["2330", "2303"]
+    ])
+    trig = pd.DataFrame(columns=["stock_id", "trigger_price", "trigger_pct"]).set_index("stock_id")
+    table, triggers = granville_buy_table(cand, trig, pd.Series(dtype=float), {}, {"2330": 1.5}, {})
+    assert list(table["代號"]) == ["2330", "2303"]  # 比大盤強的排前面
+    assert table["距離%"].isna().all() and table["觸發價"].isna().all()
+    assert triggers == {}

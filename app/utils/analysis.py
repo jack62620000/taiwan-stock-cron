@@ -185,6 +185,9 @@ def granville_buy_table(cand, trig, ma_now, crosses, rs, atrs):
                      "產業": r.industry, "最新收盤": r.close_price, "觸發價": price, "距離%": pct,
                      "法則1日期": r.setup_date, "說明": note})
     buy_df = pd.DataFrame(rows)
+    # 全部都是「今天出現法則2」時距離% 整欄是 None（object 型別），先轉成數字才能取絕對值
+    buy_df["距離%"] = pd.to_numeric(buy_df["距離%"], errors="coerce")
+    buy_df["觸發價"] = pd.to_numeric(buy_df["觸發價"], errors="coerce")
     buy_df["abs_pct"] = buy_df["距離%"].abs()
     buy_df["weak"] = ~(buy_df["比大盤%"] > 0)
     buy_df["neg_rs"] = -buy_df["比大盤%"]
