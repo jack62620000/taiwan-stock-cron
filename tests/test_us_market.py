@@ -60,3 +60,16 @@ def test_collect_reports_missing_symbols(monkeypatch):
     records, problems = us.collect()
     assert {r["symbol"] for r in records} == {"TSM", "UST2Y", "UST10Y", "UST30Y"}
     assert problems == ["BAD 壞代號：下載失敗（ValueError）"]
+
+
+def test_parse_yahoo_fx_uses_exchange_timezone():
+    # 匯率日K在英國夏令時間是前一天 23:00 UTC；抓取時已是冬令（gmtoffset 0），要用倫敦時區換算才不會早一天
+    data = {"chart": {"result": [{
+        "meta": {"symbol": "TWD=X", "gmtoffset": 0, "exchangeTimezoneName": "Europe/London"},
+        # 2026-10-22 23:00 UTC（倫敦 10/23 00:00 BST）、2026-10-26 00:00 UTC（倫敦 10/26 00:00 GMT）
+        "timestamp": [1792710000, 1792972800],
+        "indicators": {"quote": [{"open": [32.5, 32.6], "high": [32.6, 32.7], "low": [32.4, 32.5],
+                                  "close": [32.55, 32.57], "volume": [0, 0]}]},
+    }], "error": None}}
+    rows = us.parse_yahoo(data, "TWD=X", "美元／台幣", "fx")
+    assert [r["date"] for r in rows] == ["2026-10-23", "2026-10-26"]

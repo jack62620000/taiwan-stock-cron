@@ -17,6 +17,7 @@ import os
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 from dotenv import load_dotenv
@@ -109,13 +110,21 @@ def parse_yahoo(data, symbol, name, category):
     res = result[0]
     stamps = res.get("timestamp") or []
     quote = ((res.get("indicators") or {}).get("quote") or [{}])[0]
-    offset = (res.get("meta") or {}).get("gmtoffset") or 0
+    meta = res.get("meta") or {}
+    offset = meta.get("gmtoffset") or 0
+    # 優先用交易所時區換算日期：gmtoffset 是抓取當下的時差，匯率（倫敦時區）在英國夏令時間的
+    # 日K時間戳是前一天 23:00 UTC，用冬令的 0 時差換算會整段早一天（週一記成週日、週五不見）
+    try:
+        tz = ZoneInfo(meta["exchangeTimezoneName"]) if meta.get("exchangeTimezoneName") else None
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = None
     by_day = {}
     for i, ts in enumerate(stamps):
         close = _num((quote.get("close") or [None] * len(stamps))[i])
         if close is None:
             continue
-        day = datetime.fromtimestamp(ts + offset, tz=timezone.utc).date().isoformat()
+        day = (datetime.fromtimestamp(ts, tz=tz) if tz else
+               datetime.fromtimestamp(ts + offset, tz=timezone.utc)).date().isoformat()
         pick = lambda k: _num((quote.get(k) or [None] * len(stamps))[i])  # noqa: E731
         vol = pick("volume")
         by_day[day] = {
