@@ -435,3 +435,9 @@ def test_fill_recent_credit_refetches_missing_days(monkeypatch):
     monkeypatch.setattr(u, "save", lambda table, rows: saved.append((table, len(rows))) or (len(rows), []))
     assert u.fill_recent_credit("2026-10-28") == []
     assert saved == [("etf_sbl_daily", 400)]
+
+
+def test_default_daily_date_uses_previous_day_before_data_ready():
+    # 晚上 6:40 的排程被 GitHub 延遲到隔天凌晨 1 點才跑，仍應抓前一天
+    assert u.default_daily_date(f.datetime(2026, 10, 30, 1, 3, tzinfo=f.TAIPEI)) == "2026-10-29"
+    assert u.default_daily_date(f.datetime(2026, 10, 29, 18, 40, tzinfo=f.TAIPEI)) == "2026-10-29"
