@@ -5,8 +5,9 @@
   daily    平日盤後：ETF 清單、每日價量、三大法人、融資融券、借券賣出、淨值折溢價、配息；並補最近幾個交易日的缺漏，
            最後清除超過保留期限的舊資料（先封存到 ETF 資料庫的 Storage 再刪除，期限見 RETENTION）
   weekly   週六：集保持股分級（開放資料最新一週）
-  monthly  每月：投信公會月資料與前十大持股（重抓最近兩個月），並補上上櫃 ETF 的基金統編
-  backfill 歷史回補：DATASETS 選 prices,ins,margin,sbl,monthly,top10,holder,dividends（逗號分隔），
+  monthly  每月：投信公會月資料與前十大持股（重抓最近兩個月），並補上上櫃 ETF 的基金統編；
+           各項費用比率（重抓最新月份，補今年與去年還沒有的月、季、年）
+  backfill 歷史回補：DATASETS 選 prices,ins,margin,sbl,monthly,top10,fees,holder,dividends（逗號分隔），
            區間 BACKFILL_START～BACKFILL_END
            （上櫃 ETF 的歷史配息來源只有預告表，回補只含上市 ETF）
 其他設定：
@@ -26,6 +27,8 @@ DRY_RUN = os.getenv("ETF_DRY_RUN") == "1"
 # 一個交易日正常約 360 檔（上市約 240＋上櫃約 120），低於這個數字視為不完整
 MIN_DAILY_ROWS = 300
 MIN_TOP10_ROWS = 2000   # 前十大持股一個月正常約 300 檔 × 10 名
+MIN_FEE_ROWS = 150      # 費用率一期 2021 年約 180 檔、2026 年約 340 檔
+FEE_FIRST_YEAR = 2021   # 公會費用率資料從 2021 年 9 月起
 MIN_WEEKLY_ROWS = 300
 MIN_MONTHLY_ROWS = 250
 # daily 順便檢查最近幾個交易日，前幾天排程延遲或失敗時補上
@@ -276,6 +279,45 @@ def run_monthly():
         save("etf_top_holdings", top10)
         if len(top10) < MIN_TOP10_ROWS and ym == months[1]:
             problems.append(f"{ym} 前十大持股只有 {len(top10)} 筆")
+    this_year = f.today_taipei().year
+    problems += fetch_fees([this_year - 1, this_year], by_tax, refresh_latest=True)
+    return problems
+
+
+def fetch_fees(years, by_tax, deadline=None, refresh_latest=False):
+    """
+    各項費用比率：逐年切換後，查這一年選單裡資料庫還沒有（或筆數不足）的月、季、年。
+    今年的「全年」是累計到目前，不抓；refresh_latest 時最新一個月一律重抓（公會可能晚補資料）。
+    """
+    if DRY_RUN and not by_tax:
+        _, tax_ids = f.fetch_sitca_monthly(recent_months(2)[1])
+        by_tax = {tax: code for code, tax in tax_ids.items()}
+    problems, this_year = [], f.today_taipei().year
+    for year in years:
+        hidden, offered = f.open_sitca_fee_year(year)
+        if not offered:
+            problems.append(f"投信公會費用率：無法切換到 {year} 年")
+            continue
+        for mv in offered:
+            if mv == "Year" and year == this_year:
+                continue
+            period, _ = f.fee_period(year, mv)
+            is_latest = refresh_latest and mv == offered[-1] and year == years[-1]
+            if not DRY_RUN and not is_latest and f.count_rows("etf_expense_ratio", period=period) >= MIN_FEE_ROWS:
+                continue
+            if deadline and time.time() > deadline:
+                return problems + [f"已到執行時間上限，{period} 起的費用率還沒補"]
+            try:
+                rows = f.fetch_sitca_fees(year, mv, by_tax, hidden)
+            except Exception as e:
+                problems.append(f"{period} 費用率：{e}")
+                continue
+            print(f"{period}：{len(rows)} 檔")
+            save("etf_expense_ratio", rows)
+            if len(rows) < MIN_FEE_ROWS:
+                problems.append(f"{period} 費用率只有 {len(rows)} 檔")
+            if DRY_RUN:
+                return problems
     return problems
 
 
@@ -485,6 +527,9 @@ def run_backfill():
         problems += backfill_monthly(start, end, deadline)
     if "top10" in datasets:
         problems += backfill_top10(start, end, deadline)
+    if "fees" in datasets:
+        years = range(max(int(start[:4]), FEE_FIRST_YEAR), int(end[:4]) + 1)
+        problems += fetch_fees(list(years), tax_id_map(), deadline)
     if "dividends" in datasets:
         problems += backfill_dividends(start, end)
     if "holder" in datasets:

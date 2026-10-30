@@ -225,6 +225,37 @@ comment on column public.etf_sbl_daily.sbl_adjust  is '當日調整（股）';
 comment on column public.etf_sbl_daily.sbl_balance is '借券賣出當日餘額（股）';
 comment on column public.etf_sbl_daily.sbl_limit   is '次一營業日可借券賣出限額（股）';
 
+-- 11. 各項費用比率（2026-10 新增）
+create table if not exists public.etf_expense_ratio (
+    etf_id          varchar(10) not null,
+    period          varchar(7)  not null,
+    period_type     varchar(7)  not null,
+    brokerage_pct   numeric(8, 2),
+    tax_pct         numeric(8, 2),
+    creation_pct    numeric(8, 2),
+    mgmt_pct        numeric(8, 2),
+    custody_pct     numeric(8, 2),
+    guarantee_pct   numeric(8, 2),
+    other_pct       numeric(8, 2),
+    total_pct       numeric(8, 2),
+    total_amount    bigint,
+    primary key (etf_id, period)
+);
+comment on table  public.etf_expense_ratio is 'ETF 各項費用比率（投信投顧公會「各項費用比率(月、季、年)」，2021-09 起）；比率是費用占基金平均淨資產的 %，月資料是當月、季與年是累計；全部保留';
+comment on column public.etf_expense_ratio.etf_id        is 'ETF 代號（用基金統編對回）';
+comment on column public.etf_expense_ratio.period        is '期間：月 2026-09、季 2026-Q2、年 2025';
+comment on column public.etf_expense_ratio.period_type   is '期間種類：month／quarter／year';
+comment on column public.etf_expense_ratio.brokerage_pct is '手續費 a1（%）';
+comment on column public.etf_expense_ratio.tax_pct       is '交易稅 a2（%）';
+comment on column public.etf_expense_ratio.creation_pct  is 'ETF 申購買回交易費 a3（%，2025-12 起才有，之前為空）';
+comment on column public.etf_expense_ratio.mgmt_pct      is '經理費 b1（%）';
+comment on column public.etf_expense_ratio.custody_pct   is '保管費 b2（%）';
+comment on column public.etf_expense_ratio.guarantee_pct is '保證費 b3（%）';
+comment on column public.etf_expense_ratio.other_pct     is '其他費用 b4（%）';
+comment on column public.etf_expense_ratio.total_pct     is '合計（%）＝手續費＋交易稅－申購買回交易費＋經理費＋保管費＋保證費＋其他';
+comment on column public.etf_expense_ratio.total_amount  is '費用合計金額（元）';
+
 alter table public.etf_margin_daily enable row level security;
 alter table public.etf_top_holdings enable row level security;
 alter table public.etf_sbl_daily enable row level security;
+alter table public.etf_expense_ratio enable row level security;

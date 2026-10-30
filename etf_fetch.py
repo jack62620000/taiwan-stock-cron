@@ -47,6 +47,7 @@ TABLE_KEYS = {
     "etf_margin_daily":        ("etf_id", "date"),
     "etf_sbl_daily":           ("etf_id", "date"),
     "etf_top_holdings":        ("etf_id", "year_month", "rank"),
+    "etf_expense_ratio":       ("etf_id", "period"),
 }
 
 _client = None
@@ -724,6 +725,96 @@ def fetch_sitca_top10(year_month, code_by_name):
         print(f"  ⚠️ 對不到代號的基金太多（{len(unknown)} 檔，對到 {len(funds)} 檔），這個月份不寫入")
         return []
     return rows
+
+
+# ==================== 6c. 各項費用比率（投信投顧公會「各項費用比率(月、季、年)」） ====================
+SITCA_FEE_URL = "https://www.sitca.org.tw/ROC/Industry/IN2211.aspx?pid=IN2222_01"
+FEE_FORM = "ctl00$ContentPlaceHolder1$"
+# 月份選單的值 → 期間：'9' → 2026-09、'0630' → 2026-Q2、'Year' → 2026
+FEE_QUARTERS = {"0331": "Q1", "0630": "Q2", "0930": "Q3", "1231": "Q4"}
+# 欄位順序；2025-12 起多了 ETF 申購買回交易費（a3），之前沒有這欄
+FEE_FIELDS_A3 = ["brokerage", "tax", "creation", "mgmt", "custody", "guarantee", "other", "total"]
+FEE_FIELDS_OLD = ["brokerage", "tax", "mgmt", "custody", "guarantee", "other", "total"]
+FEE_LABELS = {"brokerage": "a1", "tax": "a2", "creation": "a3", "mgmt": "b1", "custody": "b2",
+              "guarantee": "b3", "other": "b4"}
+
+
+def fee_period(year, month_value):
+    """('2026', '9') → ('2026-09', 'month')；('2026', '0630') → ('2026-Q2', 'quarter')；('2025', 'Year') → ('2025', 'year')"""
+    if month_value == "Year":
+        return str(year), "year"
+    if month_value in FEE_QUARTERS:
+        return f"{year}-{FEE_QUARTERS[month_value]}", "quarter"
+    return f"{year}-{int(month_value):02d}", "month"
+
+
+def fee_cells(tr):
+    return [re.sub(r"\s+", " ", re.sub(r"<[^>]+>|&nbsp;", " ", c)).strip()
+            for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S)]
+
+
+def parse_sitca_fees(html, period, period_type, code_by_tax_id):
+    """回傳 etf_expense_ratio 列（比率單位：%）；用基金統編對回 ETF 代號，不是 ETF 的基金略過"""
+    fields, out = None, {}
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
+        cells = fee_cells(tr)
+        if fields is None:
+            if cells and "手續費" in cells[0] and "( a1 )" in cells[0]:
+                fields = FEE_FIELDS_A3 if any("( a3 )" in c for c in cells) else FEE_FIELDS_OLD
+                expected = {i: f"( {FEE_LABELS[k]} )" for i, k in enumerate(fields[:-1])}
+                if len(cells) != len(fields) - 1 or not fields_ok(cells, expected, f"投信公會費用率 {period}"):
+                    return []
+            continue
+        if len(cells) != 3 + 2 * len(fields) or not re.fullmatch(r"\d{8}", cells[1]):
+            continue
+        code = code_by_tax_id.get(cells[1])
+        if not code or code in out:
+            continue
+        rec = {"etf_id": code, "period": period, "period_type": period_type}
+        for i, k in enumerate(fields):
+            rec[f"{k}_pct"] = to_float(cells[4 + 2 * i].rstrip("%"))
+        rec["total_amount"] = to_int(cells[3 + 2 * (len(fields) - 1)])
+        rec.setdefault("creation_pct", None)
+        out[code] = rec
+    return list(out.values())
+
+
+def sitca_selected(html, name):
+    sel = re.search(rf'<select[^>]*name="{re.escape(FEE_FORM + name)}"[^>]*>(.*?)</select>', html, re.S)
+    got = re.search(r'<option[^>]*selected="selected"[^>]*value="([^"]*)"', sel.group(1)) if sel else None
+    return got.group(1) if got else ""
+
+
+def sitca_options(html, name):
+    sel = re.search(rf'<select[^>]*name="{re.escape(FEE_FORM + name)}"[^>]*>(.*?)</select>', html, re.S)
+    return re.findall(r'value="([^"]*)"', sel.group(1)) if sel else []
+
+
+def open_sitca_fee_year(year):
+    """切換到某一年（ASP.NET postback），回傳 (隱藏欄位, 這一年可查的月份選單值)"""
+    page = http_get(SITCA_FEE_URL).content.decode("utf-8", "ignore")
+    form = sitca_hidden_fields(page)
+    form.update({FEE_FORM + "ddlQ_Y": str(year), FEE_FORM + "ddlQ_M": "Year",
+                 "__EVENTTARGET": FEE_FORM + "ddlQ_Y", "__EVENTARGUMENT": ""})
+    page = http_post(SITCA_FEE_URL, data=form).content.decode("utf-8", "ignore")
+    if sitca_selected(page, "ddlQ_Y") != str(year):
+        return {}, []
+    return sitca_hidden_fields(page), sitca_options(page, "ddlQ_M")
+
+
+def fetch_sitca_fees(year, month_value, code_by_tax_id, hidden):
+    """查一個期間（所有公司、所有基金）；回傳的年份或月份不對就當作失敗"""
+    period, period_type = fee_period(year, month_value)
+    print(f"正在下載投信公會 {period} 各項費用比率...")
+    form = dict(hidden)
+    form.update({FEE_FORM + "ddlQ_Y": str(year), FEE_FORM + "ddlQ_M": month_value, FEE_FORM + "ddlQ_Comid": "",
+                 FEE_FORM + "ddlQ_Fund": "", FEE_FORM + "BtnQuery": "查詢"})
+    html = http_post(SITCA_FEE_URL, data=form, timeout=180).content.decode("utf-8", "ignore")
+    got = (sitca_selected(html, "ddlQ_Y"), sitca_selected(html, "ddlQ_M"))
+    if got != (str(year), month_value):
+        print(f"  ⚠️ 投信公會回傳的是 {got}，不是 {(str(year), month_value)}，這個期間不寫入")
+        return []
+    return parse_sitca_fees(html, period, period_type, code_by_tax_id)
 
 
 # ==================== 7. 集保持股分級 ====================
