@@ -1,0 +1,38 @@
+name: 每週系統自我檢查
+
+# 檢查兩個資料庫各來源有沒有停更、每週備份有沒有產生，並重新啟用所有排程
+# （公開 repo 60 天沒有活動，GitHub 會自動停用排程）。有問題時排程失敗，GitHub 會寄信通知（health_check.py）
+on:
+  schedule:
+    # 每週日台灣時間 13:00（UTC 週日 05:00），在備份（03:20）和官方抽查（12:00）之後
+    - cron: '0 5 * * 0'
+  workflow_dispatch:
+  push:
+    branches: [claude/project-thread-cercx1]
+
+permissions:
+  actions: write   # 重新啟用排程
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Health check
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ETF_SUPABASE_URL: ${{ secrets.ETF_SUPABASE_URL }}
+          ETF_SUPABASE_KEY: ${{ secrets.ETF_SUPABASE_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONUNBUFFERED: '1'
+        run: python health_check.py

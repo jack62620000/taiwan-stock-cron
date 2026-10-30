@@ -52,8 +52,8 @@ def test_size_below_warning_passes():
 
 
 def test_size_over_warning_is_reported():
-    _, problems = check_data.check_size(size_db(460))
-    assert len(problems) == 1 and "460 MB" in problems[0]
+    _, problems = check_data.check_size(size_db(490))
+    assert len(problems) == 1 and "490 MB" in problems[0]
 
 
 def test_size_unreadable_is_not_failure(monkeypatch):

@@ -7,8 +7,9 @@ GitHub 會把這次排程標成失敗（紅色），點進去就看得到哪天�
 
 平常每天約有：股價 1,970 檔、三大法人 1,850 檔、融資融券 1,860 檔、評分 1,950 檔。
 
-另外檢查資料庫用量（database_size 函式，見 sql/functions.sql）：超過 SIZE_WARN_MB 也標成失敗，
-提醒要縮短保留期限（cleanup_old_data.py）或升級方案，免得超過 Supabase 免費額度 500 MB 後無法寫入。
+另外檢查資料庫用量（database_size 函式，見 sql/functions.sql）：超過 95%（475 MB）時 cleanup_old_data.py
+會自動縮短保留期限；超過 SIZE_WARN_MB 代表自動縮短也不夠，標成失敗，提醒要處理（升級方案或再縮短期限），
+免得超過 Supabase 免費額度 500 MB 後無法寫入。
 
 用法：python check_data.py
 """
@@ -33,7 +34,7 @@ CHECK_WINDOW = 6   # 拿最近 6 個交易日算基準
 CHECK_RECENT = 3   # 只檢查最近 3 天（更早的已經檢查過）
 MIN_RATIO = 0.9
 SIZE_LIMIT_MB = 500  # Supabase 免費額度
-SIZE_WARN_MB = 450   # 2026-10 估計各表存滿保留期限後約 462 MB，超過 450 就要開始處理
+SIZE_WARN_MB = 485   # 475 MB 起 cleanup_old_data.py 會自動縮短期限，還是超過 485 才需要人處理
 
 
 def recent_trading_days(sb, n=CHECK_WINDOW):
@@ -75,7 +76,7 @@ def check_size(sb):
     text = f"資料庫用量：{mb:,.0f} MB / {SIZE_LIMIT_MB} MB（{mb / SIZE_LIMIT_MB:.0%}）"
     if mb >= SIZE_WARN_MB:
         return text, [f"資料庫已用 {mb:,.0f} MB，超過提醒門檻 {SIZE_WARN_MB} MB（上限 {SIZE_LIMIT_MB} MB），"
-                      "請縮短 cleanup_old_data.py 的保留期限或升級方案"]
+                      "自動縮短保留期限還不夠，請升級方案或再縮短 cleanup_old_data.py 的 SPACE_TIERS"]
     return text, []
 
 
