@@ -284,14 +284,21 @@ def run_monthly():
     return problems
 
 
+def fee_tax_map():
+    """基金統編 → 代號：etf_info 不是每檔都有統編，再用投信公會最近一個月的月資料補齊"""
+    by_tax = tax_id_map()
+    _, tax_ids = f.fetch_sitca_monthly(recent_months(2)[1])
+    for code, tax in tax_ids.items():
+        by_tax.setdefault(tax, code)
+    return by_tax
+
+
 def fetch_fees(years, by_tax, deadline=None, refresh_latest=False):
     """
-    各項費用比率：逐年切換後，查這一年選單裡資料庫還沒有（或筆數不足）的月、季、年。
-    今年的「全年」是累計到目前，不抓；refresh_latest 時最新一個月一律重抓（公會可能晚補資料）。
+    各項費用比率：逐年切換後，查這一年選單裡的月、季、年（今年的「全年」是累計到目前，不抓）。
+    refresh_latest（每月排程）：資料庫已有足夠筆數的期間略過，只有最新一個月一律重抓（公會可能晚補資料）；
+    回補時全部重抓。
     """
-    if DRY_RUN and not by_tax:
-        _, tax_ids = f.fetch_sitca_monthly(recent_months(2)[1])
-        by_tax = {tax: code for code, tax in tax_ids.items()}
     problems, this_year = [], f.today_taipei().year
     for year in years:
         hidden, offered = f.open_sitca_fee_year(year)
@@ -304,7 +311,7 @@ def fetch_fees(years, by_tax, deadline=None, refresh_latest=False):
                 continue
             period, _ = f.fee_period(year, mv)
             is_latest = refresh_latest and mv == offered[-1] and year == years[-1]
-            if not DRY_RUN and not is_latest and f.count_rows("etf_expense_ratio", period=period) >= MIN_FEE_ROWS:
+            if refresh_latest and not DRY_RUN and not is_latest and f.count_rows("etf_expense_ratio", period=period) >= MIN_FEE_ROWS:
                 continue
             if deadline and time.time() > deadline:
                 return problems + [f"已到執行時間上限，{period} 起的費用率還沒補"]
@@ -530,7 +537,7 @@ def run_backfill():
         problems += backfill_top10(start, end, deadline)
     if "fees" in datasets:
         years = range(max(int(start[:4]), FEE_FIRST_YEAR), int(end[:4]) + 1)
-        problems += fetch_fees(list(years), tax_id_map(), deadline)
+        problems += fetch_fees(list(years), fee_tax_map(), deadline)
     if "dividends" in datasets:
         problems += backfill_dividends(start, end)
     if "holder" in datasets:
