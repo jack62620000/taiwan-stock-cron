@@ -296,7 +296,8 @@ def fetch_fees(years, by_tax, deadline=None, refresh_latest=False):
     for year in years:
         hidden, offered = f.open_sitca_fee_year(year)
         if not offered:
-            problems.append(f"投信公會費用率：無法切換到 {year} 年")
+            if year != this_year:  # 年初公會還沒有今年的資料，正常
+                problems.append(f"投信公會費用率：無法切換到 {year} 年")
             continue
         for mv in offered:
             if mv == "Year" and year == this_year:

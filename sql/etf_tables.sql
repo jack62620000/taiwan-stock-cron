@@ -247,7 +247,7 @@ comment on column public.etf_expense_ratio.period        is '期間：月 2026-0
 comment on column public.etf_expense_ratio.period_type   is '期間種類：month／quarter／year';
 comment on column public.etf_expense_ratio.brokerage_pct is '手續費 a1（%）';
 comment on column public.etf_expense_ratio.tax_pct       is '交易稅 a2（%）';
-comment on column public.etf_expense_ratio.creation_pct  is 'ETF 申購買回交易費 a3（%，2025-12 起才有，之前為空）';
+comment on column public.etf_expense_ratio.creation_pct  is 'ETF 申購買回交易費 a3（%，2021 年等早期資料沒有，為空）';
 comment on column public.etf_expense_ratio.mgmt_pct      is '經理費 b1（%）';
 comment on column public.etf_expense_ratio.custody_pct   is '保管費 b2（%）';
 comment on column public.etf_expense_ratio.guarantee_pct is '保證費 b3（%）';

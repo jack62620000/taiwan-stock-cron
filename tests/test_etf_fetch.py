@@ -491,3 +491,11 @@ def test_fetch_fees_skips_existing_periods(monkeypatch):
     assert u.fetch_fees([2026], {"x": "0050"}, refresh_latest=True) == []
     # 今年的全年不抓、已有的季與月略過，最新一個月一律重抓
     assert asked == [(2026, "9")]
+
+
+def test_parse_sitca_fees_header_with_a3_but_rows_without():
+    # 2021 全年：表頭列出 a3，但每列只有 a1、a2、b1～b4 與合計
+    html = fee_html(True, [["AH11", "12345678", "元大台灣50", "1,000", "0.01%", "2,000", "0.02%",
+                            "30,000", "0.03%", "5,000", "0.01%", "0", "0.00%", "100", "0.00%", "38,100", "0.07%"]])
+    rows = f.parse_sitca_fees(html, "2021", "year", {"12345678": "0050"})
+    assert rows[0]["creation_pct"] is None and rows[0]["mgmt_pct"] == 0.03 and rows[0]["total_amount"] == 38100

@@ -732,7 +732,7 @@ SITCA_FEE_URL = "https://www.sitca.org.tw/ROC/Industry/IN2211.aspx?pid=IN2222_01
 FEE_FORM = "ctl00$ContentPlaceHolder1$"
 # 月份選單的值 → 期間：'9' → 2026-09、'0630' → 2026-Q2、'Year' → 2026
 FEE_QUARTERS = {"0331": "Q1", "0630": "Q2", "0930": "Q3", "1231": "Q4"}
-# 欄位順序；2025-12 起多了 ETF 申購買回交易費（a3），之前沒有這欄
+# 欄位順序；多數期間有 ETF 申購買回交易費（a3），2021 年等早期資料沒有這欄（表頭有時仍列出 a3，以每列欄數為準）
 FEE_FIELDS_A3 = ["brokerage", "tax", "creation", "mgmt", "custody", "guarantee", "other", "total"]
 FEE_FIELDS_OLD = ["brokerage", "tax", "mgmt", "custody", "guarantee", "other", "total"]
 FEE_LABELS = {"brokerage": "a1", "tax": "a2", "creation": "a3", "mgmt": "b1", "custody": "b2",
@@ -755,26 +755,28 @@ def fee_cells(tr):
 
 def parse_sitca_fees(html, period, period_type, code_by_tax_id):
     """回傳 etf_expense_ratio 列（比率單位：%）；用基金統編對回 ETF 代號，不是 ETF 的基金略過"""
-    fields, out = None, {}
+    header, out = False, {}
+    layouts = {3 + 2 * len(fl): fl for fl in (FEE_FIELDS_A3, FEE_FIELDS_OLD)}
     for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
         cells = fee_cells(tr)
-        if fields is None:
+        if not header:
             if cells and "手續費" in cells[0] and "( a1 )" in cells[0]:
                 fields = FEE_FIELDS_A3 if any("( a3 )" in c for c in cells) else FEE_FIELDS_OLD
                 expected = {i: f"( {FEE_LABELS[k]} )" for i, k in enumerate(fields[:-1])}
                 if len(cells) != len(fields) - 1 or not fields_ok(cells, expected, f"投信公會費用率 {period}"):
                     return []
+                header = True
             continue
-        if len(cells) != 3 + 2 * len(fields) or not re.fullmatch(r"\d{8}", cells[1]):
+        fields = layouts.get(len(cells))
+        if not fields or not re.fullmatch(r"\d{8}", cells[1]):
             continue
         code = code_by_tax_id.get(cells[1])
         if not code or code in out:
             continue
-        rec = {"etf_id": code, "period": period, "period_type": period_type}
+        rec = {"etf_id": code, "period": period, "period_type": period_type, "creation_pct": None}
         for i, k in enumerate(fields):
             rec[f"{k}_pct"] = to_float(cells[4 + 2 * i].rstrip("%"))
         rec["total_amount"] = to_int(cells[3 + 2 * (len(fields) - 1)])
-        rec.setdefault("creation_pct", None)
         out[code] = rec
     return list(out.values())
 
