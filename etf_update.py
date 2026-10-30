@@ -2,12 +2,12 @@
 台股 ETF 排程與回補（GitHub Actions：.github/workflows/etf_update.yml）
 
 用環境變數 ETF_JOB 選擇工作：
-  daily    平日盤後：ETF 清單（含發行投信、配息頻率、下市日）、暫停交易公告（分割預告）、每日價量、三大法人、融資融券、借券賣出、淨值折溢價、配息、還原權值事件；並補最近幾個交易日的缺漏，
+  daily    平日盤後：ETF 清單（含發行投信、配息頻率、下市日、追蹤指數對照）、暫停交易公告（分割預告）、指數收盤、每日價量、三大法人、融資融券、借券賣出、淨值折溢價、配息、還原權值事件；並補最近幾個交易日的缺漏，
            最後清除超過保留期限的舊資料（先封存到 ETF 資料庫的 Storage 再刪除，期限見 RETENTION）
   weekly   週六：集保持股分級（開放資料最新一週）
   monthly  每月：投信公會月資料與前十大持股（重抓最近兩個月），並補上上櫃 ETF 的基金統編；
            各項費用比率（重抓最新月份，補今年與去年還沒有的月、季、年）
-  backfill 歷史回補：DATASETS 選 prices,ins,margin,sbl,monthly,top10,fees,holder,dividends,adjust（逗號分隔），
+  backfill 歷史回補：DATASETS 選 prices,ins,margin,sbl,monthly,top10,fees,holder,dividends,adjust,index（逗號分隔），
            區間 BACKFILL_START～BACKFILL_END
            （上櫃 ETF 的歷史配息來源只有預告表，回補只含上市 ETF）
 其他設定：
@@ -31,6 +31,7 @@ MIN_FEE_ROWS = 150      # 費用率一期 2021 年約 180 檔、2026 年約 340 
 FEE_FIRST_YEAR = 2021   # 公會費用率資料從 2021 年 9 月起
 MIN_WEEKLY_ROWS = 300
 MIN_MONTHLY_ROWS = 250
+MIN_INDEX_ROWS = 150    # 證交所指數 2026 年約 267 個（價格＋報酬），早幾年較少
 # daily 順便檢查最近幾個交易日，前幾天排程延遲或失敗時補上
 RECENT_TRADING_DAYS = 5
 # 回補單次執行的時間上限（GitHub Actions 單一工作最多 6 小時），到了就停下，下次用同一區間接續
@@ -181,6 +182,9 @@ def run_daily(day):
     except Exception as e:
         problems.append(f"暫停交易公告：{e}")
 
+    if n_price is not None:
+        problems += update_indices(day)
+
     try:
         nav_day, n_nav = update_nav()
     except Exception as e:
@@ -236,6 +240,56 @@ def mark_delisted(active, day):
     elif gone:
         f.db().table("etf_info").update({"delisted_date": day}).in_("etf_id", gone).execute()
         print(f"標示下市 {len(gone)} 檔：{'、'.join(gone)}")
+
+
+def fetch_indices(day):
+    """抓一天的證交所指數並寫入，回傳 (筆數, 問題清單)"""
+    try:
+        rows = f.fetch_twse_indices(day)
+        save("etf_index_daily", rows)
+    except Exception as e:
+        return 0, [f"{day} 指數：{e}"]
+    if len(rows) < MIN_INDEX_ROWS:
+        return len(rows), [f"{day} 指數只有 {len(rows)} 筆"]
+    return len(rows), []
+
+
+def update_indices(day):
+    """當天指數、補最近幾個交易日缺的指數，再用當天的指數名稱更新 etf_info 的追蹤指數對照"""
+    n, problems = fetch_indices(day)
+    if DRY_RUN:
+        return problems
+    start = (date.fromisoformat(day) - timedelta(days=14)).isoformat()
+    for d in [d for d in f.trading_days(start, day) if d < day][-RECENT_TRADING_DAYS:]:
+        if (f.count_rows("etf_index_daily", date=d) < MIN_INDEX_ROWS
+                and f.count_rows("etf_daily_prices", date=d) >= MIN_DAILY_ROWS):
+            print(f"\n--- 補抓 {d} 指數 ---")
+            problems += fetch_indices(d)[1]
+    if n >= MIN_INDEX_ROWS:
+        problems += update_index_names(price_index_names(day))
+    return problems
+
+
+def price_index_names(day):
+    return [r["index_name"] for r in f.select_range("etf_index_daily", "index_name, index_type", "date", day, day)
+            if r["index_type"] == "價格"]
+
+
+def update_index_names(official_names):
+    """etf_info.index_official_name：追蹤指數對到證交所指數行情的名稱（只更新有變動的）"""
+    try:
+        changed = {}
+        for r in f.select_all("etf_info", "etf_id, index_name, index_official_name"):
+            name = f.match_index(r.get("index_name"), official_names)
+            if name != r.get("index_official_name"):
+                changed.setdefault(name, []).append(r["etf_id"])
+        for name, ids in changed.items():
+            for i in range(0, len(ids), 200):
+                f.db().table("etf_info").update({"index_official_name": name}).in_("etf_id", ids[i:i + 200]).execute()
+        print(f"追蹤指數對照：更新 {sum(len(v) for v in changed.values())} 檔")
+        return []
+    except Exception as e:
+        return [f"追蹤指數對照：{e}"]
 
 
 def update_dividend_frequency(day):
@@ -474,6 +528,26 @@ def backfill_sbl(start, end, deadline):
     return []
 
 
+def backfill_index(start, end, deadline):
+    days = f.trading_days(start, end)
+    print(f"指數回補：{start} ～ {end}，共 {len(days)} 個平日")
+    problems = []
+    for i, d in enumerate(days):
+        if time.time() > deadline:
+            return problems + [f"已到執行時間上限，{d} 之後的指數還沒補，請用同一區間再執行一次接續"]
+        if not DRY_RUN and f.count_rows("etf_index_daily", date=d) >= MIN_INDEX_ROWS:
+            continue
+        print(f"\n[{i + 1}/{len(days)}] {d}")
+        n, _ = fetch_indices(d)
+        if n == 0:
+            print(f"  {d} 沒有指數資料（休市或來源沒有）")
+    # 用區間內最後一個有指數的交易日，更新追蹤指數對照
+    latest = next((d for d in reversed(days) if not DRY_RUN and f.count_rows("etf_index_daily", date=d) >= MIN_INDEX_ROWS), None)
+    if latest:
+        problems += update_index_names(price_index_names(latest))
+    return problems
+
+
 def backfill_top10(start, end, deadline):
     """前十大持股：公會資料 2021-09 起；從新到舊，讓基金統編對照表越來越完整"""
     months = [m for m in reversed(month_range(max(start, "2021-09-01"), end))
@@ -611,6 +685,8 @@ def run_backfill():
         problems += backfill_holder(start, end, deadline)
     if "adjust" in datasets:
         problems += update_adjustments(start, end)
+    if "index" in datasets:
+        problems += backfill_index(start, end, deadline)
     return problems
 
 

@@ -14,6 +14,8 @@
   5. etf_ins_daily           三大法人：證交所 T86 selectType=0099P、櫃買 insti/dailyTrade
   6. etf_monthly_stats       每月統計：投信投顧公會 etf_statement2
   7. etf_holder_distribution 集保持股分級：集保開放資料 1-5
+  8. etf_index_daily         指數收盤：證交所 MI_INDEX type=IND（證交所、跨市場、臺灣指數公司的價格與報酬指數）；
+                             etf_info.index_official_name 是追蹤指數對到的名稱
 
 解析函式（parse_*）只吃來源的原始回應、不連網路，tests/test_etf_fetch.py 用樣本測它們。
 來源改版、欄位位置變了時，解析函式會回傳空清單而不是存進錯的數字。
@@ -52,6 +54,7 @@ TABLE_KEYS = {
     "etf_expense_ratio":       ("etf_id", "period"),
     "etf_price_adjustments":   ("etf_id", "date", "event_type"),
     "etf_trading_halts":       ("etf_id", "halt_date"),
+    "etf_index_daily":         ("index_name", "date"),
 }
 
 _client = None
@@ -388,6 +391,78 @@ def fetch_tpex_price_rows(day):
     url = (f"https://www.tpex.org.tw/www/zh-tw/afterTrading/otc?date={tpex_date(day)}"
            "&type=AL&id=&response=json&order=0&sort=asc")
     return tpex_price_rows(get_json(url), day)
+
+
+# ==================== 8. 指數收盤 ====================
+def parse_twse_indices(data, day):
+    """
+    MI_INDEX type=IND：「價格指數(臺灣證券交易所)」「報酬指數(跨市場)」等表，
+    欄位 0 指數、1 收盤指數、2 漲跌符號（HTML）、3 漲跌點數、4 漲跌百分比
+    """
+    if not data or data.get("stat") != "OK":
+        return []
+    resp = str(data.get("date", "")).strip()
+    if resp and resp != day.replace("-", ""):
+        print(f"⚠️ 指數：回應日期 {resp} 與要求日期 {day} 不符，跳過")
+        return []
+    records = {}
+    for t in data.get("tables", []) or []:
+        m = re.search(r"(價格|報酬)指數\((.+?)\)", str(t.get("title") or ""))
+        if not m or not t.get("data"):
+            continue
+        if not fields_ok(t.get("fields"), {0: "指數", 1: "收盤指數", 2: "漲跌", 3: "漲跌點數", 4: "漲跌百分比"},
+                         f"指數 {t.get('title')}"):
+            return []
+        for row in t["data"]:
+            name, close = str(row[0]).strip(), to_float(row[1])
+            if not name or close is None:
+                continue
+            change = to_float(row[3])
+            if change is not None and "-" in re.sub(r"<[^>]+>", "", str(row[2])):
+                change = -change
+            records[name] = {"date": day, "index_name": name, "close": close, "change": change,
+                             "change_pct": to_float(row[4]), "index_type": m.group(1),
+                             "category": m.group(2).replace("臺灣證券交易所", "證交所")}
+    return list(records.values())
+
+
+def fetch_twse_indices(day):
+    print(f"正在下載 {day} 證交所指數...")
+    url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={day.replace('-', '')}&type=IND&response=json"
+    return parse_twse_indices(get_json(url), day)
+
+
+# 公開說明書的指數全名和證交所行情表的簡稱差太多、用規則對不上的，直接對照
+INDEX_ALIASES = {
+    "電子類加權股價指數": "電子工業類指數",
+    "金融保險類股指數": "金融保險類指數",
+    "臺灣證券交易所發行量加權股價日報酬正向兩倍指數": "臺指日報酬兩倍指數",
+    "臺灣證券交易所發行量加權股價日報酬反向一倍指數": "臺指反向一倍指數",
+    "臺灣指數公司特選高股息低波動指數": "特選高息低波指數",
+}
+
+
+def _index_key(name):
+    s = str(name or "").replace("台", "臺").replace(" ", "").replace("　", "")
+    for word in ("臺灣指數公司", "臺灣證券交易所", "富時", "上市上櫃", "FactSet", "特選", "臺灣"):
+        s = s.replace(word, "")
+    return s
+
+
+def match_index(index_name, official_names):
+    """
+    ETF 追蹤指數（公開說明書全名）對到證交所指數行情的名稱：先查對照表、再比全名，
+    最後去掉「臺灣指數公司」「特選」「上市上櫃」等字比對；official_names 只傳價格指數，對到多個或對不到回傳 None
+    """
+    if not index_name:
+        return None
+    names = list(official_names)
+    if INDEX_ALIASES.get(index_name) in names:
+        return INDEX_ALIASES[index_name]
+    if index_name in names:
+        return index_name
+    hits = [n for n in names if _index_key(n) == _index_key(index_name)]
+    return hits[0] if len(hits) == 1 else None
 
 
 # ==================== 3. 淨值、折溢價 ====================
