@@ -1,6 +1,6 @@
 """
 自動化版本 - 給 GitHub Actions 排程使用
-每次執行會檢查最近 7 天，把還沒存齊的交易日的股價、三大法人（含外資持股）、融資融券
+每次執行會檢查最近 7 天，把還沒存齊的交易日（清單出現新股時則是 7 天全部）的股價、三大法人（含外資持股）、融資融券
 （餘額＋限額＋使用率）補抓起來，再更新最近兩週的還原權值事件、當月的大盤指數；
 每月 1～20 號另外補抓上個月還沒存到的月營收；每天再用開放資料覆蓋最新一個月，公司事後更正營收也會跟上。
 
@@ -33,15 +33,20 @@ def taiwan_today():
     return datetime.now(timezone(timedelta(hours=8))).date()
 
 
+def recent_weekdays(today, days=CATCHUP_DAYS):
+    """最近 days 天（含今天）的平日"""
+    start = today - timedelta(days=days - 1)
+    return [(start + timedelta(days=i)).isoformat() for i in range(days)
+            if (start + timedelta(days=i)).weekday() < 5]
+
+
 def missing_dates(today, days=CATCHUP_DAYS):
     """
     最近 days 天（含今天）的平日裡，哪幾天的股價、法人、融資券還沒存齊。
     用上市 2330、上櫃 6488 當代表：任一檔在任一張表缺資料，就算那天沒存齊。
     國定假日也會被列出來，但抓的時候兩個市場都沒有行情，會直接略過，不算錯誤。
     """
-    start = today - timedelta(days=days - 1)
-    weekdays = [(start + timedelta(days=i)).isoformat() for i in range(days)
-                if (start + timedelta(days=i)).weekday() < 5]
+    weekdays = recent_weekdays(today, days)
     if not weekdays:
         return []
     have = None
@@ -143,12 +148,20 @@ def main():
         print(f"要抓的日期：{'、'.join(days)}")
 
     print("\n--- 更新個股基本資訊 ---")
+    before = f.get_valid_stock_ids()
     f.refresh_stock_info()
     valid_stocks = f.get_valid_stock_ids()
     if not valid_stocks:
         print("❌ 無法取得股票清單，中止執行。")
         return 1
     print(f"資料庫內現有 {len(valid_stocks)} 檔股票可供對應。")
+
+    # 新股上市當天清單常還沒更新，那天的行情會被略過（2026-10-20 的 6467 泰合就少了第一天）。
+    # 清單出現新股時，把最近幾天全部重抓一次（寫入是 upsert，已存的資料不會重複）
+    new_stocks = sorted(valid_stocks - before) if before else []
+    if new_stocks and not os.getenv("TARGET_DATE", "").strip():
+        days = sorted(set(days) | set(recent_weekdays(taiwan_today())))
+        print(f"清單新增 {'、'.join(new_stocks)}，重抓最近幾天讓新股的第一天也存到：{'、'.join(days)}")
 
     problems, traded = [], []
     for day in days:
