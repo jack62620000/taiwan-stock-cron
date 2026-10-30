@@ -207,3 +207,48 @@ def test_auto_group_hidden_from_group_picker(use_db, page):
     picker = next(s for s in at.selectbox if s.label == "📁 分組")
     assert 11 not in picker.options and "每日買進測試" not in picker.options
     assert at.session_state["group_id"] == 1
+
+
+@pytest.mark.parametrize("tab", ["🔎 ETF 總覽", "🗂️ ETF 分析卡", "📅 配息行事曆", "🧮 存股試算"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_etf_tabs(use_db, tab, empty):
+    """ETF 頁的每個分頁各自都要能顯示（有資料、ETF 資料庫還沒有資料兩種情況）"""
+    use_db(empty=empty)
+    at = run_page(APP / "pages" / "6_ETF.py", etf_tab=tab)
+    assert errors(at) == []
+
+
+@pytest.mark.parametrize("etf_id", ["0050", "00878", "00679B", "00632R"])
+def test_etf_card_each(use_db, etf_id):
+    """ETF 分析卡：有分割、有追蹤指數、債券、沒有月資料（槓桿反向）都要能顯示"""
+    use_db()
+    at = run_page(APP / "pages" / "6_ETF.py", etf_tab="🗂️ ETF 分析卡", etf_card_id=etf_id)
+    assert errors(at) == []
+    assert at.selectbox[0].value.startswith(f"{etf_id} ")
+    heads = " ".join(h.value for h in at.subheader)
+    assert "股價走勢" in heads and "籌碼" in heads
+
+
+@pytest.mark.parametrize("period", ["週線", "月線"])
+def test_etf_card_weekly_monthly(use_db, period):
+    use_db()
+    at = run_page(APP / "pages" / "6_ETF.py", etf_tab="🗂️ ETF 分析卡", etf_card_id="0050")
+    next(r for r in at.radio if r.key == "etf_kline_period").set_value(period).run()
+    assert errors(at) == []
+
+
+def test_etf_page_without_etf_db(use_db):
+    import utils.db as db
+    use_db()
+    db.etf_supabase = None
+    at = run_page(APP / "pages" / "6_ETF.py")
+    assert errors(at) == []
+    assert any("ETF_SUPABASE_URL" in i.value for i in at.info)
+
+
+def test_etf_savings_without_reinvest(use_db):
+    use_db()
+    at = run_page(APP / "pages" / "6_ETF.py", etf_tab="🧮 存股試算")
+    next(t for t in at.toggle if t.key == "etf_sv_reinvest").set_value(False).run()
+    assert errors(at) == []
+    assert any("試算結果" in h.value for h in at.subheader)
