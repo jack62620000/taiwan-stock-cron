@@ -205,5 +205,26 @@ comment on column public.etf_top_holdings.holding_name is '標的名稱';
 comment on column public.etf_top_holdings.amount       is '持有金額（元）';
 comment on column public.etf_top_holdings.weight_pct   is '占基金淨資產價值比例 %';
 
+-- 10. 借券賣出餘額（2026-10 新增）
+create table if not exists public.etf_sbl_daily (
+    etf_id      varchar(10) not null,
+    date        date        not null,
+    sbl_sell    bigint,
+    sbl_return  bigint,
+    sbl_adjust  bigint,
+    sbl_balance bigint,
+    sbl_limit   bigint,
+    primary key (etf_id, date)
+);
+comment on table  public.etf_sbl_daily is 'ETF 借券賣出（股）：上市 TWT93U、上櫃 margin/sbl「信用額度總量管制餘額表」的借券欄位；保留 1 年';
+comment on column public.etf_sbl_daily.etf_id      is 'ETF 代號';
+comment on column public.etf_sbl_daily.date        is '交易日';
+comment on column public.etf_sbl_daily.sbl_sell    is '當日借券賣出（股）';
+comment on column public.etf_sbl_daily.sbl_return  is '當日還券（股）';
+comment on column public.etf_sbl_daily.sbl_adjust  is '當日調整（股）';
+comment on column public.etf_sbl_daily.sbl_balance is '借券賣出當日餘額（股）';
+comment on column public.etf_sbl_daily.sbl_limit   is '次一營業日可借券賣出限額（股）';
+
 alter table public.etf_margin_daily enable row level security;
 alter table public.etf_top_holdings enable row level security;
+alter table public.etf_sbl_daily enable row level security;

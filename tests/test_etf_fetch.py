@@ -388,3 +388,50 @@ def test_top10_rejects_wrong_month_or_mostly_unknown_funds(monkeypatch):
     assert f.fetch_sitca_top10("2026-08", {"元大台灣卓越50基金": "0050"}) == []
     fake_sitca(monkeypatch, "202608")   # 大部分基金不是 ETF（例如回傳了某家公司的全部基金）
     assert f.fetch_sitca_top10("2026-08", {}) == []
+
+
+TWSE_SBL = {
+    "stat": "OK", "date": "20261028", "title": "115年10月28日 信用額度總量管制餘額表", "hints": "單位：股",
+    "fields": ["代號", "名稱", "前日餘額", "賣出", "買進", "現券", "今日餘額", "次一營業日限額", "前日餘額", "當日賣出",
+               "當日還券", "當日調整", "當日餘額", "次一營業日可限額", "備註"],
+    "data": [["0050", "元大台灣50", "690,000", "14,000", "66,000", "290,000", "348,000", "5,816,750,000",
+              "225,409,000", "0", "0", "0", "225,409,000", "31,752,377", " "],
+             ["2330", "台積電", "1", "0", "0", "0", "1", "1", "1", "0", "0", "0", "1", "1", " "]],
+}
+TPEX_SBL = {
+    "date": "20261028",
+    "tables": [{"title": "信用額度總量管制餘額表",
+                "fields": ["股票代號", "股票名稱", "前日餘額", "賣出", "買進", "現券", "當日餘額", "限額", "前日餘額",
+                           "當日賣出", "當日還券", "當日調整數額", "當日餘額", "次一營業日可借券賣出限額", "備註"],
+                "data": [["00679B", "元大美債20年", "35,000", "0", "0", "0", "35,000", "1,530,173,000",
+                          "102,399,000", "0", "1,617,000", "0", "100,782,000", "7,554,816", ""]]}],
+}
+
+
+def test_sbl():
+    assert f.parse_twse_sbl(TWSE_SBL, DAY) == [
+        {"etf_id": "0050", "date": DAY, "sbl_sell": 0, "sbl_return": 0, "sbl_adjust": 0,
+         "sbl_balance": 225409000, "sbl_limit": 31752377}]
+    assert f.parse_tpex_sbl(TPEX_SBL, DAY) == [
+        {"etf_id": "00679B", "date": DAY, "sbl_sell": 0, "sbl_return": 1617000, "sbl_adjust": 0,
+         "sbl_balance": 100782000, "sbl_limit": 7554816}]
+    # 日期不符或欄位改版時不寫入
+    assert f.parse_twse_sbl({**TWSE_SBL, "date": "20261027"}, DAY) == []
+    assert f.parse_tpex_sbl({**TPEX_SBL, "date": "20261027"}, DAY) == []
+    moved = {**TWSE_SBL, "fields": TWSE_SBL["fields"][:9] + ["當日還券", "當日賣出"] + TWSE_SBL["fields"][11:]}
+    assert f.parse_twse_sbl(moved, DAY) == []
+
+
+def test_fill_recent_credit_refetches_missing_days(monkeypatch):
+    saved = []
+    monkeypatch.setattr(u, "DRY_RUN", False)
+    monkeypatch.setattr(f, "trading_days", lambda s, e: ["2026-10-26", "2026-10-27", "2026-10-28"])
+    counts = {("etf_daily_prices", "2026-10-26"): 0,          # 休市：不補
+              ("etf_daily_prices", "2026-10-27"): 360, ("etf_margin_daily", "2026-10-27"): 350,
+              ("etf_sbl_daily", "2026-10-27"): 0}
+    monkeypatch.setattr(f, "count_rows", lambda table, date: counts.get((table, date), 0))
+    monkeypatch.setattr(f, "fetch_sbl", lambda d: [{"etf_id": "0050", "date": d}] * 400)
+    monkeypatch.setattr(f, "fetch_margin", lambda d: saved.append(("margin", d)) or [])
+    monkeypatch.setattr(u, "save", lambda table, rows: saved.append((table, len(rows))) or (len(rows), []))
+    assert u.fill_recent_credit("2026-10-28") == []
+    assert saved == [("etf_sbl_daily", 400)]
