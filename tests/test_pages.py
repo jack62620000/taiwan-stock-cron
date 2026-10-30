@@ -52,6 +52,18 @@ def test_home_page(use_db):
     use_db()
     at = run_page(APP / "main.py")
     assert errors(at) == []
+    assert any("昨晚美股" in h.value for h in at.subheader)
+    assert any("台積電 ADR 溢價" in m.value for m in at.markdown)
+
+
+def test_home_page_without_etf_db(use_db):
+    import utils.db as db
+    use_db()
+    db.etf_supabase = None
+    at = run_page(APP / "main.py")
+    assert errors(at) == []
+    assert not any("昨晚美股" in h.value for h in at.subheader)
+    assert any("ETF_SUPABASE_URL" in c.value for c in at.caption)
 
 
 def test_login_form_shown_when_logged_out(use_db):

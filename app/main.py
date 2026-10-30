@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from datetime import date, timedelta
 from utils.market_trend import load_market_trend, render as render_market_trend
+from utils.us_market import render as render_us_market
 from utils.glossary import render_page_guide
 from utils.ui import apply_theme, render_metric_cards, index_card, style_sign, go_picks_tab
 from utils.db import (
@@ -125,6 +126,7 @@ names = dict(zip(stock_list["stock_id"], stock_list["stock_name"].fillna(""))) i
 
 render_metric_cards([index_card("加權指數", taiex), index_card("櫃買指數", tpex)])
 render_market_trend(load_market_trend())
+render_us_market()
 
 top_col, watch_col = st.columns(2)
 with top_col:
@@ -203,6 +205,7 @@ with st.expander("ℹ️ 功能說明與資料來源"):
 - 大戶持股：集保結算所
 - 月營收、季報：公開資訊觀測站
 - 期貨法人：台灣期貨交易所
+- 美股、原油、匯率：Yahoo Finance；美債殖利率：美國財政部（每個交易日早上 6:20 更新）
 """)
 
 st.markdown("---")
