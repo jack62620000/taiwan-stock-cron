@@ -1,7 +1,7 @@
 name: 每週資料庫備份
 
 # 主資料庫和 ETF 資料庫整個匯出，存到 ETF 資料庫 Storage 的 db-backups 桶，只留最近 2 份；
-# 兩邊過期資料的封存檔也互相備份到另一個專案（見 db_backup.py）
+# 兩邊過期資料的封存檔也互相備份到另一個專案，並上傳一份到 Google 雲端硬碟（見 db_backup.py）
 on:
   schedule:
     # 週日台灣時間凌晨 3:20（UTC 週六 19:20），沒有其他排程在跑
@@ -43,4 +43,7 @@ jobs:
           ETF_DB_PASSWORD: ${{ secrets.ETF_DB_PASSWORD }}
           ETF_SUPABASE_URL: ${{ secrets.ETF_SUPABASE_URL }}
           ETF_SUPABASE_KEY: ${{ secrets.ETF_SUPABASE_KEY }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
         run: python -u db_backup.py

@@ -30,3 +30,22 @@ def test_files_to_copy_only_new_or_changed():
            "_state/x.json": 5, "_line_cards/1.json": 99}
     dst = {"daily_prices/2023/a.csv.gz": 10, "_state/x.json": 4}
     assert files_to_copy(src, dst, ("_line_cards/",)) == ["_state/x.json", "daily_prices/2023/b.csv.gz"]
+
+
+def test_archive_tar_skips_line_cards():
+    import io
+    import tarfile
+    from db_backup import archive_tar
+
+    class FakeStorage:
+        files = {"daily_prices/2023/a.csv.gz": b"aa", "_line_cards/1.json": b"x"}
+
+        def walk(self):
+            return {p: len(d) for p, d in self.files.items()}
+
+        def download(self, path):
+            return self.files[path]
+
+    tar = tarfile.open(fileobj=io.BytesIO(archive_tar([("main", FakeStorage())])))
+    assert tar.getnames() == ["main/daily_prices/2023/a.csv.gz"]
+    assert tar.extractfile("main/daily_prices/2023/a.csv.gz").read() == b"aa"
