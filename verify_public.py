@@ -82,10 +82,12 @@ def report(label, missing, extra, diffs):
     return n
 
 
-def select_day(client, table, day, columns="*", col="date"):
+def select_day(client, table, day, order, columns="*", col="date"):
+    """分頁讀某一天的資料；分頁要固定排序，否則可能漏掉或重複"""
     rows, start = [], 0
     while True:
-        res = client.table(table).select(columns).eq(col, day).range(start, start + 999).execute()
+        res = (client.table(table).select(columns).eq(col, day).order(order)
+               .range(start, start + 999).execute())
         rows += res.data
         if len(res.data) < 1000:
             return rows
@@ -115,7 +117,7 @@ def verify_stock_day(day, valid_stocks, notes):
                 break
             source += got
         else:
-            db_rows = select_day(f.supabase, table, day)
+            db_rows = select_day(f.supabase, table, day, "stock_id")
             # 只比對目前清單裡的股票（之後下市的股票來源已經沒有）
             db_rows = [r for r in db_rows if r["stock_id"] in valid_stocks]
             total += report(f"{day} {label}", *compare(source, db_rows, ("stock_id", "date")))
@@ -129,7 +131,7 @@ def verify_revenue(valid_stocks, notes):
         return 0
     month = max(r["year_month"] for r in source)
     source = [r for r in source if r["year_month"] == month]
-    db_rows = select_day(f.supabase, "monthly_revenue", month, col="year_month")
+    db_rows = select_day(f.supabase, "monthly_revenue", month, "stock_id", col="year_month")
     # 開放資料只有已公布的公司；資料庫多的是之後才用其他來源補上的，不算差異。
     # 備註、出表日期等文字欄位可能被歷史回補（公開資訊觀測站）改寫，只比營收數字
     missing, _, diffs = compare(source, db_rows, ("stock_id", "year_month"), cols=REVENUE_COLS)
@@ -158,7 +160,7 @@ def verify_etf_day(day, notes):
         if not source:
             notes.append(f"{day} {label}：來源沒有回傳資料，略過")
             continue
-        total += report(f"{day} {label}", *compare(source, select_day(e.db(), table, day), ("etf_id", "date")))
+        total += report(f"{day} {label}", *compare(source, select_day(e.db(), table, day, "etf_id"), ("etf_id", "date")))
     return total
 
 

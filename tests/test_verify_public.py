@@ -41,3 +41,34 @@ def test_same():
 def test_pick_days_override(monkeypatch):
     monkeypatch.setenv("VERIFY_DAYS", "2026-10-20, 2026-10-21")
     assert v.pick_days() == ["2026-10-20", "2026-10-21"]
+
+
+class _FakeQuery:
+    """模擬 supabase：沒排序時每頁回傳的順序不固定"""
+    def __init__(self, rows):
+        self.rows, self.ordered = rows, False
+
+    def select(self, *_):
+        return self
+
+    def eq(self, *_):
+        return self
+
+    def order(self, col):
+        self.rows, self.ordered = sorted(self.rows, key=lambda r: r[col]), True
+        return self
+
+    def range(self, a, b):
+        self.page = self.rows[a:b + 1]
+        return self
+
+    def execute(self):
+        return type("R", (), {"data": self.page})
+
+
+def test_select_day_orders_pages():
+    rows = [{"stock_id": f"{i:04d}"} for i in range(2500)]
+    q = _FakeQuery(rows)
+    client = type("C", (), {"table": lambda self, _: q})()
+    got = v.select_day(client, "t", "2026-10-16", "stock_id")
+    assert q.ordered and len({r["stock_id"] for r in got}) == 2500
