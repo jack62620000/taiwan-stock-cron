@@ -1,6 +1,7 @@
 name: 每週資料庫備份
 
-# 主資料庫和 ETF 資料庫整個匯出，存到 ETF 資料庫 Storage 的 db-backups 桶，只留最近 2 份（見 db_backup.py）
+# 主資料庫和 ETF 資料庫整個匯出，存到 ETF 資料庫 Storage 的 db-backups 桶，只留最近 2 份；
+# 兩邊過期資料的封存檔也互相備份到另一個專案（見 db_backup.py）
 on:
   schedule:
     # 週日台灣時間凌晨 3:20（UTC 週六 19:20），沒有其他排程在跑
@@ -37,6 +38,7 @@ jobs:
       - name: Back up databases
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           MAIN_DB_PASSWORD: ${{ secrets.MAIN_DB_PASSWORD }}
           ETF_DB_PASSWORD: ${{ secrets.ETF_DB_PASSWORD }}
           ETF_SUPABASE_URL: ${{ secrets.ETF_SUPABASE_URL }}
