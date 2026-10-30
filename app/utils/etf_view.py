@@ -117,7 +117,7 @@ def load_card(etf_id):
         "meta": meta, "prices": prices, "events": get_etf_adjustments(etf_id),
         "dividends": get_etf_rows("etf_dividends", etf_id, "ex_date"),
         "nav": get_etf_rows("etf_nav", etf_id),
-        "ins": get_etf_rows("etf_ins_daily", etf_id, since=year_ago),
+        "ins": get_etf_rows("etf_ins_daily", etf_id),   # 和股價一樣取全部，K 線選近 3 年時下方外資買賣超才完整
         "margin": get_etf_rows("etf_margin_daily", etf_id, since=year_ago),
         "sbl": get_etf_rows("etf_sbl_daily", etf_id, since=year_ago),
         "holders": get_etf_rows("etf_holder_distribution", etf_id, "week_date"),

@@ -16,6 +16,7 @@ from utils.ui import ACCENT, GLOW, MUTED, UP_COLOR, DOWN_COLOR, WARN_COLOR, rend
 # ETF 頁的「ETF 分析卡」分頁（pages/6_ETF.py 用 runpy 執行這個檔案；登入、頁面設定、重新整理按鈕在 ETF 頁）
 INDEX_COLOR = "#a78bfa"
 TW_HOLDINGS = ("國內上市", "國內上櫃")
+RANGE_CALENDAR_DAYS = {120: 182, 250: 365, 750: 1096}   # 顯示區間（交易日）換成日曆天，週線、月線用
 
 
 def _n(s):
@@ -141,10 +142,12 @@ if PERIODS[period] is None:
     shown = bars.tail(range_days)
 else:
     code = PERIODS[period]
-    bars = calc_all(resample_bars(adj, code))
-    charts = build_charts(bars, len(bars), overlays=("均線",), sub="外資買賣超", ins=resample_ins(ins, bars, code),
+    bars = calc_all(resample_bars(adj, code))   # 均線用全部歷史算，再只畫顯示區間內的 K 棒
+    cut = (pd.Timestamp(bars["date"].iloc[-1]) - pd.Timedelta(days=RANGE_CALENDAR_DAYS[range_days])).strftime("%Y-%m-%d")
+    n_bars = max(int((bars["date"].astype(str) > cut).sum()), 2)
+    charts = build_charts(bars, n_bars, overlays=("均線",), sub="外資買賣超", ins=resample_ins(ins, bars, code),
                           markers=False, events=align_to_bars(events, bars, code))
-    shown = bars
+    shown = bars.tail(n_bars)
 # 追蹤指數換算成和 ETF 同一個起點，疊在主圖上（只有日線）
 if d["index_name"] and PERIODS[period] is None and not shown.empty:
     idx = d["index"].assign(date=lambda x: x["date"].astype(str))
@@ -156,6 +159,9 @@ if d["index_name"] and PERIODS[period] is None and not shown.empty:
         charts[0]["series"].append(_line(m, "idx", INDEX_COLOR, "追蹤指數", 2, 2))
 kline_html, kline_height = render_html(charts)
 components.html(kline_html, height=kline_height)
+if PERIODS[period] is not None:
+    unit = "週" if period == "週線" else "個月"
+    st.caption(f"{period}：每根 K 棒是一{unit}，共 {n_bars} 根；MA5／MA20／MA60 是 5、20、60 根 K 棒的平均。")
 st.caption(
     "股價已還原權值：除息、分割之前的價格依參考價等比例調整，看得出含息的實際漲幅；成交量上方橘色方塊是除息或分割的日子。"
     "下方是外資買賣超（張）。"
@@ -183,14 +189,14 @@ if not stats.empty:
         aum_line = alt.Chart(m).mark_line(color=ACCENT, point=True).encode(
             x="year_month:N", y=alt.Y("規模(億):Q", title="規模（億，金線）"),
             tooltip=["year_month", alt.Tooltip("規模(億):Q", format=",.0f")])
-        st.altair_chart(alt.layer(bars_c, aum_line).resolve_scale(y="independent"), use_container_width=True)
+        st.altair_chart(alt.layer(bars_c, aum_line).resolve_scale(y="independent"), width="stretch")
         st.caption("紅色是每月申購金額、綠色是買回金額（往下），金線是月底規模。申購多於買回代表有新資金流入。")
     with right:
         ppl = m.melt("year_month", ["受益人數(萬)", "定期定額戶數(萬)"], var_name="項目", value_name="萬人")
         st.altair_chart(alt.Chart(ppl).mark_line(point=True).encode(
             x=alt.X("year_month:N", title=None), y=alt.Y("萬人:Q", title="萬人"),
             color=alt.Color("項目:N", scale=alt.Scale(range=[ACCENT, GLOW]), legend=alt.Legend(orient="top", title=None)),
-            tooltip=["year_month", "項目", alt.Tooltip("萬人:Q", format=",.2f")]), use_container_width=True)
+            tooltip=["year_month", "項目", alt.Tooltip("萬人:Q", format=",.2f")]), width="stretch")
         st.caption("受益人數是持有這檔的人數；定期定額戶數是當月有扣款的戶數，越多代表越多人長期存。")
 elif meta.get("category") == "期貨商品" or "期貨" in str(meta.get("fund_type") or ""):
     st.caption("期貨信託類 ETF 不在投信投顧公會的月資料內，沒有規模、受益人數。")

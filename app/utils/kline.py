@@ -44,8 +44,10 @@ def _line(df, col, color, title, width=2, style=0):
 
 
 def _hist(df, col, colors, title, fmt=None):
-    data = [{"time": t, "value": float(v), "color": c}
-            for t, v, c in zip(df["time"], df[col], colors) if pd.notna(v)]
+    # 沒有資料的日子留空白點（只有 time），讓每張圖的 K 棒數一樣多；上下幾張圖是用第幾根 K 棒同步的，
+    # 少了幾天（例如法人資料比股價晚開始），下面的柱子就會和上面的 K 棒錯開
+    data = [{"time": t, "value": float(v), "color": c} if pd.notna(v) else {"time": t}
+            for t, v, c in zip(df["time"], df[col], colors)]
     opts = {"title": title, "priceLineVisible": False}
     if fmt:
         opts["priceFormat"] = fmt
@@ -293,7 +295,7 @@ _TEMPLATE = """
         api.createPriceLine(Object.assign({}, pl, {title: "", axisLabelVisible: false}));
         if (pl.title) names[i].items.push({text: pl.title, color: pl.color, price: () => pl.price, api: api, digits: 2});
       });
-      const last = s.data[s.data.length - 1];
+      const last = s.data.filter(d => d.value != null || d.close != null).pop();   // 跳過最後幾天的空白點
       if (opt.title && last && opt.lastValueVisible !== false)
         names[i].items.push({text: opt.title, color: opt.color || last.color, price: () => last.value, api: api,
                              digits: digits});
@@ -322,14 +324,14 @@ _TEMPLATE = """
       + "<span class='k'>開</span> " + fmt(c.open) + "<span class='k'>高</span> " + fmt(c.high)
       + "<span class='k'>低</span> " + fmt(c.low) + "<span class='k'>收</span> <b style='color:" + col + "'>" + fmt(c.close) + "</b>"
       + (chg == null ? "" : " <span style='color:" + col + "'>(" + (chg > 0 ? "+" : "") + chg.toFixed(2) + "%)</span>")
-      + (v ? "<span class='k'>量</span> " + fmt(v.value, 0) + " 張" : "");
+      + (v && v.value != null ? "<span class='k'>量</span> " + fmt(v.value, 0) + " 張" : "");
     (gvMap[time] || []).forEach(gv => {
       html += "<span class='k'>" + (gv.kind || "葛蘭碧") + "</span> <b style='color:" + gv.color + "'>" + gv.label + "</b>";
     });
     let extra = "";
     lookups.forEach(l => {
       const p = l.map.get(time);
-      if (p) extra += "<span class='k' style='color:" + (l.color || "inherit") + "'>" + l.name + "</span> " + fmt(p.value, l.name.includes("張") ? 0 : 2);
+      if (p && p.value != null) extra += "<span class='k' style='color:" + (l.color || "inherit") + "'>" + l.name + "</span> " + fmt(p.value, l.name.includes("張") ? 0 : 2);
     });
     el.innerHTML = html + "<br>" + extra;
   }
