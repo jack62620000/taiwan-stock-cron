@@ -1,0 +1,42 @@
+name: 對照公開來源抽查
+
+# 每週隨機抽 3 個近期交易日，重新向證交所、櫃買中心下載原始資料，逐筆和兩個資料庫比對（verify_public.py）
+# 有任何不一致會讓這次排程失敗，GitHub 會寄信通知
+on:
+  schedule:
+    # 每週日台灣時間中午 12:00（UTC 週日 04:00）- 避開平日晚上的抓資料排程
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: '指定抽查日期（YYYY-MM-DD，逗號分隔；空白＝隨機抽 3 天）'
+        type: string
+        default: ''
+      skip_etf:
+        description: '不查 ETF 資料庫'
+        type: boolean
+        default: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Verify against public sources
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ETF_SUPABASE_URL: ${{ secrets.ETF_SUPABASE_URL }}
+          ETF_SUPABASE_KEY: ${{ secrets.ETF_SUPABASE_KEY }}
+          VERIFY_DAYS: ${{ inputs.days }}
+          VERIFY_SKIP_ETF: ${{ inputs.skip_etf && '1' || '0' }}
+          PYTHONUNBUFFERED: '1'
+        run: python verify_public.py
