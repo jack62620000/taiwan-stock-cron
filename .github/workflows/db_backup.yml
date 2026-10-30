@@ -36,8 +36,9 @@ jobs:
           echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
       - name: Back up databases
         env:
-          MAIN_DB_URL: ${{ secrets.MAIN_DB_URL }}
-          ETF_DB_URL: ${{ secrets.ETF_DB_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          MAIN_DB_PASSWORD: ${{ secrets.MAIN_DB_PASSWORD }}
+          ETF_DB_PASSWORD: ${{ secrets.ETF_DB_PASSWORD }}
           ETF_SUPABASE_URL: ${{ secrets.ETF_SUPABASE_URL }}
           ETF_SUPABASE_KEY: ${{ secrets.ETF_SUPABASE_KEY }}
         run: python -u db_backup.py

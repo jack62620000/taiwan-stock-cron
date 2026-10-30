@@ -8,17 +8,22 @@ Supabase 免費方案沒有資料庫備份；archive.py 封存的只是過期被
 用 pg_restore --list 確認檔案完整，再切成每塊 PART_SIZE 上傳（免費方案 Storage 單檔上限 50 MB）。
 放在 db-backups/<日期>/<資料庫>.dump.000、.001…，新的一份全部上傳成功才刪掉更舊的。
 
-需要的 secrets：MAIN_DB_URL、ETF_DB_URL（Supabase 專案 Connect → Session pooler 的連線字串，含密碼），
-ETF_SUPABASE_URL、ETF_SUPABASE_KEY（上傳 Storage 用）。
+需要的 secrets：MAIN_DB_PASSWORD、ETF_DB_PASSWORD（兩個資料庫的密碼），SUPABASE_URL、ETF_SUPABASE_URL
+（從網址取得專案代號），ETF_SUPABASE_KEY（上傳 Storage 用）。
+GitHub Actions 只能用 IPv4，資料庫直連是 IPv6，所以經過 Supabase 的 Session pooler 連線；
+專案在哪一組 pooler 主機無法事先得知，依序試 POOLER_HOSTS。
 
 還原：把同一份的分塊依序接起來再 pg_restore，例如
   cat main.dump.* > main.dump
   pg_restore --clean --if-exists --no-owner --no-privileges -d "<連線字串>" main.dump
 """
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
+
+from urllib.parse import quote
 
 import requests
 
@@ -27,16 +32,26 @@ KEEP = 2
 PART_SIZE = 45 * 1024 * 1024
 TIMEOUT = 300
 
-# (名稱, 連線字串的環境變數, 要匯出的 schema)
+# 兩個專案都在首爾（ap-northeast-2）
+POOLER_HOSTS = ["aws-0-ap-northeast-2.pooler.supabase.com", "aws-1-ap-northeast-2.pooler.supabase.com"]
+
+# (名稱, 專案網址的環境變數, 密碼的環境變數, 要匯出的 schema)
 DATABASES = [
-    ("main", "MAIN_DB_URL", ["public", "ops"]),
-    ("etf", "ETF_DB_URL", ["public"]),
+    ("main", "SUPABASE_URL", "MAIN_DB_PASSWORD", ["public", "ops"]),
+    ("etf", "ETF_SUPABASE_URL", "ETF_DB_PASSWORD", ["public"]),
 ]
 
 
 def old_backups(folders, keep=KEEP):
     """日期資料夾中，超過最近 keep 份的（要刪掉的）"""
     return sorted(folders, reverse=True)[keep:]
+
+
+def pooler_urls(project_url, password):
+    """Session pooler 連線字串（每組主機一個），密碼的特殊字元要編碼"""
+    ref = re.match(r"https://([a-z0-9]+)\.supabase\.co", project_url.strip()).group(1)
+    return [f"postgresql://postgres.{ref}:{quote(password, safe='')}@{host}:5432/postgres"
+            for host in POOLER_HOSTS]
 
 
 def split_parts(data, size=PART_SIZE):
@@ -73,11 +88,18 @@ class Storage:
             self._call("DELETE", f"/object/{BUCKET}", json={"prefixes": paths}).raise_for_status()
 
 
-def dump(name, conn, schemas, out):
+def dump(name, urls, schemas, out):
     args = ["pg_dump", "-Fc", "--no-owner", "--no-privileges", "-f", out]
     for s in schemas:
         args += ["-n", s]
-    subprocess.run(args + ["--dbname", conn], check=True)
+    for i, url in enumerate(urls):
+        r = subprocess.run(args + ["--dbname", url], capture_output=True, text=True)
+        if r.returncode == 0:
+            break
+        # 錯誤訊息不含密碼；專案不在這組主機時會是 Tenant or user not found，換下一組
+        print(f"{name}：第 {i + 1} 組 pooler 主機失敗：{r.stderr.strip()[:300]}")
+    else:
+        sys.exit(f"{name} 資料庫匯出失敗（密碼錯誤或連不上）")
     subprocess.run(["pg_restore", "--list", out], check=True, stdout=subprocess.DEVNULL)
     return out
 
@@ -89,11 +111,11 @@ def main():
     # 同一天重跑時先清掉那天的舊分塊，避免新檔較小時留下多的分塊
     storage.remove([f"{day}/{o['name']}" for o in storage.list(day + "/")])
 
-    for name, env, schemas in DATABASES:
-        conn = os.environ.get(env)
-        if not conn:
-            sys.exit(f"沒有設定 {env}，無法備份 {name} 資料庫")
-        out = dump(name, conn, schemas, f"{name}.dump")
+    for name, url_env, password_env, schemas in DATABASES:
+        password = os.environ.get(password_env)
+        if not password:
+            sys.exit(f"沒有設定 {password_env}，無法備份 {name} 資料庫")
+        out = dump(name, pooler_urls(os.environ[url_env], password), schemas, f"{name}.dump")
         with open(out, "rb") as f:
             data = f.read()
         parts = split_parts(data)
