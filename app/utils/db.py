@@ -463,6 +463,77 @@ def get_us_market(calendar_days=60):
     ))
 
 
+# ===== ETF（ETF 專用資料庫，etf_update.py 等排程寫入；網站沒設 ETF 資料庫連線時 etf_supabase 是 None）=====
+# ETF 各表的主鍵都是 (etf_id, 日期)，和主資料庫一樣用幾檔每天都有交易的 ETF 找最新日期，走主鍵索引
+_ETF_ANCHORS = ["0050", "0056", "00878"]
+
+def get_etf_list():
+    """ETF 清單與基本資料（含已下市，約 400 檔，一次查完）"""
+    return pd.DataFrame(_fetch_all(lambda: etf_supabase.table("etf_info").select("*").order("etf_id")))
+
+def get_etf_dates(table, n=1, date_col="date", since=None):
+    """ETF 資料表最近 n 個有資料的日期（或年月、週），由新到舊；since 指定時改成取 since 之後的全部日期"""
+    query = lambda: etf_supabase.table(table).select(date_col).in_("etf_id", _ETF_ANCHORS)  # noqa: E731
+    if since is not None:
+        rows = _fetch_all(lambda: query().gte(date_col, str(since)).order(date_col, desc=True))
+        return sorted({r[date_col] for r in rows}, reverse=True)
+    res = _execute(query().order(date_col, desc=True).limit(n * len(_ETF_ANCHORS)))
+    return sorted({r[date_col] for r in res.data}, reverse=True)[:n]
+
+def get_etf_snapshot(table, date_col, value, columns="*"):
+    """全部 ETF 在某個日期（或年月、期間）的資料"""
+    return pd.DataFrame(_fetch_all(
+        lambda: etf_supabase.table(table).select(columns).eq(date_col, value).order("etf_id")))
+
+def get_etf_snapshots(table, values, columns="*", date_col="date"):
+    """全部 ETF 在多個日期的資料，每天一個查詢、少量同時送出後合併"""
+    with ThreadPoolExecutor(max_workers=_SNAPSHOT_WORKERS) as pool:
+        frames = list(pool.map(lambda v: get_etf_snapshot(table, date_col, v, columns), values))
+    frames = [f for f in frames if not f.empty]
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+def get_etf_rows(table, etf_ids, date_col="date", since=None, columns="*"):
+    """指定幾檔 ETF（一檔時可直接傳代號）在 since 之後的資料，依日期排序"""
+    ids = [etf_ids] if isinstance(etf_ids, str) else list(etf_ids)
+    if not ids:
+        return pd.DataFrame()
+    def query():
+        q = etf_supabase.table(table).select(columns).in_("etf_id", ids)
+        if since is not None:
+            q = q.gte(date_col, str(since))
+        return q.order(date_col).order("etf_id")
+    return pd.DataFrame(_fetch_all(query))
+
+def get_etf_expense_years():
+    """費用率有全年資料的年份，由新到舊（例如 ["2025", "2024"]）"""
+    rows = _fetch_all(lambda: etf_supabase.table("etf_expense_ratio").select("period")
+                      .in_("etf_id", _ETF_ANCHORS).eq("period_type", "year").order("period", desc=True))
+    return sorted({r["period"] for r in rows}, reverse=True)
+
+def get_etf_dividends_between(start, end):
+    """全部 ETF 在 start～end（除息日）之間的配息，含已公告、還沒除息的"""
+    return pd.DataFrame(_fetch_all(
+        lambda: etf_supabase.table("etf_dividends").select("*")
+            .gte("ex_date", str(start)).lte("ex_date", str(end)).order("ex_date").order("etf_id")))
+
+def get_etf_adjustments(etf_ids=None, after_date=None):
+    """ETF 還原權值事件（除息、分割、反分割）；etf_ids 為 None 時取全部 ETF，只取 after_date 之後的事件"""
+    def query():
+        q = etf_supabase.table("etf_price_adjustments").select("etf_id, date, event_type, prev_close, ref_price, factor")
+        if etf_ids is not None:
+            q = q.in_("etf_id", [etf_ids] if isinstance(etf_ids, str) else list(etf_ids))
+        if after_date is not None:
+            q = q.gt("date", str(after_date))
+        return q.order("date").order("etf_id").order("event_type")
+    return pd.DataFrame(_fetch_all(query))
+
+def get_etf_index(index_name, since):
+    """追蹤指數 since 之後的收盤（etf_index_daily）"""
+    return pd.DataFrame(_fetch_all(
+        lambda: etf_supabase.table("etf_index_daily").select("date, close")
+            .eq("index_name", index_name).gte("date", str(since)).order("date")))
+
+
 # ===== 分組：每個登入帳號底下可以有多個分組，自選股、模擬持股都屬於某一個分組 =====
 def get_groups(owner):
     """某帳號的分組（依建立順序）"""

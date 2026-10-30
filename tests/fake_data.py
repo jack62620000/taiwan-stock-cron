@@ -25,7 +25,7 @@ def build_tables():
         "stock_info", "daily_prices", "price_adjustments", "stock_ins_daily", "margin_utilization",
         "holder_distribution", "monthly_revenue", "quarterly_report", "market_index",
         "futures_institutional", "daily_signals", "momentum_signals", "watch_groups", "watchlist", "paper_trades",
-        "us_market_daily",
+        "us_market_daily", *ETF_TABLES,
     ]}
     for sid, name, market, industry, drift in STOCKS:
         t["stock_info"].append({"stock_id": sid, "stock_name": name, "industry": industry, "market": market,
@@ -130,7 +130,93 @@ def build_tables():
                 "change": None if prev is None else round(v - prev, 4),
                 "change_pct": None if prev is None else round((v / prev - 1) * 100, 4)})
             prev = v
+    build_etf_tables(t, days, rng)
     return t
+
+
+ETF_TABLES = ["etf_info", "etf_daily_prices", "etf_price_adjustments", "etf_dividends", "etf_nav", "etf_ins_daily",
+              "etf_margin_daily", "etf_sbl_daily", "etf_holder_distribution", "etf_monthly_stats", "etf_top_holdings",
+              "etf_expense_ratio", "etf_index_daily"]
+# (代號, 名稱, 類別, 市場, 配息頻率, 追蹤指數)
+ETFS = [
+    ("0050", "元大台灣50", "國內股票", "上市", "半年配", "臺灣50指數"),
+    ("00878", "國泰永續高股息", "國內股票", "上市", "季配", None),
+    ("00679B", "元大美債20年", "債券", "上櫃", "季配", None),
+    ("00632R", "元大台灣50反1", "槓桿反向", "上市", None, None),
+]
+
+
+def build_etf_tables(t, days, rng):
+    """ETF 資料庫的假資料（測試時和主資料庫用同一份假資料庫）：0050 有一次分割、每檔都有配息、持股、費用率"""
+    today = pd.Timestamp(days[-1])
+    months = [p.strftime("%Y-%m") for p in pd.period_range(end=today, periods=13, freq="M")[:-1]]
+    for k, (eid, name, cat, market, freq, index) in enumerate(ETFS):
+        t["etf_info"].append({"etf_id": eid, "etf_name": name, "market": market, "category": cat, "issuer": "測試投信",
+                              "index_name": index, "index_official_name": index, "listing_date": "2010-01-04",
+                              "dividend_frequency": freq, "delisted_date": None, "updated_at": days[-1]})
+        close = (30 + 20 * k) * np.exp(np.cumsum(rng.normal(0.0004, 0.01, len(days))))
+        split_day = days[-120] if eid == "0050" else None
+        for i, d in enumerate(days):
+            c = round(float(close[i] * (4 if split_day and d < split_day else 1)), 2)
+            prev = round(float(close[i - 1] * (4 if split_day and days[i - 1] < split_day else 1)), 2) if i else c
+            t["etf_daily_prices"].append({"etf_id": eid, "date": d, "open_price": c, "high_price": round(c * 1.01, 2),
+                                          "low_price": round(c * 0.99, 2), "close_price": c, "change": round(c - prev, 2),
+                                          "volume": int(rng.integers(1e6, 1e7)), "trade_value": int(c * 5e6),
+                                          "transactions": 1000})
+        if split_day:
+            pre = float(close[days.index(split_day) - 1] * 4)
+            t["etf_price_adjustments"].append({"etf_id": eid, "date": split_day, "event_type": "分割", "prev_close": pre,
+                                               "ref_price": pre / 4, "factor": 0.25, "source": "test"})
+        if freq:
+            for j in (-200, -140, -80, -20):
+                ex = days[j]
+                cash = round(0.3 + 0.1 * k, 3)
+                pre = float(close[j - 1])
+                t["etf_dividends"].append({"etf_id": eid, "ex_date": ex, "record_date": None,
+                                           "pay_date": days[j + 15] if j + 15 < 0 else None, "cash_dividend": cash})
+                t["etf_price_adjustments"].append({"etf_id": eid, "date": ex, "event_type": "除息", "prev_close": pre,
+                                                   "ref_price": pre - cash, "factor": (pre - cash) / pre, "source": "test"})
+            future = (today + pd.Timedelta(days=20 + k)).strftime("%Y-%m-%d")
+            t["etf_dividends"].append({"etf_id": eid, "ex_date": future, "record_date": None, "pay_date": None,
+                                       "cash_dividend": None if k == 1 else 0.5})
+        for i, d in enumerate(days[-3:]):
+            c = float(close[len(days) - 3 + i])
+            t["etf_nav"].append({"etf_id": eid, "date": d, "market_price": c, "est_nav": c * 0.995,
+                                 "premium_pct": 0.5 if k == 2 else 0.05, "nav": None if i == 2 else c * 0.995,
+                                 "units": 1_000_000_000 + i * 1_000_000, "units_change": 1_000_000})
+        for d in days[-250:]:
+            t["etf_ins_daily"].append({"etf_id": eid, "date": d, "foreign_net_shares": int(rng.normal(0, 1e6)),
+                                       "sitca_net_shares": int(rng.normal(0, 1e5)), "dealers_net_shares": int(rng.normal(0, 1e5))})
+            t["etf_margin_daily"].append({"etf_id": eid, "date": d, "margin_balance": int(rng.integers(1000, 5000)),
+                                          "margin_limit": 1_000_000, "margin_rate": 0.3, "short_balance": 10, "short_rate": 0})
+            t["etf_sbl_daily"].append({"etf_id": eid, "date": d, "sbl_sell": 1000, "sbl_return": 0, "sbl_adjust": 0,
+                                       "sbl_balance": int(rng.integers(1e6, 5e6)), "sbl_limit": 1e7})
+        for d in days[-60::5]:
+            t["etf_holder_distribution"].append({"etf_id": eid, "week_date": d, "total_holders": 100_000,
+                                                 "big_holder_ratio": 20.0, "small_holder_ratio": 40.0})
+        for j, ym in enumerate(months):
+            if cat != "槓桿反向":
+                t["etf_monthly_stats"].append({
+                    "etf_id": eid, "year_month": ym, "aum": int(1e11 + j * 1e9), "nav": 30.0, "units": 1_000_000_000,
+                    "holders_natural": 100_000 + j * 1000, "holders_legal": 100, "holders_total": 100_100 + j * 1000,
+                    "subscription_amount": int(rng.integers(1e8, 1e9)), "redemption_amount": int(rng.integers(1e8, 1e9)),
+                    "dca_count": 5000, "dca_accounts": 4000 + j * 10, "dca_amount": int(5e7)})
+            for r, (code, hname, htype) in enumerate([("2330", "台積電", "國內上市"), ("2317", "鴻海", "國內上市"),
+                                                      ("6488", "環球晶", "國內上櫃"), ("AAPL", "Apple", "國外股票(含承銷)")], 1):
+                if j >= len(months) - 2:
+                    t["etf_top_holdings"].append({"etf_id": eid, "year_month": ym, "rank": r, "holding_type": htype,
+                                                  "holding_code": code, "holding_name": hname, "amount": int(1e9 / r),
+                                                  "weight_pct": round(30 / r + j * 0.1, 2)})
+        for y in (today.year - 2, today.year - 1):
+            t["etf_expense_ratio"].append({"etf_id": eid, "period": str(y), "period_type": "year", "brokerage_pct": 0.05,
+                                           "tax_pct": 0.05, "creation_pct": 0.01, "mgmt_pct": 0.15 + 0.1 * k,
+                                           "custody_pct": 0.03, "guarantee_pct": 0, "other_pct": 0.01,
+                                           "total_pct": round(0.28 + 0.1 * k, 2), "total_amount": int(1e8)})
+    for i, d in enumerate(days):
+        v = round(15000 * float(np.exp(0.0004 * i)), 2)
+        for name, mult in (("臺灣50指數", 1.0), ("臺灣50報酬指數", 1.3)):
+            t["etf_index_daily"].append({"date": d, "index_name": name, "close": v * mult, "change": 0, "change_pct": 0,
+                                         "index_type": "價格", "category": "證交所"})
 
 
 def signal_performance(client, top_n=20, horizon=5):
