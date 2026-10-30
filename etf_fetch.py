@@ -5,7 +5,9 @@
 所以這個檔案不匯入 fetch_stock_info.py（它一載入就會連主資料庫）。
 排程與回補的流程在 etf_update.py；建表 SQL 在 sql/etf_tables.sql。
 
-  1. etf_info                ETF 清單：證交所 t187ap47_L（上市）＋櫃買每日行情中 00 開頭的代號（上櫃）
+  1. etf_info                ETF 清單：證交所 t187ap47_L（上市）＋櫃買每日行情中 00 開頭的代號（上櫃）；
+                             發行投信由簡稱推得，配息頻率由配息表推算，不在清單的標下市日
+  1b. etf_trading_halts      暫停交易（分割預告）：證交所 TWTAWU、櫃買 tpex_spendi_history
   2. etf_daily_prices        每日價量：證交所 MI_INDEX type=0099P、櫃買 afterTrading/otc
   3. etf_nav                 淨值折溢價：證交所 MIS all_etf.txt（只有當天快照）
   4. etf_dividends           配息：證交所 etfDiv、TWT48U_ALL，櫃買 tpex_exright_prepost
@@ -49,6 +51,7 @@ TABLE_KEYS = {
     "etf_top_holdings":        ("etf_id", "year_month", "rank"),
     "etf_expense_ratio":       ("etf_id", "period"),
     "etf_price_adjustments":   ("etf_id", "date", "event_type"),
+    "etf_trading_halts":       ("etf_id", "halt_date"),
 }
 
 _client = None
@@ -222,6 +225,8 @@ def parse_twse_etf_list(rows, today):
             "index_name": None if index in ("", "不適用") else index,
             "listing_date": roc_to_iso(x.get("上市日期")),
             "fund_tax_id": str(x.get("基金統一編號", "")).strip() or None,
+            "issuer": issuer_of(str(x.get("基金簡稱", ""))),
+            "delisted_date": None,
             "updated_at": today,
         })
     return records
@@ -230,13 +235,93 @@ def parse_twse_etf_list(rows, today):
 def tpex_etf_list(otc_price_rows, today):
     """上櫃 ETF 清單：櫃買每日行情裡 00 開頭的代號（櫃買 OpenAPI 沒有 ETF 清單）"""
     return [{"etf_id": row[0].strip(), "etf_name": row[1].strip(), "market": "上櫃",
-             "category": category_of(row[0].strip()), "updated_at": today}
+             "category": category_of(row[0].strip()), "issuer": issuer_of(row[1]),
+             "delisted_date": None, "updated_at": today}
             for row in otc_price_rows if is_etf_code(row[0])]
+
+
+# 發行投信：開放資料沒有投信名稱欄位，用官方簡稱開頭的品牌對應（主動式、期貨信託、平衡型簡稱前面多一個字）。
+# 對不到的留空，不猜
+ISSUER_PREFIXES = [
+    ("華南永昌", "華南永昌投信"), ("第一金", "第一金投信"), ("貝萊德", "貝萊德投信"), ("元大", "元大投信"),
+    ("富邦", "富邦投信"), ("國泰", "國泰投信"), ("中信", "中國信託投信"), ("群益", "群益投信"),
+    ("台新", "台新投信"), ("復華", "復華投信"), ("凱基", "凱基投信"), ("永豐", "永豐投信"),
+    ("兆豐", "兆豐投信"), ("野村", "野村投信"), ("大華", "大華銀投信"), ("統一", "統一投信"),
+    ("新光", "新光投信"), ("玉山", "玉山投信"), ("街口", "街口投信"), ("聯邦", "聯邦投信"),
+    ("聯博", "聯博投信"), ("安聯", "安聯投信"), ("摩根", "摩根投信"), ("FT", "富蘭克林華美投信"),
+]
+
+
+def issuer_of(name):
+    """ETF 簡稱 → 發行投信；例如「元大台灣50」→ 元大投信、「主動統一台股增長」→ 統一投信"""
+    s = str(name or "").strip()
+    for lead in ("主動", "平衡", "期"):
+        if s.startswith(lead) and any(s[len(lead):].startswith(p) for p, _ in ISSUER_PREFIXES):
+            s = s[len(lead):]
+            break
+    return next((full for p, full in ISSUER_PREFIXES if s.startswith(p)), None)
+
+
+def dividend_frequency(ex_dates, today, listing_date=None):
+    """
+    配息頻率：最近一年（含已公告的未來除息日）配了幾次。12 次左右＝月配、6＝雙月配、4＝季配、2＝半年配、1＝年配。
+    一次都沒有且上市超過一年＝不配息；上市未滿一年還看不出來，回傳 None
+    """
+    t = date.fromisoformat(today)
+    start, end = (t - timedelta(days=365)).isoformat(), (t + timedelta(days=60)).isoformat()
+    n = sum(1 for d in ex_dates if start < d <= end)
+    if n >= 10:
+        return "月配"
+    if n >= 5:
+        return "雙月配"
+    if n >= 3:
+        return "季配"
+    if n == 2:
+        return "半年配"
+    if n == 1:
+        return "年配"
+    if listing_date and listing_date <= start:
+        return "不配息"
+    return None
 
 
 def fetch_twse_etf_list(today):
     print("正在下載證交所 ETF 基本資料...")
     return parse_twse_etf_list(get_json("https://openapi.twse.com.tw/v1/opendata/t187ap47_L"), today)
+
+
+# ==================== 1b. 暫停交易（分割、反分割前會先停止買賣幾天） ====================
+def parse_twse_halts(rows):
+    """證交所 TWTAWU：Code、TradingHaltDate、TradingResumptionDate（民國年）"""
+    return [{"etf_id": str(x.get("Code", "")).strip(), "market": "上市",
+             "halt_date": roc_to_iso(x.get("TradingHaltDate")),
+             "resume_date": roc_to_iso(x.get("TradingResumptionDate"))}
+            for x in rows or [] if is_etf_code(x.get("Code", ""))]
+
+
+def parse_tpex_halts(rows):
+    """
+    櫃買 tpex_spendi_history：暫停與恢復各一列（另一欄空白），依序號把恢復交易配回前一次暫停。
+    還沒恢復的 resume_date 為 None
+    """
+    out, pending = [], {}
+    for x in sorted(rows or [], key=lambda x: int(str(x.get("Serial") or 0) or 0)):
+        code = str(x.get("SecuritiesCompanyCode", "")).strip()
+        if not is_etf_code(code):
+            continue
+        halt, resume = roc_to_iso(x.get("DateOfSuspendedTrading")), roc_to_iso(x.get("DateOfResumedTrading"))
+        if halt:
+            pending[code] = {"etf_id": code, "market": "上櫃", "halt_date": halt, "resume_date": None}
+            out.append(pending[code])
+        elif resume and code in pending:
+            pending.pop(code)["resume_date"] = resume
+    return out
+
+
+def fetch_trading_halts():
+    print("正在下載證交所、櫃買暫停交易公告...")
+    return (parse_twse_halts(get_json("https://openapi.twse.com.tw/v1/exchangeReport/TWTAWU"))
+            + parse_tpex_halts(get_json("https://www.tpex.org.tw/openapi/v1/tpex_spendi_history")))
 
 
 # ==================== 2. 每日價量 ====================

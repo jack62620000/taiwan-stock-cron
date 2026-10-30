@@ -132,7 +132,8 @@ def test_tpex_prices_only_etfs():
     assert [x["etf_id"] for x in r] == ["00679B"]
     assert r[0]["close_price"] == 26.17 and r[0]["change"] == -0.2 and r[0]["volume"] == 23395000
     assert f.tpex_etf_list(rows, DAY)[0] == {"etf_id": "00679B", "etf_name": "元大美債20年", "market": "上櫃",
-                                             "category": "債券", "updated_at": DAY}
+                                             "category": "債券", "issuer": "元大投信",
+                                             "delisted_date": None, "updated_at": DAY}
 
 
 def test_tpex_wrong_date_is_skipped():
@@ -532,3 +533,42 @@ def test_build_adjustments_ignores_non_whole_ratio():
     prices = [{"etf_id": "00715L", "date": "2026-08-04", "close_price": "10.0", "change": "0.1"},
               {"etf_id": "00715L", "date": "2026-08-05", "close_price": "6.0", "change": "-0.35"}]
     assert f.build_adjustments(prices, []) == []
+
+
+def test_issuer_of():
+    assert f.issuer_of("元大台灣50") == "元大投信"
+    assert f.issuer_of("主動統一台股增長") == "統一投信"
+    assert f.issuer_of("期元大S&amp;P黃金(原名：元大S&amp;P黃金)") == "元大投信"
+    assert f.issuer_of("華南永昌優選50") == "華南永昌投信"
+    assert f.issuer_of("FT臺灣Smart") == "富蘭克林華美投信"
+    assert f.issuer_of("恒香港") is None and f.issuer_of("") is None
+
+
+def test_dividend_frequency():
+    today = "2026-10-30"
+    monthly = [f"2026-{m:02d}-15" for m in range(1, 11)] + ["2025-11-17", "2025-12-15"]
+    assert f.dividend_frequency(monthly, today) == "月配"
+    assert f.dividend_frequency(["2025-11-20", "2026-02-20", "2026-05-20", "2026-08-20"], today) == "季配"
+    assert f.dividend_frequency(["2026-01-20", "2026-07-20"], today) == "半年配"
+    assert f.dividend_frequency(["2026-11-10"], today) == "年配"  # 已公告的未來除息日也算
+    assert f.dividend_frequency(["2024-07-20"], today, "2010-01-01") == "不配息"
+    assert f.dividend_frequency([], today, "2026-06-01") is None  # 上市未滿一年
+
+
+def test_parse_halts():
+    twse = [{"Code": "00685L", "TradingHaltDate": "1150701", "TradingResumptionDate": "1150707"},
+            {"Code": "1218", "TradingHaltDate": "1150813", "TradingResumptionDate": "1150814"}]
+    assert f.parse_twse_halts(twse) == [{"etf_id": "00685L", "market": "上市",
+                                         "halt_date": "2026-07-01", "resume_date": "2026-07-07"}]
+    tpex = [{"Serial": "2", "SecuritiesCompanyCode": "00679B", "DateOfSuspendedTrading": "",
+             "DateOfResumedTrading": "1150622"},
+            {"Serial": "1", "SecuritiesCompanyCode": "00679B", "DateOfSuspendedTrading": "1150618",
+             "DateOfResumedTrading": ""},
+            {"Serial": "3", "SecuritiesCompanyCode": "00720B", "DateOfSuspendedTrading": "1151101",
+             "DateOfResumedTrading": ""},
+            {"Serial": "4", "SecuritiesCompanyCode": "1788", "DateOfSuspendedTrading": "1150618",
+             "DateOfResumedTrading": ""}]
+    assert f.parse_tpex_halts(tpex) == [
+        {"etf_id": "00679B", "market": "上櫃", "halt_date": "2026-06-18", "resume_date": "2026-06-22"},
+        {"etf_id": "00720B", "market": "上櫃", "halt_date": "2026-11-01", "resume_date": None},
+    ]

@@ -280,3 +280,24 @@ comment on column public.etf_price_adjustments.ref_price  is '參考價：除息
 comment on column public.etf_price_adjustments.factor     is '調整比例 = 參考價 ÷ 前收；事件日之前的股價乘上這個比例';
 comment on column public.etf_price_adjustments.source     is '配息表（etf_dividends）或漲跌推算';
 alter table public.etf_price_adjustments enable row level security;
+
+-- 13. 暫停交易（分割預告）、ETF 清單補欄位（2026-10 新增）
+create table if not exists public.etf_trading_halts (
+    etf_id      varchar(10) not null,
+    halt_date   date        not null,
+    resume_date date,
+    market      varchar(4)  not null,
+    primary key (etf_id, halt_date)
+);
+comment on table  public.etf_trading_halts is 'ETF 暫停交易公告：證交所 TWTAWU、櫃買 tpex_spendi_history。分割、反分割前會先停止買賣幾天，可事先知道';
+comment on column public.etf_trading_halts.halt_date   is '停止買賣日';
+comment on column public.etf_trading_halts.resume_date is '恢復買賣日（還沒公告時為空）；分割比例在恢復後由 etf_price_adjustments 算出';
+comment on column public.etf_trading_halts.market      is '上市／上櫃';
+alter table public.etf_trading_halts enable row level security;
+
+alter table public.etf_info add column if not exists issuer varchar(20);
+alter table public.etf_info add column if not exists delisted_date date;
+alter table public.etf_info add column if not exists dividend_frequency varchar(6);
+comment on column public.etf_info.issuer             is '發行投信：由官方簡稱開頭的品牌對應（開放資料沒有投信名稱欄位），對不到的留空';
+comment on column public.etf_info.delisted_date      is '下市日：當天上市、上櫃清單都沒有這檔時記下；重新出現會清空';
+comment on column public.etf_info.dividend_frequency is '月配、雙月配、季配、半年配、年配、不配息：由最近一年除息次數推算；上市未滿一年為空';
