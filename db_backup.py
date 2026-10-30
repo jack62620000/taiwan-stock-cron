@@ -12,9 +12,9 @@ Supabase 免費方案沒有資料庫備份；archive.py 封存的只是過期被
 主資料庫的封存檔 → ETF 專案 db-backups/archive/，ETF 的封存檔 → 主專案 db-backups/archive/，
 路徑和原本一樣。封存檔寫好就不會變，每次只複製新增的檔案；LINE 查詢卡片每天重新產生，不備份。
 
-另外上傳一份到 Google 雲端硬碟「台股資料庫備份/<日期>/」（main.dump、etf.dump 不分塊，
-兩邊封存檔打包成 archive.tar），一樣只留最近 KEEP 份。需要 GDRIVE_CLIENT_ID、GDRIVE_CLIENT_SECRET、
-GDRIVE_REFRESH_TOKEN（Google Cloud 的 OAuth 用戶端，權限 drive.file），沒設定就略過這一步。
+兩邊封存檔另外打包成 archive.tar 放進同一個日期資料夾。使用者 Google 帳號裡的 Apps Script
+（gdrive_backup.gs）每天檢查，有新的日期資料夾就整個複製到雲端硬碟「台股資料庫備份/<日期>/」，
+一樣只留最近 KEEP 份，Supabase 以外也有一份。
 
 需要的 secrets：MAIN_DB_PASSWORD、ETF_DB_PASSWORD（兩個資料庫的密碼），SUPABASE_URL、ETF_SUPABASE_URL
 （從網址取得專案代號），SUPABASE_KEY、ETF_SUPABASE_KEY（讀寫 Storage 用）。
@@ -22,11 +22,10 @@ GitHub Actions 只能用 IPv4，資料庫直連是 IPv6，所以經過 Supabase 
 專案在哪一組 pooler 主機無法事先得知，依序試 POOLER_HOSTS。
 
 還原：把同一份的分塊依序接起來再 pg_restore，例如
-  cat main.dump.* > main.dump   （雲端硬碟上的 main.dump 沒有分塊，直接用）
+  cat main.dump.* > main.dump
   pg_restore --clean --if-exists --no-owner --no-privileges -d "<連線字串>" main.dump
 """
 import io
-import json
 import os
 import re
 import subprocess
@@ -46,7 +45,6 @@ ARCHIVE_BUCKET = "archive"
 ARCHIVE_PREFIX = "archive/"
 # LINE 查詢卡片每天重新產生，不用備份
 ARCHIVE_SKIP = ("_line_cards/",)
-DRIVE_FOLDER = "台股資料庫備份"
 
 # 兩個專案都在首爾（ap-northeast-2）
 POOLER_HOSTS = ["aws-0-ap-northeast-2.pooler.supabase.com", "aws-1-ap-northeast-2.pooler.supabase.com"]
@@ -137,49 +135,6 @@ def mirror_archive(name, src, dst, prefix):
     print(f"{name} 封存檔：新增或更新 {len(todo)} 個，備份在 {dst.bucket}/{prefix}")
 
 
-class Drive:
-    """Google 雲端硬碟：用 OAuth refresh token 換存取權杖，權限只到這個程式自己建立的檔案（drive.file）"""
-    API = "https://www.googleapis.com/drive/v3/files"
-    FOLDER = "application/vnd.google-apps.folder"
-
-    def __init__(self, client_id, client_secret, refresh_token):
-        r = requests.post("https://oauth2.googleapis.com/token", timeout=TIMEOUT, data={
-            "client_id": client_id, "client_secret": client_secret,
-            "refresh_token": refresh_token, "grant_type": "refresh_token"})
-        r.raise_for_status()
-        self.headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
-
-    def children(self, parent=None, folders_only=False):
-        q = ["trashed=false", f"'{parent}' in parents" if parent else "'root' in parents"]
-        if folders_only:
-            q.append(f"mimeType='{self.FOLDER}'")
-        r = requests.get(self.API, headers=self.headers, timeout=TIMEOUT,
-                         params={"q": " and ".join(q), "fields": "files(id,name)", "pageSize": 1000})
-        r.raise_for_status()
-        return {f["name"]: f["id"] for f in r.json()["files"]}
-
-    def folder(self, name, parent=None):
-        """找不到就建立"""
-        found = self.children(parent, folders_only=True).get(name)
-        if found:
-            return found
-        meta = {"name": name, "mimeType": self.FOLDER, **({"parents": [parent]} if parent else {})}
-        r = requests.post(self.API, headers=self.headers, json=meta, timeout=TIMEOUT)
-        r.raise_for_status()
-        return r.json()["id"]
-
-    def upload(self, name, parent, data):
-        """可續傳上傳，大檔案也一次傳完"""
-        r = requests.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
-                          headers={**self.headers, "Content-Type": "application/json; charset=UTF-8"},
-                          data=json.dumps({"name": name, "parents": [parent]}), timeout=TIMEOUT)
-        r.raise_for_status()
-        requests.put(r.headers["Location"], data=data, timeout=TIMEOUT * 4).raise_for_status()
-
-    def delete(self, file_id):
-        requests.delete(f"{self.API}/{file_id}", headers=self.headers, timeout=TIMEOUT).raise_for_status()
-
-
 def archive_tar(sources):
     """兩邊封存檔打包成一個 tar（檔案本身已是 gz，不再壓縮），路徑前面加上專案名稱"""
     buf = io.BytesIO()
@@ -193,29 +148,6 @@ def archive_tar(sources):
                 info.size = len(data)
                 tar.addfile(info, io.BytesIO(data))
     return buf.getvalue()
-
-
-def backup_to_drive(day, dumps, archive_sources):
-    """備份也上傳到 Google 雲端硬碟「台股資料庫備份/<日期>/」，只留最近 KEEP 份；沒設定 secrets 就略過"""
-    keys = [os.environ.get(k) for k in ("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_SECRET", "GDRIVE_REFRESH_TOKEN")]
-    if not all(keys):
-        print("沒有設定 Google 雲端硬碟的 secrets，略過")
-        return
-    drive = Drive(*keys)
-    root = drive.folder(DRIVE_FOLDER)
-    old = drive.children(root, folders_only=True).get(day)
-    if old:  # 同一天重跑：整個資料夾換新
-        drive.delete(old)
-    target = drive.folder(day, root)
-    for name in dumps:
-        with open(f"{name}.dump", "rb") as f:
-            drive.upload(f"{name}.dump", target, f.read())
-    drive.upload("archive.tar", target, archive_tar(archive_sources))
-    print(f"Google 雲端硬碟：已上傳到 {DRIVE_FOLDER}/{day}/")
-    folders = drive.children(root, folders_only=True)
-    for folder in old_backups(folders):
-        drive.delete(folders[folder])
-        print(f"Google 雲端硬碟：刪除舊備份 {folder}")
 
 
 def dump(name, urls, schemas, out):
@@ -271,8 +203,11 @@ def main():
     mirror_archive("主資料庫", main_archive, storage, ARCHIVE_PREFIX)
     mirror_archive("ETF 資料庫", etf_archive, main_backup, ARCHIVE_PREFIX)
 
-    # 再放一份到 Supabase 以外（Google 雲端硬碟），Supabase 帳號出問題時也還有備份
-    backup_to_drive(day, [name for name, *_ in DATABASES], [("main", main_archive), ("etf", etf_archive)])
+    # 兩邊封存檔再打包一份放進這次的日期資料夾，Google 雲端硬碟的 Apps Script（gdrive_backup.gs）
+    # 會把整個日期資料夾複製到雲端硬碟，Supabase 帳號出問題時也還有一份
+    tar = archive_tar([("main", main_archive), ("etf", etf_archive)])
+    storage.upload(f"{day}/archive.tar", tar)
+    print(f"封存檔打包：{len(tar) / 1024 / 1024:.1f} MB，上傳到 {BUCKET}/{day}/archive.tar")
 
 
 if __name__ == "__main__":
