@@ -38,7 +38,7 @@ def live_url(urls):
             psql(url, "select 1")
             return url
         except RuntimeError as e:
-            print(f"  pooler 主機連不上：{e}")
+            print(f"  pooler 主機連不上，換下一個：{str(e).splitlines()[0][:120]}")
     raise RuntimeError("連不上現在的資料庫（密碼錯誤或連不上）")
 
 
@@ -82,13 +82,10 @@ def main():
         print(f"\n【{name}】{len(parts)} 塊，{os.path.getsize(f'{name}.dump') / 1024 / 1024:.1f} MB")
         psql(f"{base}/postgres", f"create database restore_{name}")
         target = f"{base}/restore_{name}"
-        for s in schemas:
-            if s != "public":
-                psql(target, f"create schema if not exists {s}")
         r = subprocess.run(["pg_restore", "--no-owner", "--no-privileges", "-d", target, f"{name}.dump"],
                            capture_output=True, text=True)
         errors = [line for line in r.stderr.splitlines() if "error:" in line]
-        print(f"pg_restore 錯誤 {len(errors)} 個（Supabase 內建角色、擴充功能不在臨時資料庫，可忽略）")
+        print(f"pg_restore 錯誤 {len(errors)} 個（例如 public 已存在、Supabase 內建角色不在臨時資料庫，可忽略）")
         for line in errors[:10]:
             print(f"  {line[:200]}")
         restored = counts(target, schemas)

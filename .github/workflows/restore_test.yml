@@ -6,8 +6,6 @@ on:
     # 每月 9 日台灣時間 04:30（UTC 8 日 20:30），沒有其他排程在跑
     - cron: '30 20 8 * *'
   workflow_dispatch:
-  push:
-    branches: [claude/project-thread-cercx1]
 
 jobs:
   restore:
@@ -21,7 +19,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
