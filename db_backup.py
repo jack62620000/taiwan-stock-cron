@@ -197,7 +197,6 @@ def main():
     main_url, main_key = os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"]
     main_backup = Storage(main_url, main_key)
     main_backup.ensure_bucket()
-    mirror_archive("主資料庫", Storage(main_url, main_key, ARCHIVE_BUCKET), storage, ARCHIVE_PREFIX)
     etf_archive = Storage(os.environ["ETF_SUPABASE_URL"], os.environ["ETF_SUPABASE_KEY"], ARCHIVE_BUCKET)
     main_archive = Storage(main_url, main_key, ARCHIVE_BUCKET)
     mirror_archive("主資料庫", main_archive, storage, ARCHIVE_PREFIX)

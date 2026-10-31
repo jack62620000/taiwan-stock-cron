@@ -129,3 +129,59 @@ def test_keepalive_skips_manual_and_deleted(monkeypatch):
     monkeypatch.setattr(health_check.requests, "put", lambda url, **k: enabled.append(url.split("/")[-2]) or Put())
     text, problems = health_check.keep_workflows_enabled("t", "o/r")
     assert problems == [] and enabled == ["1", "2"] and "2 / 2" in text
+
+
+# ==================== LINE 早報、資料庫用量 ====================
+class FakeResponse:
+    def __init__(self, payload=None, status=200, text=None):
+        self.payload, self.status_code, self.text = payload, status, text
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise health_check.requests.HTTPError(str(self.status_code))
+
+    def json(self):
+        if self.payload is None:
+            raise ValueError("not json")
+        return self.payload
+
+
+def test_brief_recent_is_ok(monkeypatch):
+    monkeypatch.setattr(health_check.requests, "get",
+                        lambda *a, **k: FakeResponse({"date": "2026-10-29", "images": []}))
+    text, problems = health_check.check_brief("https://x.supabase.co", "k", TODAY)
+    assert problems == [] and "2026-10-29" in text
+
+
+def test_brief_stale_is_problem(monkeypatch):
+    monkeypatch.setattr(health_check.requests, "get", lambda *a, **k: FakeResponse({"date": "2026-10-27"}))
+    _, problems = health_check.check_brief("https://x.supabase.co", "k", TODAY)
+    assert len(problems) == 1 and "3 天" in problems[0]
+
+
+def test_brief_missing_is_problem(monkeypatch):
+    monkeypatch.setattr(health_check.requests, "get", lambda *a, **k: FakeResponse(status=404))
+    _, problems = health_check.check_brief("https://x.supabase.co", "k", TODAY)
+    assert len(problems) == 1
+
+
+def size_clients(main_mb, etf_mb):
+    def make(mb):
+        return FakeClient(rpcs={"database_size": lambda c: int(mb * 1024 * 1024)})
+    return {"main": make(main_mb), "etf": make(etf_mb)}
+
+
+def test_sizes_normal():
+    text, problems = health_check.check_sizes(size_clients(346, 133))
+    assert problems == [] and "346 MB" in text and "133 MB" in text
+
+
+def test_sizes_etf_over_warning():
+    _, problems = health_check.check_sizes(size_clients(346, 460))
+    assert len(problems) == 1 and "ETF" in problems[0]
+
+
+def test_sizes_main_not_warned_here():
+    """主資料庫的門檻交給 check_data.py 和自動縮短保留期限，這裡只列出"""
+    _, problems = health_check.check_sizes(size_clients(480, 133))
+    assert problems == []

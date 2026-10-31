@@ -1,18 +1,21 @@
 """
 每週系統自我檢查 - 給 GitHub Actions 每週排程使用（.github/workflows/health_check.yml）
 
-做三件事，有問題時以錯誤碼結束，GitHub 會把這次排程標成失敗並寄信：
+做這幾件事，有問題時以錯誤碼結束，GitHub 會把這次排程標成失敗並寄信：
 
 1. 資料有沒有停更：兩個資料庫每張會持續更新的表，看最新一筆的日期（或月份、季度）離今天多久。
    check_data.py 每天只看股價、法人、融資券、評分四張表的筆數；這裡涵蓋其他來源
    （期貨、大盤、集保、月營收、季報、ETF 各表、指數、美股），某個官方來源改網址或格式、
    抓不到資料時，最晚一週內會發現。容許天數已考慮連假（春節約 9 天）和各資料的公布時間。
 2. 每週備份有沒有產生：ETF 專案 Storage 的 db-backups 最新的日期資料夾不能超過 BACKUP_MAX_DAYS 天。
-3. 讓排程保持啟用：公開的 repo 60 天沒有任何活動，GitHub 會自動停用所有排程（連資料庫的準時觸發也叫不動）。
+3. LINE 早報有沒有更新：早報由每天早上的 Claude 排程產生（line_brief.py），那邊失敗不會寄信，
+   這裡看主資料庫 Storage 的 _line_cards/brief.json 日期，超過 BRIEF_MAX_DAYS 天沒更新就報錯。
+4. 兩個資料庫的用量：主資料庫每天由 check_data.py 檢查；ETF 資料庫只在這裡檢查，超過 ETF_SIZE_WARN_MB 報錯。
+5. 讓排程保持啟用：公開的 repo 60 天沒有任何活動，GitHub 會自動停用所有排程（連資料庫的準時觸發也叫不動）。
    這裡用 GitHub API 把每個 workflow 重新啟用一次，計時就會重算，不需要做假的 commit
    （只處理 repo 裡現有的檔案；手動停用的排程不會被打開）。
 
-資料庫用量由 check_data.py 每天檢查，超過門檻時 cleanup_old_data.py 會自動縮短保留期限。
+主資料庫用量超過門檻時 cleanup_old_data.py 會自動縮短保留期限。
 
 用法：python health_check.py（需要 SUPABASE_URL／KEY、ETF_SUPABASE_URL／KEY；
 在 GitHub Actions 另外用 GITHUB_TOKEN、GITHUB_REPOSITORY 重新啟用排程）
@@ -59,6 +62,9 @@ CHECKS = [
 ]
 BACKUP_BUCKET = "db-backups"
 BACKUP_MAX_DAYS = 9   # 每週日備份，晚一兩天補跑也不算異常
+BRIEF_MAX_DAYS = 2
+SIZE_LIMIT_MB = 500       # Supabase 免費額度
+ETF_SIZE_WARN_MB = 450    # ETF 資料庫沒有自動縮短保留期限，到 90% 就提醒
 
 
 def period_end(kind, value):
@@ -128,6 +134,39 @@ def check_backup(url, key, today):
     return text, []
 
 
+def check_brief(url, key, today):
+    """回傳 (說明文字, 問題清單)"""
+    try:
+        r = requests.get(f"{url.rstrip('/')}/storage/v1/object/archive/_line_cards/brief.json",
+                         headers={"Authorization": f"Bearer {key}", "apikey": key}, timeout=60)
+        r.raise_for_status()
+        day = date.fromisoformat(r.json()["date"])
+    except Exception as e:
+        return "", [f"讀不到 LINE 早報（{type(e).__name__}），請看「LINE 早報（手動）」排程和早上的 Claude 排程"]
+    age = (today - day).days
+    text = f"LINE 早報：{day}（{age} 天前）"
+    if age > BRIEF_MAX_DAYS:
+        return text, [f"LINE 早報最新是 {day}，已經 {age} 天沒有更新，早上的 Claude 排程可能沒跑，"
+                      "請看 Actions「LINE 早報（手動）」有沒有執行"]
+    return text, []
+
+
+def check_sizes(clients):
+    """兩個資料庫的用量。回傳 (說明文字, 問題清單)；主資料庫的門檻由 check_data.py 每天檢查，這裡只列出"""
+    lines, problems = [], []
+    for db, label in (("main", "主資料庫"), ("etf", "ETF 資料庫")):
+        try:
+            mb = (_execute(lambda: clients[db].rpc("database_size")).data or 0) / 1024 / 1024
+        except Exception as e:
+            problems.append(f"{label}用量讀取失敗（{type(e).__name__}），請確認已建立 database_size 函式")
+            continue
+        lines.append(f"{label}：{mb:,.0f} MB / {SIZE_LIMIT_MB} MB（{mb / SIZE_LIMIT_MB:.0%}）")
+        if db == "etf" and mb >= ETF_SIZE_WARN_MB:
+            problems.append(f"ETF 資料庫已用 {mb:,.0f} MB，超過提醒門檻 {ETF_SIZE_WARN_MB} MB，"
+                            "請縮短 etf_update.py 的 RETENTION 或升級方案")
+    return "\n".join(lines), problems
+
+
 def keep_workflows_enabled(token, repo):
     """把每個 workflow 重新啟用一次，重算 60 天停用的計時。回傳 (說明文字, 問題清單)"""
     api = f"https://api.github.com/repos/{repo}/actions/workflows"
@@ -157,7 +196,9 @@ def main():
     etf_url, etf_key = os.getenv("ETF_SUPABASE_URL"), os.getenv("ETF_SUPABASE_KEY")
     clients = {"main": create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")),
                "etf": create_client(etf_url, etf_key)}
-    sections = [("資料更新", check_freshness(clients, today)), ("每週備份", check_backup(etf_url, etf_key, today))]
+    sections = [("資料更新", check_freshness(clients, today)), ("每週備份", check_backup(etf_url, etf_key, today)),
+                ("LINE 早報", check_brief(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"), today)),
+                ("資料庫用量", check_sizes(clients))]
     token, repo = os.getenv("GITHUB_TOKEN"), os.getenv("GITHUB_REPOSITORY")
     if token and repo:
         sections.append(("排程啟用", keep_workflows_enabled(token, repo)))
@@ -172,7 +213,7 @@ def main():
             if os.getenv("GITHUB_ACTIONS"):
                 print(f"::error title=系統自我檢查::{p}")
         return 1
-    print("\n✅ 資料都有持續更新，備份正常")
+    print("\n✅ 資料都有持續更新，備份、早報、資料庫用量都正常")
     return 0
 
 
