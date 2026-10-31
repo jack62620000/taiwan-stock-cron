@@ -1,0 +1,51 @@
+name: 每月備份還原測試
+
+# 把最新一份每週備份真的還原到臨時資料庫（跑完就消失），逐表比對筆數，確定備份能用（restore_test.py）
+on:
+  schedule:
+    # 每月 9 日台灣時間 04:30（UTC 8 日 20:30），沒有其他排程在跑
+    - cron: '30 20 8 * *'
+  workflow_dispatch:
+  push:
+    branches: [claude/project-thread-cercx1]
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      # pg_restore 版本要和資料庫相同（PostgreSQL 17），從 PostgreSQL 官方套件庫安裝
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+      - name: Restore and compare
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          ETF_SUPABASE_URL: ${{ secrets.ETF_SUPABASE_URL }}
+          ETF_SUPABASE_KEY: ${{ secrets.ETF_SUPABASE_KEY }}
+          MAIN_DB_PASSWORD: ${{ secrets.MAIN_DB_PASSWORD }}
+          ETF_DB_PASSWORD: ${{ secrets.ETF_DB_PASSWORD }}
+          RESTORE_URL: postgresql://postgres:postgres@localhost:5432
+        run: python -u restore_test.py

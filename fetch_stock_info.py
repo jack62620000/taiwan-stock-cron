@@ -119,21 +119,31 @@ def calc_rate(balance, limit):
 
 
 # ==================== 網路請求共用工具 ====================
-def get_json(url, timeout=15, retries=3, wait=5):
+BLOCKED_WAIT = 30  # 回應不是 JSON 時等多久再試一次（證交所短時間請求太多會暫時回錯誤頁）
+
+
+def get_json(url, timeout=15, retries=3, wait=5, blocked_wait=BLOCKED_WAIT):
     """
     [I] GET 並解析 JSON。連線中斷或逾時（例如 IncompleteRead）會自動重試；
-    回應不是 JSON（例如被來源擋下時的錯誤頁）則不重試，直接交給呼叫端處理。
+    回應不是 JSON（例如被來源暫時擋下時的錯誤頁）等 blocked_wait 秒再試一次，還是不行才交給呼叫端處理。
     """
-    for attempt in range(1, retries + 1):
+    for second_try in (False, True):
+        for attempt in range(1, retries + 1):
+            try:
+                r = requests.get(url, timeout=timeout)
+                break
+            except requests.exceptions.RequestException as e:
+                if attempt == retries:
+                    raise
+                print(f"  第 {attempt} 次請求失敗（{type(e).__name__}），{wait} 秒後重試...")
+                time.sleep(wait)
         try:
-            r = requests.get(url, timeout=timeout)
-            break
-        except requests.exceptions.RequestException as e:
-            if attempt == retries:
+            return r.json()
+        except ValueError:
+            if second_try:
                 raise
-            print(f"  第 {attempt} 次請求失敗（{type(e).__name__}），{wait} 秒後重試...")
-            time.sleep(wait)
-    return r.json()
+            print(f"  回應不是 JSON（可能被來源暫時擋下），{blocked_wait} 秒後再試一次...")
+            time.sleep(blocked_wait)
 
 
 # ==================== 櫃買中心共用工具 ====================
