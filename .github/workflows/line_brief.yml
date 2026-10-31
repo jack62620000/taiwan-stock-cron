@@ -1,0 +1,37 @@
+name: LINE 早報（手動）
+# 每天早上 Claude 產生台股早報後，把 data.json 傳進來排成圖片，存到 Storage 給 LINE 打「早報」時回覆（不推播）
+on:
+  workflow_dispatch:
+    inputs:
+      brief:
+        description: '早報 data.json 的內容'
+        required: true
+      url:
+        description: '完整早報網址（回覆文字裡的連結）'
+        required: false
+        default: ''
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt playwright
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Render and upload brief
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          BRIEF: ${{ github.event.inputs.brief }}
+          BRIEF_URL: ${{ github.event.inputs.url }}
+        run: |
+          printf '%s' "$BRIEF" > brief.json
+          python line_brief.py brief.json "$BRIEF_URL"
