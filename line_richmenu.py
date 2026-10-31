@@ -2,8 +2,8 @@
 LINE 圖文選單 - 聊天室下方的按鈕，點了就送出對應的文字給機器人
 
 有兩套選單：
-    一般選單（五格：明日買進、均線買賣點、動能股、大盤趨勢、使用說明）：所有人的預設選單
-    完整選單（六格，多了自選股）：只給有對應網頁帳號的人。
+    一般選單（兩排六格：早報、明日買進、均線買賣點／動能股、大盤趨勢、使用說明）：所有人的預設選單
+    完整選單（兩排七格，上排多了自選股）：只給有對應網頁帳號的人。
         LINE_USER_ID（你自己）在這裡直接換成完整選單；
         其他列在 Supabase LINE_WATCH_ACCOUNTS 的人，傳訊息給機器人時由 Edge Function line-webhook 自動換
         （靠選單別名 FULL_ALIAS 找到完整選單）。
@@ -21,24 +21,29 @@ import requests
 API = "https://api.line.me/v2/bot"
 DATA_API = "https://api-data.line.me/v2/bot"
 ASSETS = Path(__file__).resolve().parent / "assets"
-WIDTH, HEIGHT = 2500, 843
-# 按鈕平分寬度，點了送出的文字（和 Edge Function line-webhook 認得的指令相同）
+WIDTH, HEIGHT = 2500, 1686  # 兩排，每排高 843
+# 每排按鈕平分寬度，點了送出的文字（和 Edge Function line-webhook 認得的指令相同）
+BOTTOM = ["動能股", "大盤趨勢", "說明"]
 FULL_NAME, FULL_IMAGE, FULL_AREAS = ("台股分析選單", ASSETS / "line_richmenu.png",
-                                     ["自選", "明日買進", "均線買賣點", "動能股", "大盤趨勢", "說明"])
+                                     [["自選", "早報", "明日買進", "均線買賣點"], BOTTOM])
 BASIC_NAME, BASIC_IMAGE, BASIC_AREAS = ("台股分析選單（一般）", ASSETS / "line_richmenu_basic.png",
-                                        ["明日買進", "均線買賣點", "動能股", "大盤趨勢", "說明"])
+                                        [["早報", "明日買進", "均線買賣點"], BOTTOM])
 FULL_ALIAS = "watch-full"  # 要和 line-webhook 的 FULL_MENU_ALIAS 相同
 
 
-def menu_body(name, areas):
-    w = WIDTH // len(areas)
+def menu_body(name, rows):
+    h = HEIGHT // len(rows)
+    areas = []
+    for r, row in enumerate(rows):
+        w = WIDTH // len(row)
+        areas += [{"bounds": {"x": i * w, "y": r * h, "width": w if i < len(row) - 1 else WIDTH - i * w, "height": h},
+                   "action": {"type": "message", "label": text, "text": text}} for i, text in enumerate(row)]
     return {
         "size": {"width": WIDTH, "height": HEIGHT},
         "selected": True,  # 打開聊天室時直接展開選單
         "name": name,
         "chatBarText": "選單",
-        "areas": [{"bounds": {"x": i * w, "y": 0, "width": w if i < len(areas) - 1 else WIDTH - i * w, "height": HEIGHT},
-                   "action": {"type": "message", "label": text, "text": text}} for i, text in enumerate(areas)],
+        "areas": areas,
     }
 
 

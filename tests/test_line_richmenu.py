@@ -64,7 +64,12 @@ def test_menu_layout():
     for name, areas, image in [(line_richmenu.FULL_NAME, line_richmenu.FULL_AREAS, line_richmenu.FULL_IMAGE),
                                (line_richmenu.BASIC_NAME, line_richmenu.BASIC_AREAS, line_richmenu.BASIC_IMAGE)]:
         body = line_richmenu.menu_body(name, areas)
-        assert sum(a["bounds"]["width"] for a in body["areas"]) == line_richmenu.WIDTH
-        assert [a["action"]["text"] for a in body["areas"]] == areas
+        # 每排寬度剛好鋪滿、兩排高度鋪滿
+        for y in {a["bounds"]["y"] for a in body["areas"]}:
+            assert sum(a["bounds"]["width"] for a in body["areas"] if a["bounds"]["y"] == y) == line_richmenu.WIDTH
+        assert sum({a["bounds"]["y"]: a["bounds"]["height"] for a in body["areas"]}.values()) == line_richmenu.HEIGHT
+        assert [a["action"]["text"] for a in body["areas"]] == [t for row in areas for t in row]
         assert Image.open(image).size == (line_richmenu.WIDTH, line_richmenu.HEIGHT)
-    assert line_richmenu.FULL_AREAS == ["自選"] + line_richmenu.BASIC_AREAS
+    assert line_richmenu.FULL_AREAS[0] == ["自選"] + line_richmenu.BASIC_AREAS[0]
+    assert line_richmenu.FULL_AREAS[1] == line_richmenu.BASIC_AREAS[1]
+    assert "早報" in line_richmenu.BASIC_AREAS[0]
