@@ -185,3 +185,20 @@ def test_sizes_main_not_warned_here():
     """主資料庫的門檻交給 check_data.py 和自動縮短保留期限，這裡只列出"""
     _, problems = health_check.check_sizes(size_clients(480, 133))
     assert problems == []
+
+
+# ==================== 每天早上的檢查 ====================
+def test_daily_lag_behind_prices_is_problem():
+    """容許天數內，但比股價最新日落後超過 3 天：每天的檢查要抓到"""
+    cs = clients({"etf_nav": {"etf_id": "0050", "date": "2026-10-24"}})
+    _, weekly = health_check.check_freshness(cs, TODAY)
+    _, daily = health_check.check_freshness(cs, TODAY, ref=date(2026, 10, 29))
+    assert weekly == [] and len(daily) == 1 and "etf_nav" in daily[0]
+
+
+def test_daily_weekend_gap_ok():
+    """週五的資料、股價到週一：落後 3 天還算正常；集保（週資料）、美股不用這個規則"""
+    cs = clients({"etf_nav": {"etf_id": "0050", "date": "2026-10-23"},
+                  "holder_distribution": {"stock_id": "2330", "week_date": "2026-10-16"}})
+    _, problems = health_check.check_freshness(cs, date(2026, 10, 27), ref=date(2026, 10, 26))
+    assert problems == []

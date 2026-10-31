@@ -25,7 +25,8 @@ urllib3.disable_warnings()
 TABLE = "price_adjustments"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 SLEEP_BETWEEN_API = 3
-BLOCKED_WAIT = 30  # 回應不是 JSON 時等多久再試一次（同 fetch_stock_info.BLOCKED_WAIT）
+BLOCKED_WAIT = 30  # 來源暫時擋下時等多久再試一次（同 fetch_stock_info.BLOCKED_WAIT）
+BLOCKED_STATUS = (403, 429)
 
 
 # ==================== 小工具 ====================
@@ -67,17 +68,20 @@ def _months(start, end):
 
 
 def _get_json(url):
-    """回應不是 JSON（證交所短時間請求太多會暫時回錯誤頁）時等一下再試一次"""
+    """來源暫時擋下（403、429、5xx，或回錯誤頁不是 JSON）時等一下再試一次，第二次還不行才報錯"""
     for second_try in (False, True):
         r = requests.get(url, headers=HEADERS, timeout=30, verify=False)
-        r.raise_for_status()
-        try:
-            return r.json()
-        except ValueError:
-            if second_try:
-                raise
-            print(f"  回應不是 JSON（可能被來源暫時擋下），{BLOCKED_WAIT} 秒後再試一次...")
-            time.sleep(BLOCKED_WAIT)
+        if r.status_code not in BLOCKED_STATUS and r.status_code < 500:
+            r.raise_for_status()
+            try:
+                return r.json()
+            except ValueError:
+                if second_try:
+                    raise
+        elif second_try:
+            r.raise_for_status()
+        print(f"  來源暫時擋下（HTTP {r.status_code}），{BLOCKED_WAIT} 秒後再試一次...")
+        time.sleep(BLOCKED_WAIT)
 
 
 def _record(stock_id, day, event_type, prev_close, ref_price, source):

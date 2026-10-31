@@ -228,10 +228,13 @@ def listing_cards(d):
             ("台灣 ADR 與科技股", q_cards(d["adr"], "台灣 ADR") + q_cards(d["mag7"], "科技七巨頭") + q_cards(d["semi"], "AI・半導體")),
             ("新聞", "".join(f'<div class="nc"><div class="b">{esc(n["title"])}</div><div class="m">{esc(n["body"])}</div></div>' for n in d["news"])),
             ("台股大盤與法人", r_cards(d["tw_market"], f'前一交易日（{esc(d["tw_prev_date"])}）', 3)),
-            ("關注股", '<div class="sg2">' + "".join(stock_card(s, 440) for s in d["stocks"]) + "</div>"),
-            ("今天怎麼看", views(d)), ("行事曆", f'<div class="cg"><div class="mc">{calendar(d)}</div><div class="mc">{week(d)}</div></div>')]
+            ("關注股", '<div class="sg2">' + "".join(stock_card(s, 440) for s in d["stocks"]) + "</div>" if d["stocks"] else ""),
+            ("今天怎麼看", views(d)),
+            ("行事曆", f'<div class="cg"><div class="mc">{calendar(d)}</div><div class="mc">{week(d)}</div></div>'
+             if d["calendar"] or d.get("week_ahead") else "")]
     if d.get("weekly"):
         secs.append(("本週回顧", weekly(d)))
+    secs = [(t, h) for t, h in secs if h]  # 沒有內容的章節（例如簡易版沒有新聞、行事曆）不顯示
     body = "".join(f'<section{" id='part2'" if t.startswith("台股") else ""}><div class="sb"><span class="no">{i:02d}</span><div class="st">{t}</div>{h.replace("<h2>", "<h3>").replace("</h2>", "</h3>")}</div></section>'
                    for i, (t, h) in enumerate(secs, 1))
     css = BASE + """body { background:#070c17; color:#e5e7eb; } .page { width:1080px; padding:40px 40px; }
