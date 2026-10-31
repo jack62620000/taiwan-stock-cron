@@ -37,10 +37,14 @@ def _get_json(url):
             r = requests.get(url, headers=HEADERS, timeout=30)
             r.raise_for_status()
             return r.json()
-        except Exception:
+        except Exception as e:
             if attempt == RETRIES - 1:
                 raise
-            time.sleep(10 * (attempt + 1))
+            # 被暫時擋下（403、429）要等久一點，其他錯誤 10、20 秒
+            blocked = getattr(getattr(e, "response", None), "status_code", None) in f.BLOCKED_STATUS
+            wait = f.BLOCKED_WAIT * (attempt + 1) if blocked else 10 * (attempt + 1)
+            print(f"  下載失敗（{type(e).__name__}），{wait} 秒後重試...")
+            time.sleep(wait)
 
 
 def _day(s):

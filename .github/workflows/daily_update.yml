@@ -183,6 +183,15 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           LINE_CARDS_IF_STALE: "1"
         run: python line_cards.py
+      # 每天早上檢查各來源有沒有停更（落後股價超過 3 天就紅叉寄信），不用等週日的自我檢查
+      - name: Check every source is up to date
+        if: success() || failure()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ETF_SUPABASE_URL: ${{ secrets.ETF_SUPABASE_URL }}
+          ETF_SUPABASE_KEY: ${{ secrets.ETF_SUPABASE_KEY }}
+        run: python health_check.py --daily
 
   update-holder-only:
     if: >-

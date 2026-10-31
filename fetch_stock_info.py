@@ -119,13 +119,14 @@ def calc_rate(balance, limit):
 
 
 # ==================== 網路請求共用工具 ====================
-BLOCKED_WAIT = 30  # 回應不是 JSON 時等多久再試一次（證交所短時間請求太多會暫時回錯誤頁）
+BLOCKED_WAIT = 30  # 來源暫時擋下時等多久再試一次（證交所、櫃買短時間請求太多會暫時擋）
+BLOCKED_STATUS = (403, 429)  # 這些狀態碼代表來源暫時擋下，等一下再試
 
 
-def get_json(url, timeout=15, retries=3, wait=5, blocked_wait=BLOCKED_WAIT):
+def get_json(url, timeout=15, retries=3, wait=5, blocked_wait=BLOCKED_WAIT, encoding=None):
     """
     [I] GET 並解析 JSON。連線中斷或逾時（例如 IncompleteRead）會自動重試；
-    回應不是 JSON（例如被來源暫時擋下時的錯誤頁）等 blocked_wait 秒再試一次，還是不行才交給呼叫端處理。
+    來源暫時擋下（HTTP 403、429、5xx，或回錯誤頁不是 JSON）等 blocked_wait 秒再試一次，還是不行才交給呼叫端處理。
     """
     for second_try in (False, True):
         for attempt in range(1, retries + 1):
@@ -137,13 +138,19 @@ def get_json(url, timeout=15, retries=3, wait=5, blocked_wait=BLOCKED_WAIT):
                     raise
                 print(f"  第 {attempt} 次請求失敗（{type(e).__name__}），{wait} 秒後重試...")
                 time.sleep(wait)
-        try:
-            return r.json()
-        except ValueError:
+        if encoding:
+            r.encoding = encoding
+        if r.status_code in BLOCKED_STATUS or r.status_code >= 500:
             if second_try:
-                raise
-            print(f"  回應不是 JSON（可能被來源暫時擋下），{blocked_wait} 秒後再試一次...")
-            time.sleep(blocked_wait)
+                r.raise_for_status()
+        else:
+            try:
+                return r.json()
+            except ValueError:
+                if second_try:
+                    raise
+        print(f"  來源暫時擋下（HTTP {r.status_code}），{blocked_wait} 秒後再試一次...")
+        time.sleep(blocked_wait)
 
 
 # ==================== 櫃買中心共用工具 ====================
@@ -542,9 +549,7 @@ def parse_year_month(ym_str):
 def fetch_revenue(url, market_label, valid_stocks):
     print(f"正在下載 {market_label} 月營收...")
     try:
-        r = requests.get(url, timeout=15)
-        r.encoding = "utf-8"
-        data = r.json()
+        data = get_json(url, timeout=15, encoding="utf-8")
     except Exception as e:
         print(f"抓取 {market_label} 月營收失敗: {e}"); return []
 

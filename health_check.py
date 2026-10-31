@@ -17,7 +17,9 @@
 
 主資料庫用量超過門檻時 cleanup_old_data.py 會自動縮短保留期限。
 
-用法：python health_check.py（需要 SUPABASE_URL／KEY、ETF_SUPABASE_URL／KEY；
+每天早上 06:30（daily_update.yml 的早上補抓）另外用 --daily 只跑第 1、3 項，停更當天就會發現。
+
+用法：python health_check.py [--daily]（需要 SUPABASE_URL／KEY、ETF_SUPABASE_URL／KEY；
 在 GitHub Actions 另外用 GITHUB_TOKEN、GITHUB_REPOSITORY 重新啟用排程）
 """
 import os
@@ -60,6 +62,8 @@ CHECKS = [
     ("etf", "etf_expense_ratio", "period", "quarter", ("etf_id", "0050"), 200),
     ("etf", "us_market_daily", "date", "day", ("symbol", "^GSPC"), 7),
 ]
+TRADING_DAY_MAX = 14  # 上面每個交易日都有資料的表，容許天數都是 14（含春節連假）
+LAG_MAX_DAYS = 3      # 每日檢查：落後股價最新日超過幾天算停更（週五資料到週一還算正常）
 BACKUP_BUCKET = "db-backups"
 BACKUP_MAX_DAYS = 9   # 每週日備份，晚一兩天補跑也不算異常
 BRIEF_MAX_DAYS = 2
@@ -93,8 +97,11 @@ def latest(sb, table, col, kind, filt):
     return max(tuple(r[c] for c in cols) for r in rows) if len(cols) > 1 else rows[0][col]
 
 
-def check_freshness(clients, today):
-    """回傳 (說明文字, 問題清單)"""
+def check_freshness(clients, today, ref=None):
+    """
+    回傳 (說明文字, 問題清單)。ref＝股價（daily_prices）最新日期：給了就另外檢查每個交易日都有的表
+    有沒有落後股價超過 LAG_MAX_DAYS 天（每天早上的檢查用，比容許天數更早發現）
+    """
     lines, problems = [], []
     for db, table, col, kind, filt, max_days in CHECKS:
         try:
@@ -111,6 +118,10 @@ def check_freshness(clients, today):
         lines.append(f"{mark} {table:<24} 最新 {shown}（{age} 天前，容許 {max_days} 天）")
         if age > max_days:
             problems.append(f"{table} 最新資料是 {shown}，已經 {age} 天沒有更新（容許 {max_days} 天），"
+                            "可能是來源改了格式或抓取失敗，請看對應排程的紀錄")
+        elif ref and kind == "day" and max_days == TRADING_DAY_MAX and (ref - period_end(kind, value)).days > LAG_MAX_DAYS:
+            # 每個交易日都有的資料：和股價最新日比，落後太多代表這個來源停了（不用等到 14 天）
+            problems.append(f"{table} 最新資料是 {shown}，股價已經到 {ref}，落後超過 {LAG_MAX_DAYS} 天，"
                             "可能是來源改了格式或抓取失敗，請看對應排程的紀錄")
     return "\n".join(lines), problems
 
@@ -190,18 +201,25 @@ def keep_workflows_enabled(token, repo):
     return f"重新啟用排程：{done} / {len(workflows)} 個", problems
 
 
-def main():
+def main(daily=False):
     today = (datetime.now(timezone.utc) + timedelta(hours=8)).date()
-    print(f"========== 每週系統自我檢查：{today} ==========")
+    print(f"========== {'每日資料停更檢查' if daily else '每週系統自我檢查'}：{today} ==========")
     etf_url, etf_key = os.getenv("ETF_SUPABASE_URL"), os.getenv("ETF_SUPABASE_KEY")
     clients = {"main": create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY")),
                "etf": create_client(etf_url, etf_key)}
-    sections = [("資料更新", check_freshness(clients, today)), ("每週備份", check_backup(etf_url, etf_key, today)),
-                ("LINE 早報", check_brief(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"), today)),
-                ("資料庫用量", check_sizes(clients))]
-    token, repo = os.getenv("GITHUB_TOKEN"), os.getenv("GITHUB_REPOSITORY")
-    if token and repo:
-        sections.append(("排程啟用", keep_workflows_enabled(token, repo)))
+    ref = None
+    if daily:
+        try:
+            ref = period_end("day", latest(clients["main"], "daily_prices", "date", "day", ("stock_id", "2330")))
+        except Exception:
+            ref = None  # 讀不到股價日期時只用容許天數檢查
+    sections = [("資料更新", check_freshness(clients, today, ref)),
+                ("LINE 早報", check_brief(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"), today))]
+    if not daily:
+        sections += [("每週備份", check_backup(etf_url, etf_key, today)), ("資料庫用量", check_sizes(clients))]
+        token, repo = os.getenv("GITHUB_TOKEN"), os.getenv("GITHUB_REPOSITORY")
+        if token and repo:
+            sections.append(("排程啟用", keep_workflows_enabled(token, repo)))
     problems = []
     for title, (text, probs) in sections:
         print(f"\n【{title}】\n{text}")
@@ -213,9 +231,9 @@ def main():
             if os.getenv("GITHUB_ACTIONS"):
                 print(f"::error title=系統自我檢查::{p}")
         return 1
-    print("\n✅ 資料都有持續更新，備份、早報、資料庫用量都正常")
+    print("\n✅ 資料都有持續更新，早報正常" if daily else "\n✅ 資料都有持續更新，備份、早報、資料庫用量都正常")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(daily="--daily" in sys.argv))

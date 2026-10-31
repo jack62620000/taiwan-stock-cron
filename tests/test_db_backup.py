@@ -3,8 +3,15 @@ from db_backup import old_backups, split_parts
 
 def test_old_backups_keeps_newest_two():
     folders = ["2026-11-01", "2026-11-15", "2026-11-08", "2026-10-25"]
-    assert old_backups(folders) == ["2026-11-01", "2026-10-25"]
+    assert old_backups(folders, monthly=0) == ["2026-11-01", "2026-10-25"]
     assert old_backups(["2026-11-01"]) == []
+
+
+def test_old_backups_keeps_first_of_recent_months():
+    """最近 2 份＋最近 3 個月各月第一份；更早的月份和月中的舊備份刪掉"""
+    folders = ["2026-08-02", "2026-08-09", "2026-09-06", "2026-09-13", "2026-10-04", "2026-10-11",
+               "2026-10-18", "2026-11-01", "2026-11-08"]
+    assert old_backups(folders) == ["2026-10-18", "2026-10-11", "2026-09-13", "2026-08-09", "2026-08-02"]
 
 
 def test_split_parts():
@@ -21,7 +28,7 @@ def test_pooler_urls_encode_password():
 
 
 def test_old_backups_ignores_archive_folder():
-    assert old_backups(["archive", "2026-11-08", "2026-11-01", "2026-10-25"]) == ["2026-10-25"]
+    assert old_backups(["archive", "2026-11-08", "2026-11-01", "2026-10-25"], monthly=0) == ["2026-10-25"]
 
 
 def test_files_to_copy_only_new_or_changed():

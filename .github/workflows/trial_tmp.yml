@@ -1,0 +1,34 @@
+name: 暫時：試跑每日檢查與早報備援
+on:
+  push:
+    branches: [claude/project-thread-cercx1]
+jobs:
+  trial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      ETF_SUPABASE_URL: ${{ secrets.ETF_SUPABASE_URL }}
+      ETF_SUPABASE_KEY: ${{ secrets.ETF_SUPABASE_KEY }}
+      LINE_WATCH_OWNER: ${{ secrets.LINE_WATCH_OWNER }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: |
+          pip install -r requirements.txt playwright
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Daily check
+        run: python health_check.py --daily
+      - name: Fallback brief (dry run, no upload)
+        env:
+          LINE_BRIEF_DRY_RUN: out
+          FORCE: "1"
+        run: python -u brief_fallback.py && ls -la out && cat out/brief.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: brief
+          path: out/

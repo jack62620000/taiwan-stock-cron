@@ -1,5 +1,5 @@
 """
-每週資料庫備份 - 把主資料庫和 ETF 資料庫整個匯出，存到 ETF 資料庫 Storage 的 db-backups 桶，只留最近 KEEP 份
+每週資料庫備份 - 把主資料庫和 ETF 資料庫整個匯出，存到 ETF 資料庫 Storage 的 db-backups 桶，留最近 KEEP 份＋最近 MONTHLY_KEEP 個月各月第一份
 
 Supabase 免費方案沒有資料庫備份；archive.py 封存的只是過期被清掉的舊資料，
 這裡備份的是資料庫裡現在全部的資料（含表格結構），用在誤刪、改表改壞或資料庫壞掉時還原。
@@ -39,6 +39,7 @@ import requests
 
 BUCKET = "db-backups"
 KEEP = 2
+MONTHLY_KEEP = 3  # 另外保留最近 3 個月各月的第一份備份
 PART_SIZE = 45 * 1024 * 1024
 TIMEOUT = 300
 ARCHIVE_BUCKET = "archive"
@@ -56,10 +57,18 @@ DATABASES = [
 ]
 
 
-def old_backups(folders, keep=KEEP):
-    """日期資料夾中，超過最近 keep 份的（要刪掉的）；archive 等其他資料夾不動"""
-    days = [f for f in folders if re.fullmatch(r"\d{4}-\d{2}-\d{2}", f)]
-    return sorted(days, reverse=True)[keep:]
+def old_backups(folders, keep=KEEP, monthly=MONTHLY_KEEP):
+    """
+    日期資料夾中要刪掉的。留下：最近 keep 份，加上最近 monthly 個月各自的第一份（月備份），
+    資料錯了幾週才發現時還有更早的乾淨備份可以還原。archive 等其他資料夾不動。
+    """
+    days = sorted((f for f in folders if re.fullmatch(r"\d{4}-\d{2}-\d{2}", f)), reverse=True)
+    first_of_month = {}
+    for d in reversed(days):  # 由舊到新，每個月第一次出現的就是那個月的第一份
+        first_of_month.setdefault(d[:7], d)
+    months = sorted(first_of_month, reverse=True)[:monthly]
+    keep_set = set(days[:keep]) | {first_of_month[m] for m in months}
+    return [d for d in days if d not in keep_set]
 
 
 def pooler_urls(project_url, password):
