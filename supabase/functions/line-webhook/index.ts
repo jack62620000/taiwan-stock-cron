@@ -3,7 +3,7 @@
 // 卡片由 line_cards.py 每晚算好放在 Storage（archive 桶 _line_cards/），這裡只讀檔回覆；
 // 打「自選」時另外讀資料庫的分組與自選股清單（只讀，不寫入）；
 // 「明日買進」「均線買賣點」「動能股」「大盤趨勢」回覆 line_lists.py 每晚算好的清單（picks.json、granville.json、momentum.json、market.json）；
-// 「早報」回覆 line_brief.py 每天早上存好的早報摘要卡（brief.json）。
+// 「早報」回覆 line_brief.py 每天早上存好的早報圖片（brief.json 列出圖片，這裡替圖片產生有期限的連結）。
 // 用 LINE 的回覆訊息（reply）回答，不算每月推播額度。
 //
 // 需要的設定（Supabase → Edge Functions → Secrets）：
@@ -17,7 +17,8 @@
 // 部署時要關掉 JWT 驗證（LINE 不會帶 Supabase 的登入憑證，改用上面的簽章驗證）。
 
 import {
-  choicesMessage, type Group, helpText, type Index, lookup, parseAccounts, shardOf, watchlistMessages,
+  type Brief, briefMessages, choicesMessage, type Group, helpText, type Index, lookup, parseAccounts, shardOf,
+  watchlistMessages,
 } from "./lookup.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -26,6 +27,8 @@ const CHANNEL_SECRET = Deno.env.get("LINE_CHANNEL_SECRET") ?? "";
 const ACCESS_TOKEN = Deno.env.get("LINE_CHANNEL_ACCESS_TOKEN") ?? "";
 const ACCOUNTS = parseAccounts(Deno.env.get("LINE_WATCH_ACCOUNTS") ?? "");
 const CARDS_URL = `${SUPABASE_URL}/storage/v1/object/archive/_line_cards`;
+const SIGN_URL = `${SUPABASE_URL}/storage/v1/object/sign/archive`;
+const BRIEF_LINK_SECONDS = 7 * 24 * 3600; // 早報圖片連結的期限：LINE 在使用者點開圖片時才去抓
 const CACHE_MS = 10 * 60 * 1000; // 卡片每晚才換新，暫存 10 分鐘，連續查詢不必每次讀檔
 const FULL_MENU_ALIAS = "watch-full"; // 要和 line_richmenu.py 的 FULL_ALIAS 相同
 
@@ -45,6 +48,22 @@ async function readJson<T>(name: string): Promise<T | null> {
   const data = await res.json();
   cache.set(name, { time: Date.now(), data });
   return data as T;
+}
+
+/** 替 _line_cards/ 底下的檔案產生有期限的公開連結（archive 桶不公開，LINE 要能直接抓圖） */
+async function signPaths(paths: string[]): Promise<Record<string, string>> {
+  const res = await fetch(SIGN_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ expiresIn: BRIEF_LINK_SECONDS, paths: paths.map((p) => `_line_cards/${p}`) }),
+  });
+  if (!res.ok) throw new Error(`產生圖片連結失敗：${res.status} ${await res.text()}`);
+  const rows = (await res.json()) as { path: string; signedURL: string | null }[];
+  const out: Record<string, string> = {};
+  for (const row of rows) {
+    if (row.signedURL) out[row.path.replace(/^_line_cards\//, "")] = `${SUPABASE_URL}/storage/v1${row.signedURL}`;
+  }
+  return out;
 }
 
 async function verify(body: string, signature: string | null): Promise<boolean> {
@@ -143,10 +162,14 @@ async function answer(input: string, userId?: string): Promise<unknown[]> {
   if (r.kind === "help") return [text(helpText(index))];
   if (r.kind === "myid") return [text(userId ? `你的 LINE user ID：\n${userId}` : "查不到你的 LINE user ID（群組裡請私訊機器人查）")];
   if (r.kind === "watchlist") return await watchlist(userId, index);
+  if (r.kind === "list" && r.file === "brief.json") {
+    const brief = await readJson<Brief>("brief.json");
+    if (!brief?.images?.length) return [text("早報還沒產生，每天早上 8 點前更新。")];
+    return briefMessages(brief, await signPaths(brief.images.flatMap((im) => [im.path, im.preview])));
+  }
   if (r.kind === "list") {
     const list = await readJson<{ date: string | null; messages: unknown[] }>(r.file);
-    if (list?.messages?.length) return list.messages;
-    return [text(r.file === "brief.json" ? "早報還沒產生，每天早上 8 點前更新。" : "清單還沒產生，請等今晚收盤資料更新後再試。")];
+    return list?.messages?.length ? list.messages : [text("清單還沒產生，請等今晚收盤資料更新後再試。")];
   }
   if (r.kind === "none") return [text(`找不到「${r.query}」，請輸入股票代號（例如 2330）或名稱（例如 台積電）。`)];
   if (r.kind === "choices") return [choicesMessage(r.ids, index)];

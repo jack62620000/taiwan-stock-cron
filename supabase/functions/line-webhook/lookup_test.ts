@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  choicesMessage, lookup, MAX_CHOICES, MESSAGES_PER_REPLY, packCarousels, parseAccounts, watchlistMessages,
+  briefMessages, choicesMessage, lookup, MAX_CHOICES, MESSAGES_PER_REPLY, packCarousels, parseAccounts, watchlistMessages,
 } from "./lookup.ts";
 
 const index = {
@@ -72,3 +72,18 @@ test("自選股回覆：文字＋輪播，超過一次回覆的量列在文字�
   assert.match(t, /請直接輸入代號查：3012 股3012、3013 股3013、3014 股3014/);
   assert.equal(packCarousels([1, 2, 3]).length, 1);
 });
+
+test("早報：文字加圖片，最多 4 張，沒有連結的圖片不送", () => {
+  const images = [1, 2, 3, 4, 5].map((k) => ({ path: `brief/${k}.jpg`, preview: `brief/p${k}.jpg` }));
+  const signed = Object.fromEntries(images.flatMap((im) => [[im.path, `https://x/${im.path}`], [im.preview, `https://x/${im.preview}`]]));
+  delete signed["brief/p2.jpg"];
+  const brief = { date: "2026-10-31", title: "台股週報 10/31（六）", headline: "費半重挫", url: "https://claude.ai/artifact/x", images };
+  const msgs = briefMessages(brief, signed) as Array<Record<string, string>>;
+  assert.equal(msgs.length, MESSAGES_PER_REPLY);
+  assert.equal(msgs[0].type, "text");
+  assert.ok(msgs[0].text.includes("完整早報：https://claude.ai/artifact/x"));
+  assert.deepEqual(msgs.slice(1).map((m) => m.originalContentUrl), ["https://x/brief/1.jpg", "https://x/brief/3.jpg", "https://x/brief/4.jpg", "https://x/brief/5.jpg"]);
+  assert.equal(msgs[1].previewImageUrl, "https://x/brief/p1.jpg");
+  assert.equal((briefMessages({ ...brief, url: null }, {})[0] as Record<string, string>).text.includes("完整早報"), false);
+});
+

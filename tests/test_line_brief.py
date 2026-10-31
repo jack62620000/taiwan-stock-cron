@@ -1,4 +1,4 @@
-"""LINE「早報」摘要卡：用 10/31 週報的資料格式，卡片大小與內容在 LINE 的限制內"""
+"""LINE「早報」：早報照章節切成最多 4 張圖，brief.json 列出圖片路徑"""
 import json
 import sys
 from pathlib import Path
@@ -7,39 +7,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import line_brief  # noqa: E402
 
-
-def sample():
-    stock = {"id": "2330", "name": "台積電", "close": 2370, "chg_pct": -1.86,
-             "signal": "跌破 2,380 前低、收 2,370。站回 2,470（20 日線）才轉強。"}
-    return {
-        "title": "台股週報 10/31（六）", "date_tw": "2026-10-31", "us_date": "2026-10-30", "tw_prev_date": "2026-10-30",
-        "headline": "英特爾財測失利，費半重挫 7.2%。" * 3,
-        "us_index": [{"name": "道瓊工業", "close": 51770.31, "chg_pct": -1.09}, {"name": "那斯達克", "close": 25437.0, "chg_pct": -2.86},
-                     {"name": "費城半導體", "close": 10688.8, "chg_pct": -7.2}],
-        "adr": [{"name": "台積電 TSM", "close": 406.13, "chg_pct": -5.95, "sub": "換算 2,648 元，溢價 11.7%"}],
-        "tw_market": [{"name": "加權指數", "value": "45,211.83", "change": "−1,156.50", "dir": -1},
-                      {"name": "外資買賣超（上市櫃個股合計）", "value": "−258,999 張", "dir": -1},
-                      {"name": "台指期夜盤（10/30 夜間）", "value": "跌 867 點", "dir": -1}],
-        "stocks": [stock, {**stock, "id": "6669", "name": "緯穎", "signal": "很長的訊號" * 30}],
-        "views": ["多空", "穩健做法：下週先不接。"],
-    }
+SAMPLE = Path(__file__).with_name("brief_sample.json")
 
 
-def test_brief_card():
-    out = line_brief.brief_messages(sample(), "https://claude.ai/artifact/x")
-    assert out["date"] == "2026-10-31"
-    msg = out["messages"][0]
-    assert msg["type"] == "flex" and len(msg["altText"]) <= 400
-    body = json.dumps(msg["contents"], ensure_ascii=False)
-    assert len(body.encode()) <= 30_000
-    for word in ["費城半導體", "台積電 ADR", "加權指數", "外資買賣超", "台指期夜盤", "緯穎 6669", "穩健做法"]:
-        assert word in body
-    assert "道瓊" not in body
-    assert msg["contents"]["footer"]["contents"][0]["action"]["uri"] == "https://claude.ai/artifact/x"
+def test_group_sections_limits():
+    tops = [0, 300, 700, 1300, 1800, 2400, 3300, 4100, 4600, 5100]
+    spans = line_brief.group_sections(tops, 5500)
+    assert 1 <= len(spans) <= line_brief.MAX_IMAGES
+    assert spans[0][0] == 0 and spans[-1][1] == 5500
+    assert all(a[1] == b[0] for a, b in zip(spans, spans[1:]))  # 接得起來，不漏不重疊
+    assert all(top in tops for top, _ in spans)                  # 只在章節開頭切
 
 
-def test_long_signal_trimmed_and_no_url():
-    out = line_brief.brief_messages(sample())
-    assert "footer" not in out["messages"][0]["contents"]
-    assert line_brief._first_sentence("很長" * 50).endswith("…")
-    assert len(line_brief._first_sentence("很長" * 50)) == line_brief.SIGNAL_MAX
+def test_short_page_one_image():
+    assert line_brief.group_sections([0, 200, 400], 900) == [(0, 900)]
+
+
+def test_build_meta(tmp_path, monkeypatch):
+    def fake_render(html, outdir):
+        assert "台股週報 10/31" in html and "本週回顧" in html  # 用 H 深色章節卡片排版，週報區塊也在
+        return [(outdir / f"{k}.jpg", outdir / f"p{k}.jpg") for k in (1, 2, 3)]
+    monkeypatch.setattr(line_brief, "render_images", fake_render)
+    d = json.loads(SAMPLE.read_text(encoding="utf-8"))
+    meta, images = line_brief.build(d, "https://claude.ai/artifact/x", tmp_path)
+    assert meta["date"] == "2026-10-31" and meta["url"] == "https://claude.ai/artifact/x"
+    assert meta["images"][0] == {"path": "brief/1.jpg", "preview": "brief/p1.jpg"}
+    assert len(meta["images"]) == 3
