@@ -4,7 +4,8 @@ name: 早報備援
 # 有產生簡易版時這次會標成失敗、GitHub 寄信，當天就知道完整早報沒出來；已經有今天的早報就什麼都不做。
 on:
   schedule:
-    # 週一～六台灣時間 08:35（UTC 00:35）；GitHub 的排程可能晚一些才開始
+    # 週一～六台灣時間 08:35（UTC 00:35）。平常由資料庫的 pg_cron 準時觸發（sql/github_dispatch.sql 的 gh-brief-fallback），
+    # 這裡是備援：GitHub 自己的排程常晚一些才跑，那時已經有今天的早報就會直接略過
     - cron: '35 0 * * 1-6'
   workflow_dispatch:
     inputs:
