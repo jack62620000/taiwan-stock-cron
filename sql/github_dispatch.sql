@@ -53,3 +53,5 @@ select cron.schedule('gh-us-market-2',  '40 22 * * 1-5',      $$select ops.dispa
 select cron.schedule('gh-quarterly',    '6 2 * * 6',          $$select ops.dispatch_workflow('quarterly_update.yml')$$);
 select cron.schedule('gh-verify-public','0 4 * * 0',          $$select ops.dispatch_workflow('verify_public.yml')$$);
 select cron.schedule('gh-db-backup',    '20 19 * * 6',        $$select ops.dispatch_workflow('db_backup.yml')$$);
+-- 早報備援：週一～六台灣 08:35，還沒有今天的早報就排簡易版（brief_fallback.py；已經有就什麼都不做）
+select cron.schedule('gh-brief-fallback','35 0 * * 1-6',      $$select ops.dispatch_workflow('brief_fallback.yml')$$);
