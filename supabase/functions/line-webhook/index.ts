@@ -2,7 +2,8 @@
 //
 // 卡片由 line_cards.py 每晚算好放在 Storage（archive 桶 _line_cards/），這裡只讀檔回覆；
 // 打「自選」時另外讀資料庫的分組與自選股清單（只讀，不寫入）；
-// 「明日買進」「均線買賣點」「動能股」「大盤趨勢」回覆 line_lists.py 每晚算好的清單（picks.json、granville.json、momentum.json、market.json）。
+// 「明日買進」「均線買賣點」「動能股」「大盤趨勢」回覆 line_lists.py 每晚算好的清單（picks.json、granville.json、momentum.json、market.json）；
+// 「早報」回覆 line_brief.py 每天早上存好的早報摘要卡（brief.json）。
 // 用 LINE 的回覆訊息（reply）回答，不算每月推播額度。
 //
 // 需要的設定（Supabase → Edge Functions → Secrets）：
@@ -144,7 +145,8 @@ async function answer(input: string, userId?: string): Promise<unknown[]> {
   if (r.kind === "watchlist") return await watchlist(userId, index);
   if (r.kind === "list") {
     const list = await readJson<{ date: string | null; messages: unknown[] }>(r.file);
-    return list?.messages?.length ? list.messages : [text("清單還沒產生，請等今晚收盤資料更新後再試。")];
+    if (list?.messages?.length) return list.messages;
+    return [text(r.file === "brief.json" ? "早報還沒產生，每天早上 8 點前更新。" : "清單還沒產生，請等今晚收盤資料更新後再試。")];
   }
   if (r.kind === "none") return [text(`找不到「${r.query}」，請輸入股票代號（例如 2330）或名稱（例如 台積電）。`)];
   if (r.kind === "choices") return [choicesMessage(r.ids, index)];

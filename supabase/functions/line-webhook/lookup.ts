@@ -20,6 +20,8 @@ const LIST_WORDS: Record<string, string> = {
   "均線買賣點": "granville.json", "均線": "granville.json", "葛蘭碧": "granville.json", "等待法則2": "granville.json",
   "動能": "momentum.json", "動能股": "momentum.json", "動能選股": "momentum.json",
   "大盤趨勢": "market.json", "大盤": "market.json",
+  // 每日台股早報的摘要卡：每天早上由 line_brief.py 產生
+  "早報": "brief.json", "台股早報": "brief.json", "週報": "brief.json", "晨報": "brief.json",
 };
 export const MAX_CHOICES = 10; // 名稱對到很多檔時，最多列幾檔讓使用者點選（LINE 快速回覆最多 13 個）
 
@@ -87,6 +89,9 @@ export function helpText(index: Index | null): string {
     "",
     "【🧭 大盤趨勢】",
     "和網頁首頁的大盤趨勢相同：加權指數在哪幾條均線之上或之下、月線和季線的方向、距高點多遠、量能、外資現股買賣超金額、外資台指期淨未平倉的增減、上下最近的支撐壓力，以及「明日買進」的大盤濾網是綠燈還是紅燈。",
+    "",
+    "【📰 早報】",
+    "每天早上 8 點前更新：美股收盤、台積電 ADR、台股前一天大盤與法人、關注股的轉強轉弱價位和今天怎麼看；週六是週報。卡片下方按鈕可以打開完整早報。",
     "",
     "以上僅供參考，不構成投資建議。",
   ];
